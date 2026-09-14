@@ -572,6 +572,12 @@ class ModelPool:
             grant_dt = datetime.now(ZoneInfo("Asia/Shanghai")).replace(hour=gh, minute=gm, second=0, microsecond=0)
             pool_now = y_left + (g_amt if datetime.now(ZoneInfo("Asia/Shanghai")) >= grant_dt else 0)
             snap = {"used": used, "limit": min(pool_now, entry.daily_token_limit), "balance": balance}
+        elif entry.token_type == "local":
+            # 本地模型（LAN 自建推理，如局域网千问）：不计费、不限量，仅记录用量。
+            # 预检永不拒绝；usage 照常写入 daily 账本（token_usage/model_daily_stats 照记）；
+            # snap.limit=0 令安全阀自动不生效（_check_available 仅在 limit>0 时启用阀门）。
+            used = await db.get_daily_usage(entry.id)
+            snap = {"used": used, "limit": 0}
         elif entry.daily_token_limit > 0:
             used = await db.get_daily_usage(entry.id)
             if used >= entry.daily_token_limit:
@@ -1552,6 +1558,22 @@ class ModelPool:
                     await db.log_decision(pool_name, requested_model, None,
                                           self._estimate_effective(entry, req), actual_calls, caller)
                     break
+                # 本地模型切换窗口（如局域网千问 503 qwen_switching + retry_after）：显卡在
+                # 视频↔聊天间切换属暂态而非故障——不冷却不切换，借道 ContextOverflowPassThrough
+                # 通道原样透传给客户端，由其按 retry_after 重试（教训同问题30/31：不该烧池的错误别烧池）
+                if status == 503 and "qwen_switching" in _upstream_error_body(e).lower():
+                    logger.warning(
+                        f"[切换中透传] pool={pool_name} model={entry.id} caller={caller!r} "
+                        f"status=503 不冷却不切换，透传 retry_after | {str(e)[:180]}"
+                    )
+                    actual_calls.append({
+                        "model": entry.id,
+                        "reason": "switching_passthrough",
+                        "detail": {"status": 503, "no_cooldown": True, "no_switch": True},
+                    })
+                    await db.log_decision(pool_name, requested_model, None,
+                                          self._estimate_effective(entry, req), actual_calls, caller)
+                    raise ContextOverflowPassThrough(503, _upstream_error_body(e))
                 last_failure_overflow = False
                 # 按异常类型决定冷却时长（v2.11.44 统一 5s：429/5xx/网络/其他；上下文超限 400 不冷却）
                 if isinstance(e, httpx.HTTPStatusError) and status is not None and 500 <= status < 600:
@@ -1762,6 +1784,20 @@ class ModelPool:
                     await db.log_decision(pool_name, requested_model, None,
                                           self._estimate_effective(entry, req), actual_calls, caller)
                     break
+                # 本地模型切换窗口透传——同非流式分支，503 qwen_switching 不冷却不切换直接透传
+                if status == 503 and "qwen_switching" in _upstream_error_body(e).lower():
+                    logger.warning(
+                        f"[切换中透传-流式] pool={pool_name} model={entry.id} caller={caller!r} "
+                        f"status=503 不冷却不切换，透传 retry_after | {str(e)[:180]}"
+                    )
+                    actual_calls.append({
+                        "model": entry.id,
+                        "reason": "switching_passthrough",
+                        "detail": {"status": 503, "no_cooldown": True, "no_switch": True},
+                    })
+                    await db.log_decision(pool_name, requested_model, None,
+                                          self._estimate_effective(entry, req), actual_calls, caller)
+                    raise ContextOverflowPassThrough(503, _upstream_error_body(e))
                 last_failure_overflow = False
                 if isinstance(e, httpx.HTTPStatusError) and status is not None and 500 <= status < 600:
                     cooldown_sec = 5

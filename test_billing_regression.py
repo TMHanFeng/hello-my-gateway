@@ -48,6 +48,45 @@ class MockHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(out_b)
             return
+        # T17（本地模型切换窗口）：503 qwen_switching + retry_after，要求客户端稍后重试
+        if str(body.get("model", "")).startswith("mock-switching"):
+            out_b = json.dumps({"error": {"message": "模型切换中（预计 60 秒后可用），请稍后重试",
+                                          "type": "service_unavailable", "code": "qwen_switching"},
+                                "retry_after": 60}).encode()
+            self.send_response(503)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(out_b)))
+            self.end_headers()
+            self.wfile.write(out_b)
+            return
+        # T18（v2.12.3 结构统一）：千帆搜索两协议按真实上游形状返回
+        if self.path == "/v2/ai_search/web_search":
+            # qianfan_web_search 真实形状：裸结果 {request_id, references}，无 choices/usage（上游不支持流式）
+            out_b = json.dumps({"request_id": "mock-qfws-req-1", "references": REFS}, ensure_ascii=False).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(out_b)))
+            self.end_headers()
+            self.wfile.write(out_b)
+            return
+        if self.path == "/v2/ai_search/web_summary" and body.get("stream"):
+            # qianfan_search(web_summary) 真实流式形状：{request_id, choices[delta]} 搜索帧
+            # （首帧带 references、无 usage 帧），末尾 finish_reason=stop 收尾帧 + [DONE]
+            def qf_sse(obj):
+                return ("data: " + json.dumps(obj, ensure_ascii=False) + "\n\n").encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.end_headers()
+            self.wfile.write(qf_sse({"request_id": "mock-qf-req-1", "choices": [
+                {"index": 0, "finish_reason": "", "delta": {"role": "assistant", "content": content}}],
+                "references": REFS}))
+            self.wfile.flush()
+            self.wfile.write(qf_sse({"request_id": "mock-qf-req-1", "choices": [
+                {"index": 0, "finish_reason": "stop", "delta": {"role": "", "content": ""}}]}))
+            self.wfile.flush()
+            self.wfile.write(b"data: [DONE]\n\n")
+            self.wfile.flush()
+            return
         if body.get("stream"):
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
@@ -124,6 +163,10 @@ TEST_MODELS = [
     # T15（问题30）确定性缺陷 400：池内两个候选，第一个必 400，验证不切换不冷却
     {"id": "zzbt/bad400-a", "name": "mock-bad400-a", "provider_id": "zzmock", "modality": "text", "is_free": True},
     {"id": "zzbt/bad400-b", "name": "mock-bad400-b", "provider_id": "zzmock", "modality": "text", "is_free": True},
+    # T17 本地模型（local 令牌类型：不计费不限量仅记录）+ 切换窗口透传
+    {"id": "zzbt/echo-local", "name": "mock-echo-local", "provider_id": "zzmock", "modality": "text", "is_free": True, "token_type": "local"},
+    {"id": "zzbt/switch-a", "name": "mock-switching-a", "provider_id": "zzmock", "modality": "text", "is_free": True},
+    {"id": "zzbt/switch-b", "name": "mock-echo-switch-b", "provider_id": "zzmock", "modality": "text", "is_free": True},
 ]
 TEST_IDS = [m["id"] for m in TEST_MODELS]
 
@@ -140,7 +183,7 @@ def deep_clean():
     c["models"] = [m for m in c.get("models", []) if not str(m.get("id", "")).startswith("zzbt/")]
     c.get("pools", {}).pop("zzall", None)
     c.get("pools", {}).pop("zzdef", None)  # v2.11.19 曾漏清该测试池残留至生产配置
-    for pn in ("zzreq", "zzonce", "zzsmart", "zznso", "zzgift", "zzrpm", "zzvalve", "zzvnl", "zzqfp", "zzqfp2", "zzbad"):
+    for pn in ("zzreq", "zzonce", "zzsmart", "zznso", "zzgift", "zzrpm", "zzvalve", "zzvnl", "zzqfp", "zzqfp2", "zzbad", "zzlocal", "zzswitch"):
         c.get("pools", {}).pop(pn, None)
     json.dump(c, open(os.path.join(REPO, "config.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=2)
     q = " OR ".join([f"model_name='{i}'" for i in TEST_IDS])
@@ -151,7 +194,7 @@ def deep_clean():
     # v2.11.40 起 request_log 表退役（RPM/TPM 内存化），不再列入清理
     for t in ["token_usage", "model_daily_stats", "call_metrics", "gift_state"]:
         db_exec(f"DELETE FROM {t} WHERE {q}")
-    db_exec(f"DELETE FROM decision_log WHERE selected IN ({','.join(chr(39)+i+chr(39) for i in TEST_IDS)}) OR pool_name IN ('zzall','zzbad')")
+    db_exec(f"DELETE FROM decision_log WHERE selected IN ({','.join(chr(39)+i+chr(39) for i in TEST_IDS)}) OR pool_name IN ('zzall','zzbad','zzlocal','zzswitch')")
     db_exec("DELETE FROM one_time_state WHERE model_name='zzbt/echo-once'")
     db_exec("DELETE FROM api_keys WHERE name='zzkey'")
     db_exec("DELETE FROM api_key_usage WHERE key_id NOT IN (SELECT id FROM api_keys)")
@@ -211,6 +254,8 @@ def main():
     c["pools"]["zzqfp"] = {"model_ids": ["zzbt/echo-qf"], "strategy": "sequential"}
     c["pools"]["zzqfp2"] = {"model_ids": ["zzbt/echo-qfws"], "strategy": "sequential"}
     c["pools"]["zzbad"] = {"model_ids": ["zzbt/bad400-a", "zzbt/bad400-b"], "strategy": "sequential"}
+    c["pools"]["zzlocal"] = {"model_ids": ["zzbt/echo-local"], "strategy": "sequential"}
+    c["pools"]["zzswitch"] = {"model_ids": ["zzbt/switch-a", "zzbt/switch-b"], "strategy": "sequential"}
     json.dump(c, open(os.path.join(REPO, "config.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=2)
 
     # 启动隔离实例
@@ -628,6 +673,187 @@ def main():
               ("mid_is_old", _mid is _old))
         check("T16b 触发后计数清零", _e.pool_timeout_streak == 0, _e.pool_timeout_streak)
         check("T16c 重建后cache可用(新client就位)", _e.id in _mp.providers_cache, list(_mp.providers_cache))
+
+        # ===== T17 本地模型（local 令牌类型：不计费不限量仅记录）+ 切换窗口透传 =====
+        used17 = token_used("zzbt/echo-local")
+        r = chat("zzlocal", content="hi")
+        check("T17a 本地模型200放行", r.status_code == 200, r.status_code)
+        check("T17b 本地模型usage照记(+133)", token_used("zzbt/echo-local") - used17 == 133,
+              token_used("zzbt/echo-local") - used17)
+        r2 = chat("zzlocal", content="hi")
+        r3 = chat("zzlocal", content="hi")
+        check("T17c 本地模型无配额拦截(连续3次200)", r2.status_code == 200 and r3.status_code == 200,
+              (r2.status_code, r3.status_code))
+        rs = httpx.get(f"{BASE}/stats", headers=ADMIN, timeout=15)
+        rows17 = {x.get("id"): x for x in rs.json().get("models", [])}
+        check("T17d stats带出local类型与用量",
+              rows17.get("zzbt/echo-local", {}).get("token_type") == "local"
+              and rows17.get("zzbt/echo-local", {}).get("today_tokens", 0) > 0,
+              {k: rows17.get("zzbt/echo-local", {}).get(k) for k in ("token_type", "today_tokens")})
+        nb0 = sum(1 for b in captured_bodies if b.get("model") == "mock-echo-switch-b")
+        rw = chat("zzswitch", content="hi")
+        check("T17e 切换中503透传客户端(qwen_switching)", rw.status_code == 503 and "qwen_switching" in rw.text,
+              rw.text[:150])
+        check("T17f retry_after保留", "retry_after" in rw.text, rw.text[:150])
+        rw2 = chat("zzswitch", content="hi")
+        check("T17g 不冷却(立即重试仍透传切换错误)", rw2.status_code == 503 and "qwen_switching" in rw2.text,
+              rw2.text[:150])
+        nb1 = sum(1 for b in captured_bodies if b.get("model") == "mock-echo-switch-b")
+        check("T17h 未切换第二候选", nb1 == nb0, (nb0, nb1))
+        steps17 = reject_steps("zzswitch")
+        check("T17i 决策记录switching_passthrough",
+              any(s.get("reason") == "switching_passthrough"
+                  and (s.get("detail") or {}).get("no_cooldown") for s in steps17),
+              [s.get("reason") for s in steps17])
+
+        # ===== T18（v2.12.3）千帆搜索两协议结构统一：同一请求下 summary/web_search 变体响应结构完全一致 =====
+        # 先清 T14i 遗留的安全阀用量，避免阀门把 T18 请求拦在预检（对两变体一视同仁地清零）
+        set_used("zzbt/echo-qf", 0)
+        set_used("zzbt/echo-qfws", 0)
+        u18qf, u18ws = token_used("zzbt/echo-qf"), token_used("zzbt/echo-qfws")
+
+        def _sse_frames(text):
+            """逐帧解析 SSE 文本：返回 (数据帧对象列表, 是否有 data: [DONE])。"""
+            frames, done = [], False
+            for blk in text.split("\n\n"):
+                blk = blk.strip()
+                if not blk.startswith("data: "):
+                    continue
+                payload = blk[6:].strip()
+                if payload == "[DONE]":
+                    done = True
+                    continue
+                try:
+                    frames.append(json.loads(payload))
+                except Exception:
+                    pass
+            return frames, done
+
+        def _frame_sig(f):
+            """帧信封形状签名（忽略值）：顶层键 + choices[0] 键 + delta 键。"""
+            ch = f.get("choices") or []
+            c0 = ch[0] if ch and isinstance(ch[0], dict) else {}
+            d = c0.get("delta") if isinstance(c0.get("delta"), dict) else {}
+            return (tuple(sorted(f.keys())), tuple(sorted(c0.keys())), tuple(sorted(d.keys())))
+
+        def _dedup(seq):
+            """连续同形帧去重（正文 delta 帧数允许随上游分片不同，帧形序列必须一致）。"""
+            out = []
+            for s in seq:
+                if not out or out[-1] != s:
+                    out.append(s)
+            return out
+
+        # 非流式：顶层键集合 / references / choices[0] / usage
+        r18a = chat("zzqfp", content="今天的新闻")
+        r18b = chat("zzqfp2", content="news")
+        j18a, j18b = r18a.json(), r18b.json()
+        check("T18a 两变体非流式顶层键集合一致(object=chat.completion)",
+              r18a.status_code == 200 and r18b.status_code == 200
+              and set(j18a) == set(j18b) and j18a.get("object") == j18b.get("object") == "chat.completion",
+              (r18a.status_code, r18b.status_code, sorted(j18a), sorted(j18b)))
+        check("T18b 两变体非流式references均为list(不得一边null一边[])",
+              isinstance(j18a.get("references"), list) and isinstance(j18b.get("references"), list),
+              (type(j18a.get("references")).__name__, type(j18b.get("references")).__name__))
+        c18a = (j18a.get("choices") or [{}])[0]
+        c18b = (j18b.get("choices") or [{}])[0]
+        check("T18c 两变体choices[0]/message键集合与finish_reason一致",
+              set(c18a) == set(c18b) and set(c18a.get("message") or {}) == set(c18b.get("message") or {})
+              and c18a.get("finish_reason") == c18b.get("finish_reason") == "stop",
+              (sorted(c18a), sorted(c18b), c18a.get("finish_reason"), c18b.get("finish_reason")))
+        check("T18d 两变体usage均存在且键集合一致",
+              set(j18a.get("usage") or {}) == set(j18b.get("usage") or {})
+              == {"prompt_tokens", "completion_tokens", "total_tokens"},
+              (j18a.get("usage"), j18b.get("usage")))
+
+        # 流式：逐帧解析比对帧形（值可不同：model/request_id/content/references 条数）
+        r18s1 = chat("zzqfp", stream=True)
+        r18s2 = chat("zzqfp2", stream=True)
+        f18a, done18a = _sse_frames(r18s1.text)
+        f18b, done18b = _sse_frames(r18s2.text)
+        check("T18e 两变体流式首帧键集合一致(request_id/model/choices/references)",
+              bool(f18a) and bool(f18b)
+              and set(f18a[0]) == set(f18b[0]) == {"request_id", "model", "choices", "references"},
+              (sorted(f18a[0]) if f18a else None, sorted(f18b[0]) if f18b else None))
+        check("T18f 两变体流式帧形序列一致(忽略值/正文帧数,连续同形去重)",
+              _dedup([_frame_sig(f) for f in f18a]) == _dedup([_frame_sig(f) for f in f18b]),
+              ([_frame_sig(f)[0] for f in f18a], [_frame_sig(f)[0] for f in f18b]))
+        check("T18g 两变体流式末帧finish_reason=stop",
+              bool(f18a) and bool(f18b)
+              and (f18a[-1].get("choices") or [{}])[0].get("finish_reason") == "stop"
+              and (f18b[-1].get("choices") or [{}])[0].get("finish_reason") == "stop",
+              ((f18a[-1].get("choices") or [{}])[0].get("finish_reason") if f18a else None,
+               (f18b[-1].get("choices") or [{}])[0].get("finish_reason") if f18b else None))
+        check("T18h 两变体流式均以data: [DONE]收尾", done18a and done18b, (done18a, done18b))
+        check("T18i 两变体references均仅首帧携带(统一帧形契约)",
+              all("references" not in f for f in f18a[1:]) and all("references" not in f for f in f18b[1:]),
+              ([("references" in f) for f in f18a], [("references" in f) for f in f18b]))
+        check("T18j 两变体流式均无usage帧(统一契约:搜索流不计token,按次预扣计费)",
+              all("usage" not in f for f in f18a) and all("usage" not in f for f in f18b),
+              ([("usage" in f) for f in f18a], [("usage" in f) for f in f18b]))
+
+        # 计费路径一致：billing_mode=request 下非流式入账+1、流式建立预扣+1，两变体各共+2
+        check("T18k 两变体计费路径一致(非流式+流式各+1,共+2)",
+              token_used("zzbt/echo-qf") - u18qf == 2 and token_used("zzbt/echo-qfws") - u18ws == 2,
+              (token_used("zzbt/echo-qf") - u18qf, token_used("zzbt/echo-qfws") - u18ws))
+
+        # ===== T19 思考参数探测计量：探测请求消耗计入模型用量账本 =====
+        c = json.load(open(os.path.join(REPO, "config.json"), encoding="utf-8"))
+        if not any(p["id"] == "zzmock" for p in c["providers"]):
+            c["providers"].append({"id": "zzmock", "name": "zzmock", "protocol": "openai",
+                                   "base_url": f"http://127.0.0.1:{MOCK_PORT}/v1", "api_key": "x"})
+        c["models"] = [m for m in c["models"] if m.get("id") not in ("zzbt/echo-probe", "zzbt/echo-probe-req")]
+        c["models"] += [
+            # 无 reasoning_map → 探测必发真实上游；mock 非流式每笔 usage total=133
+            {"id": "zzbt/echo-probe", "name": "mock-echo-probe", "provider_id": "zzmock",
+             "modality": "text", "is_free": True, "token_type": "daily", "daily_token_limit": 1000000000},
+            {"id": "zzbt/echo-probe-req", "name": "mock-echo-probe-req", "provider_id": "zzmock",
+             "modality": "text", "is_free": True, "daily_token_limit": 1000000000, "billing_mode": "request"},
+        ]
+        json.dump(c, open(os.path.join(REPO, "config.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+        httpx.post(f"{BASE}/admin/reload", headers=ADMIN, timeout=30)
+        time.sleep(0.5)
+
+        def _probe_hits(name):  # mock 实收到的该上游名探测请求数（每笔均带 usage=133）
+            return sum(1 for b in captured_bodies if b.get("model") == name)
+
+        def _wait_probe_settled(name, t0):
+            """探测在后台线程执行：等 mock 收到的探测请求数连续 2 秒不再增长（即已收尾）。"""
+            n, stable = _probe_hits(name), 0
+            while time.time() - t0 < 90:
+                time.sleep(1)
+                n2 = _probe_hits(name)
+                if n2 > 0 and n2 == n:
+                    stable += 1
+                    if stable >= 2:
+                        return n2
+                else:
+                    stable = 0
+                n = n2
+            return _probe_hits(name)
+
+        for _mid, _mname, _per in (("zzbt/echo-probe", "mock-echo-probe", 133),
+                                   ("zzbt/echo-probe-req", "mock-echo-probe-req", 1)):
+            u0, c0 = token_used(_mid), call_count(_mid)
+            t0 = time.time()
+            r = httpx.post(f"{BASE}/admin/reasoning/probe", headers=ADMIN, json={"model_id": _mid}, timeout=15)
+            check(f"T19a {_mid} 探测受理(queued)", r.status_code == 200 and r.json().get("queued") is True, r.text[:120])
+            n = _wait_probe_settled(_mname, t0)
+            check(f"T19b {_mid} 探测真实发上游(n={n})", n > 0, n)
+            check(f"T19c {_mid} 探测消耗入 token_usage(每笔{_per})", token_used(_mid) - u0 == n * _per,
+                  (token_used(_mid) - u0, n * _per))
+            check(f"T19d {_mid} 探测同步 model_daily_stats 口径", call_count(_mid) - c0 == n,
+                  (call_count(_mid) - c0, n))
+
+        # 收尾：清理探测缓存中的 mock 条目（避免污染断点续跑缓存；zzbt 模型由 deep_clean 清理）
+        try:
+            _cp = os.path.join(REPO, "reasoning_probe_cache.json")
+            _cache = json.load(open(_cp, encoding="utf-8"))
+            for _k in [k for k in _cache if "mock-echo-probe" in _k]:
+                _cache.pop(_k, None)
+            json.dump(_cache, open(_cp, "w", encoding="utf-8"), indent=1)
+        except Exception:
+            pass
 
     finally:
         try:

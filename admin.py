@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.responses import HTMLResponse
 from pathlib import Path
+import asyncio
 import logging
 import subprocess
 import threading
@@ -271,6 +272,7 @@ async def probe_reasoning_api(request: Request, _=Depends(verify_admin)):
     if not probe_reasoning.build_targets({"providers": providers, "models": [model]}):
         raise HTTPException(status_code=400, detail="模型缺少连接信息（base_url/api_key），无法探测")
     _reasoning_probe_inflight.add(model_id)
+    probe_reasoning.register_main_loop(asyncio.get_running_loop())  # 探测线程的用量记账投回主循环执行
 
     def _run():
         try:
@@ -425,6 +427,7 @@ async def add_model(request: Request, _=Depends(verify_admin)):
                 save_config(config)
                 probe_status = "applied"
             else:
+                probe_reasoning.register_main_loop(asyncio.get_running_loop())  # 探测线程的用量记账投回主循环执行
                 threading.Thread(target=_auto_probe_model, args=(entry["id"],), daemon=True).start()
                 probe_status = "queued"
         except Exception:

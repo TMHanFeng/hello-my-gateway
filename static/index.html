@@ -609,7 +609,7 @@ body {
       </div>
       <div class="form-sec">计费与额度</div>
       <div class="f2">
-        <div class="fg"><label>令牌类型</label><select name="token_type" id="f-token-type" onchange="onTokenTypeChange()"><option value="daily">daily（每日刷新）</option><option value="rolling_5h">rolling_5h（5h 限额）</option><option value="one_time">one_time（一次性）</option><option value="gift">gift（余额返还制）</option></select></div>
+        <div class="fg"><label>令牌类型</label><select name="token_type" id="f-token-type" onchange="onTokenTypeChange()"><option value="daily">daily（每日刷新）</option><option value="rolling_5h">rolling_5h（5h 限额）</option><option value="one_time">one_time（一次性）</option><option value="gift">gift（余额返还制）</option><option value="local">local（本地模型·不计费不限量）</option></select></div>
         <div class="fg"><label>计费模式</label><select name="billing_mode" onchange="onBillingChange()"><option value="token">按 Token 计费</option><option value="request">按请求次数计费</option></select></div>
       </div>
       <div class="f2">
@@ -893,7 +893,7 @@ function modelRowHTML(m, i) {
           ${m.modality === 'embedding' ? '<span class="badge b-embedding">embedding</span>' : m.modality === 'rerank' ? '<span class="badge b-rerank">rerank</span>' : m.modality === 'vision' ? '<span class="badge b-vision">多模态</span>' : '<span class="badge b-text">纯文本</span>'}
           ${m.json_output && m.modality !== 'embedding' && m.modality !== 'rerank' ? '<span class="badge b-json" title="支持 response_format JSON 格式输出">JSON</span>' : ''}
           ${m.is_free ? '<span class="badge b-free">免费</span>' : '<span class="badge b-paid">付费</span>'}
-          ${m.token_type === 'one_time' ? '<span class="badge b-once">一次性</span>' : m.token_type === 'rolling_5h' ? '<span class="badge b-5h">5h限额</span>' : m.token_type === 'gift' ? '<span class="badge b-5h" title="余额返还制：到账时刻按昨日消耗补回额度（余额上限封顶）">余额返还制</span>' : ''}
+          ${m.token_type === 'one_time' ? '<span class="badge b-once">一次性</span>' : m.token_type === 'rolling_5h' ? '<span class="badge b-5h">5h限额</span>' : m.token_type === 'gift' ? '<span class="badge b-5h" title="余额返还制：到账时刻按昨日消耗补回额度（余额上限封顶）">余额返还制</span>' : m.token_type === 'local' ? '<span class="badge b-5h" title="本地模型：不计费不限量，仅记录用量">本地</span>' : ''}
           ${m.reasoning_map && Object.keys(m.reasoning_map).length ? `<span class="badge b-5h" style="cursor:pointer" title="点击打开编辑，查看思考参数探测结论" onclick="editModel('${m.id}')">思考映射</span>` : ''}
           ${m.expire_date ? `<span class="badge b-once">到期 ${esc(m.expire_date)}</span>` : ''}
           <button class="btn btn-ghost btn-sm" onclick="editModel('${m.id}')">编辑</button>
@@ -904,7 +904,7 @@ function modelRowHTML(m, i) {
         <div>计费 <b>${m.billing_mode === 'request' ? '按请求次数' : '按 Token'}</b></div>
         <div>上下文窗口 <b>${m.context_window || '不限'}</b></div>
         <div>超时 <b>${m.smart_estimate ? '智能估算' : (m.timeout_seconds == null ? '默认120s' : (m.timeout_seconds === 0 ? '无限' : m.timeout_seconds + 's'))}</b></div>
-        <div>${m.token_type === 'rolling_5h' ? '5h 窗口限额' : '每日上限'} <b>${m.daily_token_limit ? m.daily_token_limit.toLocaleString() + (m.billing_mode === 'request' ? ' 次' : ' Token') : '不限'}</b></div>
+        <div>${m.token_type === 'local' ? '本地用量（不计费）' : m.token_type === 'rolling_5h' ? '5h 窗口限额' : '每日上限'} <b>${m.daily_token_limit ? m.daily_token_limit.toLocaleString() + (m.billing_mode === 'request' ? ' 次' : ' Token') : '不限'}</b></div>
         <div>RPM <b>${m.rpm_limit || '不限'}</b></div>
         <div>TPM <b>${m.tpm_limit || '不限'}</b></div>
         <div>并发 <b>${m.max_concurrency ? m.max_concurrency : '不限'}</b></div>
@@ -1120,7 +1120,7 @@ function infoTip(id) {
     ['收费标注', m.is_free ? '免费' : '付费'],
     ['计费模式', m.billing_mode === 'request' ? '按请求次数' : '按 Token'],
     ['模型模态', m.modality === 'embedding' ? 'embedding（嵌入模型）' : m.modality === 'rerank' ? 'rerank（重排模型）' : m.modality === 'vision' ? '多模态（支持图片）' : '纯文本'],
-    ['令牌类型', m.token_type === 'one_time' ? '一次性' : m.token_type === 'rolling_5h' ? '5h 窗口（5h限额）' : '每日刷新'],
+    ['令牌类型', m.token_type === 'one_time' ? '一次性' : m.token_type === 'local' ? '本地模型（不计费不限量）' : m.token_type === 'rolling_5h' ? '5h 窗口（5h限额）' : '每日刷新'],
     [(m.token_type === 'rolling_5h' ? '5h 窗口限额' : '每日上限'), m.daily_token_limit ? m.daily_token_limit.toLocaleString() + (m.billing_mode === 'request' ? ' 次' : ' Token') : '不限'],
     ['上下文窗口', m.context_window ? m.context_window.toLocaleString() : '不限'],
     ['RPM', m.rpm_limit || '不限'],

@@ -110,28 +110,30 @@ class QianfanSearchProvider:
         if self.variant == "web_search":
             return self._wrap_search_result(data, model_name)
         usage = data.get("usage") or {}
+        # v2.12.3 一致性：choices/id/created/model 等与 references 同样做缺省兜底——
+        # 上游字段缺失或为 null 时两变体产出的响应结构保持一致（不得一边报错一边正常）
         choices = []
-        for c in data.get("choices", []):
+        for c in (data.get("choices") or []):
             msg = c.get("message") or {}
             choices.append(Choice(
-                index=c.get("index", 0),
+                index=c.get("index") or 0,
                 message=ChoiceMessage(
-                    role=msg.get("role", "assistant"),
+                    role=msg.get("role") or "assistant",
                     content=msg.get("content") or "",
                     reasoning_content=msg.get("reasoning_content"),
                     tool_calls=msg.get("tool_calls"),
                 ),
-                finish_reason=c.get("finish_reason", "stop"),
+                finish_reason=c.get("finish_reason") or "stop",
             ))
         return ChatCompletionResponse(
-            id=data.get("id", f"chatcmpl-{uuid.uuid4().hex[:8]}"),
-            created=data.get("created", int(time.time())),
-            model=data.get("model", model_name),
+            id=data.get("id") or f"chatcmpl-{uuid.uuid4().hex[:8]}",
+            created=data.get("created") or int(time.time()),
+            model=data.get("model") or model_name,
             choices=choices,
             usage=UsageInfo(
-                prompt_tokens=usage.get("prompt_tokens", 0),
-                completion_tokens=usage.get("completion_tokens", 0),
-                total_tokens=usage.get("total_tokens", 0),
+                prompt_tokens=usage.get("prompt_tokens") or 0,
+                completion_tokens=usage.get("completion_tokens") or 0,
+                total_tokens=usage.get("total_tokens") or 0,
             ),
             references=(data.get("references") or []),  # v2.12.3：统一为 list，避免与 web_search 出现 null/[] 的结构差异
         )
@@ -141,7 +143,7 @@ class QianfanSearchProvider:
                           no_stream_options: bool = False) -> AsyncGenerator[str, None]:
         payload = self._build_payload(req, stream=(self.variant != "web_search"))
         if self.variant == "web_search":
-            # web_search 不支持流式：整段合成两帧（正文 delta + usage/references 帧），计费走 request 预扣
+            # web_search 不支持流式：整段取回后按统一帧形合成（首帧带 references + 正文帧 + stop 帧 + [DONE]），计费走 request 预扣
             resp = await self.client.post(f"{self.base_url}{self.api_path}", json=payload,
                                           headers=self._headers())
             if resp.status_code == 429:

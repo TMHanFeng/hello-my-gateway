@@ -9,15 +9,18 @@
 
 说明：
 - 直接调用各 provider 的上游接口（不经过网关），小 prompt + max_tokens 限制，少量费用。
+- 探测消耗按模型 token_type 计入 gateway.db 用量账本（口径对齐网关结算，无 usage 计 0）。
 - 相同 (协议, base_url, 上游模型名) 的条目只探测一次，结果复用到同组合的所有模型。
 - 缓存：reasoning_probe_cache.json（增量，断点续跑）；报告：思考参数探测报告.md。
 """
 
 import argparse
+import asyncio
 import copy
 import json
 import re
 import sys
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -84,6 +87,17 @@ def build_targets(config: dict, keyword: str = "") -> list[dict]:
                 "example_ids": [],
             }
         combos[key]["example_ids"].append(m["id"])
+        # 计量归因：探测消耗记在该组合首个模型的账本上（同组多模型只探一次，取首模型计费配置）
+        if "billing_model" not in combos[key]:
+            combos[key]["billing_model"] = {
+                "id": m["id"],
+                "token_type": m.get("token_type") or "daily",
+                "billing_mode": m.get("billing_mode") or "token",
+                "daily_token_limit": int(m.get("daily_token_limit", 0) or 0),
+                "refresh_time": m.get("refresh_time") or "",
+                "gift_grant_cap": int(m.get("gift_grant_cap", 0) or 0),
+                "max_tokens": int(m.get("max_tokens", 0) or 0),
+            }
     targets = list(combos.values())
     if keyword:
         kw = keyword.lower()
@@ -102,8 +116,72 @@ def reasoning_of_message(msg: dict) -> int:
     return 0
 
 
+# ── 探测用量计量：探测请求是真实上游调用，消耗必须计入模型用量账本 ─────────────
+# 入账口径对齐 pool.execute 的结算分支（billing_mode=request 按次计 1，token 型按实际
+# usage 计；token_type 分账本），并同步 add_model_call 维持 model_daily_stats 统计口径。
+# 无 usage 的响应计 0 不估算；计量失败只告警，不阻断探测本身。
+
+_main_loop: asyncio.AbstractEventLoop | None = None  # 网关主事件循环（admin 触发探测前注册）
+_cli_loop: asyncio.AbstractEventLoop | None = None   # CLI 独立进程的私有常驻循环
+_ROLLING_5H_SECONDS = 5 * 3600  # 与 pool.ROLLING_5H_SECONDS 一致（不 import pool，避免 CLI 拖入网关重依赖）
+
+
+def register_main_loop(loop) -> None:
+    """admin 端点（运行在主事件循环上）拉起探测线程前注册主循环：
+    database 的连接/asyncio.Lock 都绑定主循环，探测线程的记账必须投回主循环执行。"""
+    global _main_loop
+    _main_loop = loop
+
+
+async def _charge_probe_ledger(model: dict, total_tokens: int) -> None:
+    """按模型 token_type 把探测消耗写入对应账本（rolling_5h 用 db 原语等价 pool._charge_rolling_5h）。"""
+    import database as db
+    mid = model["id"]
+    charge = 1 if model.get("billing_mode") == "request" else total_tokens
+    tt = model.get("token_type") or "daily"
+    if tt == "gift":
+        # 先走读路径惰性补账，保证 gift_state 行存在（对齐正常调用"预检→入账"顺序）
+        await db.get_gift_balance(mid, int(model.get("daily_token_limit", 0) or 0),
+                                  model.get("refresh_time") or "",
+                                  int(model.get("gift_grant_cap", 0) or 0))
+        await db.add_gift_usage(mid, charge)
+    elif tt == "one_time":
+        await db.add_one_time_usage(mid, charge)
+        state = await db.get_one_time_state(mid)
+        if state and int(model.get("max_tokens", 0) or 0) > 0 and state["used_tokens"] >= int(model["max_tokens"]):
+            await db.expire_one_time(mid)
+    elif tt == "rolling_5h":
+        state = await db.get_5h_state(mid)
+        if state is None or (time.time() - state["window_start"]) >= _ROLLING_5H_SECONDS:
+            await db.reset_5h_window(mid)
+        await db.add_5h_usage(mid, charge)
+    else:
+        await db.add_daily_usage(mid, charge)
+    await db.add_model_call(mid, total_tokens)  # 统计卡片（model_daily_stats）同步入账
+
+
+def charge_probe_usage(model: dict, total_tokens: int) -> None:
+    """探测线程的同步记账桥：网关进程投回主循环，CLI 进程用私有常驻循环
+    （database._lock 绑定单一 loop，不能每次 asyncio.run 另起 loop）。"""
+    global _cli_loop
+    total = int(total_tokens or 0)
+    if total <= 0 or not isinstance(model, dict) or not model.get("id"):
+        return  # 无 usage 计 0，不记账不估算
+    try:
+        if _main_loop is not None and _main_loop.is_running():
+            fut = asyncio.run_coroutine_threadsafe(_charge_probe_ledger(model, total), _main_loop)
+        else:
+            if _cli_loop is None or _cli_loop.is_closed():
+                _cli_loop = asyncio.new_event_loop()
+                threading.Thread(target=_cli_loop.run_forever, daemon=True, name="probe-metering").start()
+            fut = asyncio.run_coroutine_threadsafe(_charge_probe_ledger(model, total), _cli_loop)
+        fut.result(30)
+    except Exception as e:
+        print(f"[思考探测] 用量记账失败（model={model.get('id')}, tokens={total}）: {e}")
+
+
 def call_upstream(target: dict, fragment: dict | None) -> dict:
-    """发一次探测请求。返回 {status, error, reasoning_len, content_len, completion_tokens}"""
+    """发一次探测请求。返回 {status, error, reasoning_len, content_len, completion_tokens, total_tokens}"""
     if target["protocol"] == "anthropic":
         body = {
             "model": target["name"],
@@ -133,7 +211,8 @@ def call_upstream(target: dict, fragment: dict | None) -> dict:
     kwargs = {"timeout": TIMEOUT}
     if target["proxy_url"]:
         kwargs["proxy"] = target["proxy_url"]
-    out = {"status": 0, "error": "", "reasoning_len": 0, "content_len": 0, "completion_tokens": 0}
+    out = {"status": 0, "error": "", "reasoning_len": 0, "content_len": 0, "completion_tokens": 0,
+           "total_tokens": 0}
     try:
         with httpx.Client(**kwargs) as client:
             resp = client.post(url, json=body, headers=headers)
@@ -148,7 +227,10 @@ def call_upstream(target: dict, fragment: dict | None) -> dict:
                                        if isinstance(b, dict) and b.get("type") == "thinking")
             out["content_len"] = sum(len(b.get("text", "") or "") for b in blocks
                                      if isinstance(b, dict) and b.get("type") == "text")
-            out["completion_tokens"] = (data.get("usage") or {}).get("output_tokens", 0)
+            _u = data.get("usage") or {}
+            out["completion_tokens"] = _u.get("output_tokens", 0)
+            # 计量口径对齐网关结算（usage.total_tokens）：input+output
+            out["total_tokens"] = int(_u.get("input_tokens", 0) or 0) + int(_u.get("output_tokens", 0) or 0)
         else:
             msg = ((data.get("choices") or [{}])[0].get("message") or {})
             rc = reasoning_of_message(msg)
@@ -162,9 +244,14 @@ def call_upstream(target: dict, fragment: dict | None) -> dict:
                     rc = max(rc, len(content))
             out["reasoning_len"] = rc
             out["content_len"] = len(msg.get("content") or "")
-            out["completion_tokens"] = (data.get("usage") or {}).get("completion_tokens", 0)
+            _u = data.get("usage") or {}
+            out["completion_tokens"] = _u.get("completion_tokens", 0)
+            # 计量口径对齐网关结算（usage.total_tokens）：缺失时按 prompt+completion 还原
+            out["total_tokens"] = int(_u.get("total_tokens", 0) or 0) or (
+                int(_u.get("prompt_tokens", 0) or 0) + int(_u.get("completion_tokens", 0) or 0))
     except Exception as e:
         out["error"] = str(e)[:160]
+    charge_probe_usage(target.get("billing_model") or {}, out["total_tokens"])
     return out
 
 

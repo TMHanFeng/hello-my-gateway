@@ -832,7 +832,7 @@ select { max-width: 100%; }
       </div>
       <div class="form-sec">计费与额度</div>
       <div class="f3">
-        <div class="fg"><label>令牌类型</label><select name="token_type" id="f-token-type" onchange="onTokenTypeChange()"><option value="daily">daily（每日刷新）</option><option value="rolling_5h">rolling_5h（5h 限额）</option><option value="one_time">one_time（一次性）</option><option value="gift">gift（余额返还制）</option></select></div>
+        <div class="fg"><label>令牌类型</label><select name="token_type" id="f-token-type" onchange="onTokenTypeChange()"><option value="daily">daily（每日刷新）</option><option value="rolling_5h">rolling_5h（5h 限额）</option><option value="one_time">one_time（一次性）</option><option value="gift">gift（余额返还制）</option><option value="local">local（本地模型·不计费不限量）</option></select></div>
         <div class="fg"><label>计费模式</label><select name="billing_mode" onchange="onBillingChange()"><option value="token">按 Token 计费</option><option value="request">按请求次数计费</option></select></div>
         <div class="fg"><label>收费标注</label><select name="is_free"><option value="true">免费模型（绿）</option><option value="false">付费模型（红）</option></select></div>
       </div>
@@ -1139,6 +1139,7 @@ function typeBadge(m) {
   if (m.token_type === 'one_time') return '<span class="badge b-once">一次性</span>';
   if (m.token_type === 'rolling_5h') return '<span class="badge b-5h">5h限额</span>';
   if (m.token_type === 'gift') return '<span class="badge b-5h" title="余额返还制：到账时刻按昨日消耗补回额度（上限封顶）">余额返还制</span>';
+  if (m.token_type === 'local') return '<span class="badge b-5h" title="本地模型：不计费不限量，仅记录用量">本地</span>';
   return '<span class="badge b-ghost">每日</span>';
 }
 function freeBadge(m) { return m.is_free ? '<span class="badge b-free">免费</span>' : '<span class="badge b-paid">付费</span>'; }
@@ -2013,8 +2014,8 @@ function infoTip(id) {
     ['所属供应商', p ? `${p.name}（${p.id}）` : '—（独立内联）'],
     ['收费标注', m.is_free ? '免费' : '付费'],
     ['模态', m.modality === 'embedding' ? 'embedding（嵌入模型）' : m.modality === 'rerank' ? 'rerank（重排模型）' : m.modality === 'vision' ? '多模态' : '纯文本'],
-    ['令牌', m.token_type === 'one_time' ? '一次性' : (m.token_type === 'rolling_5h' ? '5h 限额' : '每日')],
-    [(m.token_type === 'rolling_5h' ? '5h 窗口限额' : '每日上限'), m.daily_token_limit ? m.daily_token_limit.toLocaleString() + (m.billing_mode === 'request' ? ' 次' : ' Token') : '不限'],
+    ['令牌', m.token_type === 'one_time' ? '一次性' : (m.token_type === 'local' ? '本地模型' : (m.token_type === 'rolling_5h' ? '5h 限额' : '每日'))],
+    [(m.token_type === 'local' ? '本地用量（不计费）' : (m.token_type === 'rolling_5h' ? '5h 窗口限额' : '每日上限')), m.daily_token_limit ? m.daily_token_limit.toLocaleString() + (m.billing_mode === 'request' ? ' 次' : ' Token') : '不限'],
     ['RPM/TPM', `${m.rpm_limit || '∞'}/${m.tpm_limit || '∞'}`],
     ['并发', String(m.max_concurrency)],
     ['超时', m.timeout_seconds == null ? '默认（120s）' : (m.timeout_seconds === 0 ? '无限等待' : m.timeout_seconds + 's')],
