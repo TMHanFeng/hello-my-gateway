@@ -6,6 +6,7 @@
 - mock 上游(127.0.0.1:8125):流式 SSE / 非流式 JSON,usage 可控,记录收到的请求体。
 - 全部断言通过 exit 0;任何失败 exit 1(优化阶段必须全绿才继续)。
 """
+import asyncio
 import io
 import json
 import os
@@ -23,6 +24,7 @@ BASE = "http://127.0.0.1:8651"
 MOCK_PORT = 8125
 REPO = os.path.dirname(os.path.abspath(__file__))
 USAGE = {"prompt_tokens": 100, "completion_tokens": 33, "total_tokens": 133}
+REFS = [{"title": "参考1", "url": "https://example.com/a"}, {"title": "参考2", "url": "https://example.com/b"}]
 
 captured_bodies = []      # mock 收到的请求体(供思考映射断言)
 mock_mode = {"usage": True, "think": False}
@@ -36,6 +38,16 @@ class MockHandler(BaseHTTPRequestHandler):
         content = "答案"
         if mock_mode["think"]:
             content = "<think>思考过程</think>答案"
+        # T15（问题30）：模拟 DashScope 对 <10×10 图片的确定性拒绝
+        if str(body.get("model", "")).startswith("mock-bad400"):
+            out_b = json.dumps({"error": {"code": "InternalError.Algo.InvalidParameter",
+                                          "message": "[height:1 or width:1 must be larger than 10]"}}).encode()
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(out_b)))
+            self.end_headers()
+            self.wfile.write(out_b)
+            return
         if body.get("stream"):
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
@@ -45,14 +57,14 @@ class MockHandler(BaseHTTPRequestHandler):
             self.wfile.write(sse({"id": "m", "choices": [{"index": 0, "delta": {"content": content, "role": "assistant"}}]}))
             self.wfile.flush()
             if mock_mode["usage"] and "nousage" not in json.dumps(body, ensure_ascii=False):
-                self.wfile.write(sse({"id": "m", "choices": [], "usage": USAGE}))
+                self.wfile.write(sse({"id": "m", "choices": [], "usage": USAGE, "references": REFS}))
                 self.wfile.flush()
             self.wfile.write(b"data: [DONE]\n\n")
             self.wfile.flush()
         else:
             out = {"id": "m", "object": "chat.completion", "choices": [
                 {"index": 0, "message": {"role": "assistant", "content": content}, "finish_reason": "stop"}],
-                "usage": USAGE}
+                "usage": USAGE, "references": REFS}
             out_b = json.dumps(out, ensure_ascii=False).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -103,6 +115,15 @@ TEST_MODELS = [
      "is_free": True, "daily_token_limit": 1000},
     {"id": "zzbt/echo-nolimit", "name": "mock-echo-nolimit", "provider_id": "zzmock", "modality": "text",
      "is_free": True},
+    # T14 千帆搜索（qianfan_search 协议）：web_summary 形状 + 按次计费 + 安全阀预估=1
+    {"id": "zzbt/echo-qf", "name": "mock-echo-qf", "provider_id": "zzqf", "modality": "text",
+     "is_free": True, "daily_token_limit": 100, "billing_mode": "request"},
+    # T14 千帆网页搜索（qianfan_web_search）：裸结果合成 chat 响应
+    {"id": "zzbt/echo-qfws", "name": "mock-echo-qfws", "provider_id": "zzqf2", "modality": "text",
+     "is_free": True, "billing_mode": "request"},
+    # T15（问题30）确定性缺陷 400：池内两个候选，第一个必 400，验证不切换不冷却
+    {"id": "zzbt/bad400-a", "name": "mock-bad400-a", "provider_id": "zzmock", "modality": "text", "is_free": True},
+    {"id": "zzbt/bad400-b", "name": "mock-bad400-b", "provider_id": "zzmock", "modality": "text", "is_free": True},
 ]
 TEST_IDS = [m["id"] for m in TEST_MODELS]
 
@@ -115,11 +136,11 @@ def db_exec(sql, args=()):
 
 def deep_clean():
     c = json.load(open(os.path.join(REPO, "config.json"), encoding="utf-8"))
-    c["providers"] = [p for p in c.get("providers", []) if p["id"] not in ("zzmock", "zzark")]
+    c["providers"] = [p for p in c.get("providers", []) if p["id"] not in ("zzmock", "zzark", "zzqf", "zzqf2")]
     c["models"] = [m for m in c.get("models", []) if not str(m.get("id", "")).startswith("zzbt/")]
     c.get("pools", {}).pop("zzall", None)
     c.get("pools", {}).pop("zzdef", None)  # v2.11.19 曾漏清该测试池残留至生产配置
-    for pn in ("zzreq", "zzonce", "zzsmart", "zznso", "zzgift", "zzrpm", "zzvalve", "zzvnl"):
+    for pn in ("zzreq", "zzonce", "zzsmart", "zznso", "zzgift", "zzrpm", "zzvalve", "zzvnl", "zzqfp", "zzqfp2", "zzbad"):
         c.get("pools", {}).pop(pn, None)
     json.dump(c, open(os.path.join(REPO, "config.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=2)
     q = " OR ".join([f"model_name='{i}'" for i in TEST_IDS])
@@ -130,7 +151,7 @@ def deep_clean():
     # v2.11.40 起 request_log 表退役（RPM/TPM 内存化），不再列入清理
     for t in ["token_usage", "model_daily_stats", "call_metrics", "gift_state"]:
         db_exec(f"DELETE FROM {t} WHERE {q}")
-    db_exec(f"DELETE FROM decision_log WHERE selected IN ({','.join(chr(39)+i+chr(39) for i in TEST_IDS)}) OR pool_name='zzall'")
+    db_exec(f"DELETE FROM decision_log WHERE selected IN ({','.join(chr(39)+i+chr(39) for i in TEST_IDS)}) OR pool_name IN ('zzall','zzbad')")
     db_exec("DELETE FROM one_time_state WHERE model_name='zzbt/echo-once'")
     db_exec("DELETE FROM api_keys WHERE name='zzkey'")
     db_exec("DELETE FROM api_key_usage WHERE key_id NOT IN (SELECT id FROM api_keys)")
@@ -173,6 +194,10 @@ def main():
     # 余额返还制 v2.11.3+:显式 token_type="gift" 选择,不再做供应商名文字识别
     c["providers"].append({"id": "zzark", "name": "zz-普通供应商", "protocol": "openai",
                            "base_url": f"http://127.0.0.1:{MOCK_PORT}/v1", "api_key": "x"})
+    c["providers"].append({"id": "zzqf", "name": "zz-千帆搜索", "protocol": "qianfan_search",
+                           "base_url": f"http://127.0.0.1:{MOCK_PORT}", "api_key": "x"})
+    c["providers"].append({"id": "zzqf2", "name": "zz-千帆网页搜索", "protocol": "qianfan_web_search",
+                           "base_url": f"http://127.0.0.1:{MOCK_PORT}", "api_key": "x"})
     c["models"].extend(TEST_MODELS)
     c["pools"]["zzall"] = {"model_ids": TEST_IDS, "strategy": "sequential"}
     c["pools"]["zzreq"] = {"model_ids": ["zzbt/echo-req"], "strategy": "sequential"}
@@ -183,6 +208,9 @@ def main():
     c["pools"]["zzrpm"] = {"model_ids": ["zzbt/echo-rpm"], "strategy": "sequential"}
     c["pools"]["zzvalve"] = {"model_ids": ["zzbt/echo-valve"], "strategy": "sequential"}
     c["pools"]["zzvnl"] = {"model_ids": ["zzbt/echo-nolimit"], "strategy": "sequential"}
+    c["pools"]["zzqfp"] = {"model_ids": ["zzbt/echo-qf"], "strategy": "sequential"}
+    c["pools"]["zzqfp2"] = {"model_ids": ["zzbt/echo-qfws"], "strategy": "sequential"}
+    c["pools"]["zzbad"] = {"model_ids": ["zzbt/bad400-a", "zzbt/bad400-b"], "strategy": "sequential"}
     json.dump(c, open(os.path.join(REPO, "config.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=2)
 
     # 启动隔离实例
@@ -508,6 +536,98 @@ def main():
               rows.get("zzbt/echo-valve", {}).get("valve_pct") == 0
               and rows.get("zzbt/echo-nolimit", {}).get("valve_pct") == 0,
               {k: rows.get(k, {}).get("valve_pct") for k in ("zzbt/echo-valve", "zzbt/echo-nolimit")})
+
+        # ===== T14 千帆搜索协议（qianfan_search：web_summary 形状 + 按次计费 + 安全阀预估=1）=====
+        _n = len(captured_bodies)
+        r = chat("zzqfp", content="今天的新闻")
+        check("T14a 千帆搜索非流式200", r.status_code == 200, r.status_code)
+        j = r.json()
+        check("T14b 非流式content正常",
+              (j.get("choices") or [{}])[0].get("message", {}).get("content") == "答案", str(j)[:200])
+        check("T14c 非流式references透传",
+              isinstance(j.get("references"), list) and j["references"][0].get("title") == "参考1",
+              str(j.get("references"))[:120])
+        qb = captured_bodies[-1] if len(captured_bodies) > _n else {}
+        check("T14d 上游payload无model/stream_options",
+              qb.get("messages") and "model" not in qb and "stream_options" not in qb, str(qb)[:200])
+        check("T14e 非流式按次计费=1", token_used("zzbt/echo-qf") == 1, token_used("zzbt/echo-qf"))
+
+        # 流式：references 随 usage 块行级透传；request 模式首块预扣、结算不重复计费
+        r = chat("zzqfp", stream=True)
+        check("T14f 千帆搜索流式200", r.status_code == 200, r.status_code)
+        check("T14g 流式references透传", '"references"' in r.text and "参考1" in r.text, r.text[-200:])
+        check("T14h 流式按次不重复计费(共2)", token_used("zzbt/echo-qf") == 2, token_used("zzbt/echo-qf"))
+
+        # 安全阀：按次预估记 1 —— used=99 时配额未耗尽（99<100）但 (99+1)×100 ≥ 100×100 触阀门
+        set_used("zzbt/echo-qf", 99)
+        r = chat("zzqfp", content="hi")
+        check("T14i used=99安全阀拒绝(503)", r.status_code == 503, r.status_code)
+        check("T14i2 决策记录valve_exceeded",
+              any(s.get("reason") == "valve_exceeded" for s in reject_steps("zzqfp")),
+              [s.get("reason") for s in reject_steps("zzqfp")])
+
+        # /stats 带出按次单位与计费模式（统计卡片"次"标签数据源）
+        r = httpx.get(f"{BASE}/stats", headers=ADMIN, timeout=15)
+        rows = {x.get("id"): x for x in r.json().get("models", [])}
+        check("T14j /stats单位为次",
+              rows.get("zzbt/echo-qf", {}).get("unit") == "次"
+              and rows.get("zzbt/echo-qf", {}).get("billing_mode") == "request",
+              {k: rows.get("zzbt/echo-qf", {}).get(k) for k in ("unit", "billing_mode")})
+
+        # web_search 变体（百度搜索裸结果 → 合成 chat 响应）
+        _n2 = len(captured_bodies)
+        r = chat("zzqfp2", content="news")
+        check("T14k 网页搜索非流式200", r.status_code == 200, r.status_code)
+        j = r.json()
+        check("T14l 裸结果合成content含参考",
+              "参考1" in ((j.get("choices") or [{}])[0].get("message", {}).get("content") or ""), str(j)[:200])
+        check("T14m 合成响应references透传",
+              isinstance(j.get("references"), list) and len(j.get("references")) == 2,
+              str(j.get("references"))[:120])
+        check("T14n 网页搜索按次计费=1", token_used("zzbt/echo-qfws") == 1, token_used("zzbt/echo-qfws"))
+        r = chat("zzqfp2", stream=True)
+        check("T14o 网页搜索流式200含参考", r.status_code == 200 and "参考1" in r.text and "[DONE]" in r.text,
+              r.text[-200:])
+        qb2 = captured_bodies[-1] if len(captured_bodies) > _n2 else {}
+        check("T14p web_search上游payload无stream/model键",
+              qb2.get("messages") and "stream" not in qb2 and "model" not in qb2, str(qb2)[:200])
+
+        # ===== T15（问题30）确定性缺陷400快速失败：不冷却、不切换第二候选、400原文透传 =====
+        n_b0 = sum(1 for b in captured_bodies if b.get("model") == "mock-bad400-b")
+        r = chat("zzbad", content="hi")
+        check("T15a 缺陷400原样透传客户端(400)", r.status_code == 400, r.status_code)
+        check("T15b 透传含上游错误码", "InvalidParameter" in r.text, r.text[:200])
+        n_b1 = sum(1 for b in captured_bodies if b.get("model") == "mock-bad400-b")
+        check("T15c 未切换第二候选(坏请求不整池重演)", n_b1 == n_b0, (n_b0, n_b1))
+        r2 = chat("zzbad", content="hi")
+        check("T15d 不冷却(立即重试仍达上游拿400而非503)", r2.status_code == 400, r2.status_code)
+        steps15 = reject_steps("zzbad")
+        check("T15e 决策记录request_defect_400",
+              any(s.get("reason") == "request_defect_400" and (s.get("detail") or {}).get("no_cooldown")
+                  for s in steps15), [s.get("reason") for s in steps15])
+
+        # ===== T16（问题31）连接池幽灵租约自愈：连续3次 PoolTimeout 重建 client =====
+        import pool as _poolmod
+        _mp = _poolmod.ModelPool.__new__(_poolmod.ModelPool)  # 跳过 __init__，仅测自愈逻辑
+        _mp.providers_cache = {}
+        _e = _poolmod.ModelEntry(id="zzbt/echo-token", name="m", provider="openai",
+                                 base_url=f"http://127.0.0.1:{MOCK_PORT}/v1", api_key="x")
+        _old = _poolmod.OpenAIProvider(_e.base_url, _e.api_key)
+        _mp.providers_cache[_e.id] = _old
+
+        async def _t16_scenario():
+            await _mp._note_pool_timeout(_e)
+            await _mp._note_pool_timeout(_e)
+            _mid = _mp.providers_cache.get(_e.id)  # 阈值内：不重建
+            await _mp._note_pool_timeout(_e)      # 第3次：触发重建
+            return _mid
+
+        _mid = asyncio.run(_t16_scenario())
+        check("T16a 连续3次触发重建(新client≠旧client)",
+              _mid is _old and _mp.providers_cache.get(_e.id) is not _old,
+              ("mid_is_old", _mid is _old))
+        check("T16b 触发后计数清零", _e.pool_timeout_streak == 0, _e.pool_timeout_streak)
+        check("T16c 重建后cache可用(新client就位)", _e.id in _mp.providers_cache, list(_mp.providers_cache))
 
     finally:
         try:

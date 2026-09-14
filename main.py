@@ -111,6 +111,12 @@ def _wrap_key_stream(stream, key: dict, billing_mode: str):
                         pass
                 yield chunk
         finally:
+            # 问题31（v2.12.3）：async for 退出不会 aclose 被迭代对象——客户端断开时下游
+            # pool/httpx 生成器链只能等 GC，连接池租约会滞留成"幽灵租约"堵死该模型。确定性关闭。
+            try:
+                await stream.aclose()
+            except Exception:
+                pass
             amount = 1 if billing_mode == "request" else captured
             if amount > 0:
                 await keyauth.charge_key_usage(key, amount)
@@ -212,8 +218,16 @@ async def _chat_handler(request: Request, auth: dict):
             stream = openai_sse_to_anthropic(stream)
 
         async def generate():
-            async for chunk in stream:
-                yield chunk
+            # 问题31（v2.12.3）：最外层确定性关闭——客户端断开/取消时由 finally 逐层传播
+            # aclose 到 pool/_wrap_stream/httpx，租约即时归还，不再依赖 GC 兜底
+            try:
+                async for chunk in stream:
+                    yield chunk
+            finally:
+                try:
+                    await stream.aclose()
+                except Exception:
+                    pass
 
         return StreamingResponse(generate(), media_type="text/event-stream")
 

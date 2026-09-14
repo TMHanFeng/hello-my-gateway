@@ -22,6 +22,7 @@ _OPENAI_REQUEST_KEYS = [
     "frequency_penalty",
     "tools",
     "tool_choice",
+    "extra_params",
 ]
 
 _STOP_REASON_MAP = {
@@ -383,6 +384,13 @@ async def openai_sse_to_anthropic(openai_sse_stream):
             },
         )
         return
+    finally:
+        # 问题31（v2.12.3）：本层被关闭/异常退出时确定性关闭下游流——aclose 链逐环传播，
+        # 否则 pool/httpx 层的连接租约只能等 GC 归还，会滞留成"幽灵租约"堵死该模型
+        try:
+            await openai_sse_stream.aclose()
+        except Exception:
+            pass
     # 收尾兜底（循环正常耗尽后）：只要还没发过 message_delta/message_stop 就补发，
     # 覆盖 finish chunk 已到但上游省略 [DONE]、以及流直接提前结束（无 finish 无 [DONE]）
     # 两类场景，避免 Anthropic 客户端一直等待结束事件而挂起。

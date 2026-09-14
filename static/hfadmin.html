@@ -815,12 +815,21 @@ select { max-width: 100%; }
       </div>
       <div id="inline-conn">
         <div class="f2">
-          <div class="fg"><label>提供商协议</label><select name="provider"><option value="openai">openai（兼容格式）</option><option value="anthropic">anthropic</option></select></div>
+          <div class="fg"><label>提供商协议</label><select name="provider" onchange="onSearchSummaryVisibility()"><option value="openai">openai（兼容格式）</option><option value="anthropic">anthropic</option><option value="qianfan_search">千帆搜索</option><option value="qianfan_web_search">千帆网页搜索</option></select></div>
           <div class="fg"><label>Base URL</label><input name="base_url" id="f-base-url" required placeholder="https://api.openai.com/v1"></div>
         </div>
         <div class="fg"><label>API Key</label><input name="api_key" id="f-api-key" required placeholder="sk-..."></div>
       </div>
       <div id="inherit-note" class="hint hidden" style="margin-bottom:13px">✨ 将继承所选供应商的协议 / Base URL / API Key。</div>
+      <!-- v2.12.3 搜索 AI 总结：仅「千帆网页搜索」协议显示（千帆搜索/总结版本不存在这两个选项） -->
+      <div id="search-summary-fields" style="display:none">
+        <div class="form-sec">搜索 AI 总结</div>
+        <div class="f2">
+          <div class="fg"><label>总结模型池</label><select name="summary_pool" id="f-summary-pool"><option value="">— 不总结（返回原始结果列表）—</option></select></div>
+          <div class="fg"><label>回答字数（自由填写，直接拼进提示词）</label><input name="summary_length" id="f-summary-length" placeholder="例：500（留空则不限制）"></div>
+        </div>
+        <div class="hint" style="margin-bottom:13px">搜索结果（含网页正文、标题、链接、摘要等全部可解析字段）会交给所选模型池做一次 AI 总结；该池全部失败时自动退回原始结果列表。</div>
+      </div>
       <div class="form-sec">计费与额度</div>
       <div class="f3">
         <div class="fg"><label>令牌类型</label><select name="token_type" id="f-token-type" onchange="onTokenTypeChange()"><option value="daily">daily（每日刷新）</option><option value="rolling_5h">rolling_5h（5h 限额）</option><option value="one_time">one_time（一次性）</option><option value="gift">gift（余额返还制）</option></select></div>
@@ -888,7 +897,7 @@ select { max-width: 100%; }
         <div class="fg"><label>供应商名称</label><input name="name" required placeholder="我的 OpenAI"></div>
       </div>
       <div class="f2">
-        <div class="fg"><label>协议</label><select name="protocol"><option value="openai">openai</option><option value="anthropic">anthropic</option></select></div>
+        <div class="fg"><label>协议</label><select name="protocol"><option value="openai">openai</option><option value="anthropic">anthropic</option><option value="qianfan_search">千帆搜索</option><option value="qianfan_web_search">千帆网页搜索</option></select></div>
         <div class="fg"><label>Base URL</label><input name="base_url" required placeholder="https://api.openai.com/v1"></div>
       </div>
       <div class="fg"><label>API Key</label><input name="api_key" required placeholder="sk-..."></div>
@@ -1125,7 +1134,7 @@ let modelLookup = {}, providerLookup = {}, poolLookup = {};
 let cachedModels = null, cachedProviders = null;
 let speedCache = JSON.parse(localStorage.getItem('gw_speed') || '{}');
 
-function provBadge(p) { return p === 'anthropic' ? '<span class="badge b-anthropic">anthropic</span>' : '<span class="badge b-openai">openai</span>'; }
+function provBadge(p) { return p === 'anthropic' ? '<span class="badge b-anthropic">anthropic</span>' : p === 'qianfan_search' ? '<span class="badge b-once">千帆搜索</span>' : p === 'qianfan_web_search' ? '<span class="badge b-5h">千帆网页搜索</span>' : '<span class="badge b-openai">openai</span>'; }
 function typeBadge(m) {
   if (m.token_type === 'one_time') return '<span class="badge b-once">一次性</span>';
   if (m.token_type === 'rolling_5h') return '<span class="badge b-5h">5h限额</span>';
@@ -1515,6 +1524,40 @@ function onProviderSelect() {
   document.getElementById('inherit-note').classList.toggle('hidden', !pid);
   document.getElementById('f-base-url').required = !pid;
   document.getElementById('f-api-key').required = !pid;
+  onSearchSummaryVisibility();
+}
+
+/* ═══════════ v2.12.3 搜索 AI 总结：仅 qianfan_web_search 协议显示 ═══════════ */
+let summaryPoolOpts = null;
+function effProtocol() {
+  const pid = document.getElementById('f-provider-id').value;
+  if (pid) { const p = (cachedProviders || []).find(x => x.id === pid); return p ? (p.protocol || 'openai') : ''; }
+  const f = document.getElementById('mform');
+  return (f.provider && f.provider.value) || 'openai';
+}
+async function fillSummaryPools() {
+  const sel = document.getElementById('f-summary-pool');
+  if (!sel) return;
+  if (summaryPoolOpts === null) {
+    const data = await api('/admin/pools');
+    // 服务端已过滤：排除搜索池、embedding/rerank 池、空池
+    summaryPoolOpts = (data && data.summary_candidates) ? data.summary_candidates
+                                                       : Object.keys((data && data.pools) || {});
+  }
+  const keep = sel.value;
+  const opts = ['<option value="">— 不总结（返回原始结果列表）—</option>'];
+  summaryPoolOpts.forEach(n => opts.push(`<option value="${esc(n)}">${esc(n)}</option>`));
+  sel.innerHTML = opts.join('');
+  if (keep) sel.value = keep;
+  // 新增模型时默认选中 mm（存量模型保留其已存值，"有值/无值"都以 config 为准）
+  if (!sel.value && !editingId) sel.value = summaryPoolOpts.indexOf('mm') >= 0 ? 'mm' : '';
+}
+function onSearchSummaryVisibility() {
+  const box = document.getElementById('search-summary-fields');
+  if (!box) return;
+  const isSearch = effProtocol() === 'qianfan_web_search';
+  box.style.display = isSearch ? '' : 'none';
+  if (isSearch) fillSummaryPools();
 }
 function showGiftCalibrate() {
   if (!editingId) return;
@@ -1655,6 +1698,9 @@ async function editModel(id) {
   f.max_tokens.value = m.max_tokens || 0; f.ttl_seconds.value = m.ttl_seconds || 0;
   f.expire_date.value = m.expire_date || '';
   f.valve_pct.value = m.valve_pct ?? 100;  // 安全阀回填（缺省 100%，onTokenTypeChange→onValveInput 刷新预览）
+  // v2.12.3 搜索 AI 总结回填（config 里没有该键的模型给默认 mm；显式 "" 表示用户选了"不总结"）
+  if (f.summary_pool) f.summary_pool.value = (m.summary_pool === undefined || m.summary_pool === null) ? 'mm' : m.summary_pool;
+  if (f.summary_length) f.summary_length.value = m.summary_length || '';
   onTokenTypeChange(); onSmartToggle();
   document.getElementById('f-model-id').disabled = true;
   await populateProviderSelect(m.provider_id || '');

@@ -9,6 +9,8 @@ import database as db
 from scheduler import restart_scheduler
 from providers.openai_provider import OpenAIProvider
 from providers.anthropic_provider import AnthropicProvider
+from providers.qianfan_search import QianfanSearchProvider
+import search_summary
 
 router = APIRouter(prefix="/admin")
 
@@ -92,10 +94,14 @@ async def admin_page():
 @router.get("/models")
 async def get_models(_=Depends(verify_admin)):
     config = load_config()
+    providers_by_id = {p["id"]: p for p in config.get("providers", [])}
     models = []
     for m in config.get("models", []):
         m2 = dict(m)
         m2["gift_refund"] = (m.get("token_type") == "gift")
+        if "provider" not in m2:  # 供应商制模型回填解析后的协议：面板模型行徽章按协议显示
+            prov = providers_by_id.get(m.get("provider_id", ""))
+            m2["provider"] = (prov or {}).get("protocol") or "openai"
         models.append(m2)
     return {"models": models}
 
@@ -358,6 +364,9 @@ async def add_model(request: Request, _=Depends(verify_admin)):
         "reasoning_map": body.get("reasoning_map") or {},
         "smart_estimate": bool(body.get("smart_estimate", False)),
         "no_stream_options": bool(body.get("no_stream_options", False)),
+        # v2.12.3 搜索 AI 总结（仅 qianfan_web_search 协议在面板有 UI 入口）
+        "summary_pool": (body.get("summary_pool") or "").strip(),
+        "summary_length": str(body.get("summary_length") or "").strip(),
     }
     try:
         entry["valve_pct"] = max(0, min(100, int(body.get("valve_pct", 100))))  # 使用量安全阀 k（%）
@@ -384,6 +393,20 @@ async def add_model(request: Request, _=Depends(verify_admin)):
         entry["ttl_seconds"] = int(ttl_raw or 0)
         if exp_raw:
             entry["expire_date"] = exp_raw
+
+    # v2.12.3 搜索 AI 总结：只有 qianfan_web_search 协议保留这两个键；其余显式剥离避免残留。
+    # 校验放在落盘之前（沿用本文件"先校验后改"的既有约定）。
+    _proto_new = ((next((p for p in config.get("providers", []) if p.get("id") == pid), None) or {})
+                  .get("protocol") if pid else body.get("provider", "openai")) or "openai"
+    if _proto_new == "qianfan_web_search":
+        if entry.get("summary_pool"):
+            from main import pool as _pool
+            _why = search_summary.pool_ineligible_reason(_pool, entry["summary_pool"])
+            if _why:
+                raise HTTPException(status_code=400, detail=_why)
+    else:
+        entry.pop("summary_pool", None)
+        entry.pop("summary_length", None)
 
     models.append(entry)
     config["models"] = models
@@ -514,6 +537,18 @@ async def update_model(model_id: str, request: Request, _=Depends(verify_admin))
         except (TypeError, ValueError):
             raise HTTPException(status_code=400, detail="valve_pct 必须为 0-100 的整数")
 
+    # v2.12.3 搜索 AI 总结：先校验后改（避免校验失败时被拒绝的字段残留在共享配置缓存中）
+    _pid_new = body.get("provider_id", models[idx].get("provider_id"))
+    _proto_new = ((next((p for p in config.get("providers", []) if p.get("id") == _pid_new), None) or {})
+                  .get("protocol") if _pid_new else body.get("provider")
+                  or models[idx].get("provider")) or "openai"
+    _sp_new = ((body.get("summary_pool") if "summary_pool" in body else models[idx].get("summary_pool")) or "").strip()
+    if _proto_new == "qianfan_web_search" and _sp_new:
+        from main import pool as _pool
+        _why = search_summary.pool_ineligible_reason(_pool, _sp_new)
+        if _why:
+            raise HTTPException(status_code=400, detail=_why)
+
     for key, value in body.items():
         if key == "id":
             continue
@@ -539,6 +574,15 @@ async def update_model(model_id: str, request: Request, _=Depends(verify_admin))
     if models[idx].get("modality") in ("embedding", "rerank"):
         models[idx].pop("reasoning_map", None)
         models[idx].pop("smart_estimate", None)
+
+    # v2.12.3 搜索 AI 总结：非千帆网页搜索协议显式剥离，避免切换协议后配置残留
+    # （隐藏的表单控件仍会被 FormData 提交旧值，所以清理必须放在服务端）
+    if _proto_new == "qianfan_web_search":
+        models[idx]["summary_pool"] = _sp_new
+        models[idx]["summary_length"] = str(models[idx].get("summary_length") or "").strip()
+    else:
+        models[idx].pop("summary_pool", None)
+        models[idx].pop("summary_length", None)
 
     config["models"] = models
     save_config(config)
@@ -583,8 +627,11 @@ async def add_provider(request: Request, _=Depends(verify_admin)):
     for field in ["id", "name", "protocol", "base_url", "api_key"]:
         if not body.get(field):
             raise HTTPException(status_code=400, detail=f"Missing field: {field}")
-    if body["protocol"] not in ("openai", "anthropic"):
-        raise HTTPException(status_code=400, detail="protocol must be 'openai' or 'anthropic'")
+    if body["protocol"] not in ("openai", "anthropic", "qianfan_search", "qianfan_web_search"):
+        raise HTTPException(status_code=400, detail="protocol must be 'openai', 'anthropic', 'qianfan_search' or 'qianfan_web_search'")
+    # 问题30（v2.12.3）：转发层会在 base_url 后自动拼接 /chat/completions，尾部再带一段会双重路径（稳定 404/400）
+    if body["base_url"].rstrip("/").lower().endswith("/chat/completions"):
+        raise HTTPException(status_code=400, detail="base_url 不能以 /chat/completions 结尾：转发层会自动拼接该路径")
 
     config = load_config()
     providers = config.setdefault("providers", [])
@@ -642,8 +689,11 @@ async def update_provider(provider_id: str, request: Request, _=Depends(verify_a
     if idx is None:
         raise HTTPException(status_code=404, detail=f"Provider '{provider_id}' not found")
 
-    if "protocol" in body and body["protocol"] not in ("openai", "anthropic"):
-        raise HTTPException(status_code=400, detail="protocol must be 'openai' or 'anthropic'")
+    if "protocol" in body and body["protocol"] not in ("openai", "anthropic", "qianfan_search", "qianfan_web_search"):
+        raise HTTPException(status_code=400, detail="protocol must be 'openai', 'anthropic', 'qianfan_search' or 'qianfan_web_search'")
+    # 问题30（v2.12.3）：同 add_provider，尾缀 /chat/completions 会与转发层拼接双重路径
+    if "base_url" in body and (body.get("base_url") or "").rstrip("/").lower().endswith("/chat/completions"):
+        raise HTTPException(status_code=400, detail="base_url 不能以 /chat/completions 结尾：转发层会自动拼接该路径")
     for key, value in body.items():
         if key == "id":
             continue
@@ -680,7 +730,9 @@ async def get_pools(_=Depends(verify_admin)):
     # Return from in-memory pool.pools (includes auto-created 兜底池).
     # pool_order 保留 Python dict 的插入顺序：JS 的 Object.keys 会把纯数字池名
     # （如 "123"）按整数键规则提到最前，打破预期顺序，故显式下发有序数组。
-    return {"pools": pool.pools, "pool_order": list(pool.pools.keys())}
+    return {"pools": pool.pools, "pool_order": list(pool.pools.keys()),
+            # v2.12.3：可作为「搜索 AI 总结」目标的池（排除搜索池、embedding/rerank 池、空池）
+            "summary_candidates": search_summary.summary_candidates(pool)}
 
 
 @router.post("/pools")
@@ -972,11 +1024,14 @@ async def test_model(request: Request, _=Depends(verify_admin)):
     modality = (body.get("modality") or "text").strip()
     if not base_url or not api_key or not model_name:
         raise HTTPException(400, "缺少 base_url / api_key / model_name")
-    if protocol not in ("openai", "anthropic"):
-        raise HTTPException(400, "protocol 必须为 openai 或 anthropic")
+    if protocol not in ("openai", "anthropic", "qianfan_search", "qianfan_web_search"):
+        raise HTTPException(400, "protocol 必须为 openai、anthropic、qianfan_search 或 qianfan_web_search")
 
     if protocol == "anthropic":
         provider = AnthropicProvider(base_url, api_key)
+    elif protocol in ("qianfan_search", "qianfan_web_search"):
+        provider = QianfanSearchProvider(base_url, api_key,
+                                         variant=("web_search" if protocol == "qianfan_web_search" else "summary"))
     else:
         provider = OpenAIProvider(base_url, api_key)
     import database as db

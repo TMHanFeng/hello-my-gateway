@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 import httpx
 from providers.openai_provider import OpenAIProvider, RateLimitError
 from providers.anthropic_provider import AnthropicProvider
+from providers.qianfan_search import QianfanSearchProvider
+import search_summary
 import reasoning
 import database as db
 
@@ -47,6 +49,9 @@ class ModelEntry:
     smart_estimate: bool = False  # 问题22：智能估算超时（true=按 token 量动态计算超时，忽略手动秒数）
     no_stream_options: bool = False  # 问题21-B：本地 vllm 等不认 stream_options 时关闭注入（该流将无 usage 统计）
     valve_pct: int = 100  # 使用量安全阀 k（%）：已用+预估 ≥ k×最大量限制 即跳过路由；0=停用该模型；上限 0（不限量）不生效
+    # v2.12.3 搜索 AI 总结（仅 qianfan_web_search 协议生效）：目标 LLM 池名 + 自由字数（原样拼进提示词）
+    summary_pool: str = ""      # "" = 不总结（返回原始结果列表，行为与旧版一致）
+    summary_length: str = ""    # 自由文本，如 "500"；"" = 不加字数要求
     # 问题22 运行时校准状态（call_metrics 冷启动聚合 + 成功调用增量更新）
     throughput_ema: float | None = None   # 输出吞吐 tok/s
     avg_completion_ema: float | None = None  # 输出 token 均值
@@ -56,6 +61,7 @@ class ModelEntry:
     expire_date: str = ""
     latency_ms: float | None = None
     cooldown_until: float = 0.0
+    pool_timeout_streak: int = 0  # 问题31：连续 PoolTimeout 计数，≥3 触发重建 client（幽灵租约自愈）
     one_time_created_at: float | None = None
     rolling5h_window_start: float | None = None
     # v2.11.44 并发负载计数（运行时状态，不持久）：active=持有槽正在上游处理中，waiting=排队等槽
@@ -102,6 +108,23 @@ def _is_context_overflow_error(e: Exception) -> bool:
     low = text.lower()
     return ("context length" in low or "maximum context" in low
             or "token count exceeds" in low or "longer than the model" in low)
+
+
+def _is_request_defect_error(e: Exception) -> bool:
+    """问题30（v2.12.3）：判定 400 是否为确定性请求缺陷（图片不合法/参数错误）。
+
+    此类请求换池内任何上游模型都会被拒（如 DashScope 对 <10×10 图片返回
+    InternalError.Algo.InvalidParameter），冷却+切换只会让同一坏请求整池串行重演，
+    应不冷却、不切换，直接把 400 原样透传给客户端。"""
+    text = str(e).lower()
+    resp = getattr(e, "response", None)
+    if resp is not None:
+        try:
+            text += " " + (resp.text or "").lower()
+        except Exception:
+            pass
+    return any(k in text for k in ("invalidparameter", "invalid_parameter", "invalid_request_error",
+                                   "must be larger than 10", "invalid image", "broken image stream"))
 
 
 def _upstream_error_body(e: Exception) -> str:
@@ -220,6 +243,8 @@ class ModelPool:
                 smart_estimate=bool(m.get("smart_estimate", False)),
                 no_stream_options=bool(m.get("no_stream_options", False)),
                 valve_pct=valve_pct,
+                summary_pool=(m.get("summary_pool") or "").strip(),
+                summary_length=str(m.get("summary_length") or "").strip(),
                 provider_id=pid,
                 proxy_url=proxy_url,
                 expire_date=m.get("expire_date", ""),
@@ -340,13 +365,41 @@ class ModelPool:
 
     def _get_provider(self, entry: ModelEntry):
         if entry.id not in self.providers_cache:
-            if entry.provider == "anthropic":
-                self.providers_cache[entry.id] = AnthropicProvider(entry.base_url, entry.api_key, entry.proxy_url,
-                                                                   timeout_seconds=entry.timeout_seconds)
-            else:
-                self.providers_cache[entry.id] = OpenAIProvider(entry.base_url, entry.api_key, entry.proxy_url,
-                                                                timeout_seconds=entry.timeout_seconds)
+            self.providers_cache[entry.id] = self._build_provider(entry)
         return self.providers_cache[entry.id]
+
+    @staticmethod
+    def _build_provider(entry: ModelEntry):
+        """按模型条目构建上游 provider（_get_provider 与问题31 自愈重建共用）。"""
+        if entry.provider == "anthropic":
+            return AnthropicProvider(entry.base_url, entry.api_key, entry.proxy_url,
+                                     timeout_seconds=entry.timeout_seconds)
+        if entry.provider == "qianfan_search":
+            return QianfanSearchProvider(entry.base_url, entry.api_key, entry.proxy_url,
+                                         timeout_seconds=entry.timeout_seconds,
+                                         extra_params=entry.extra_params)
+        if entry.provider == "qianfan_web_search":
+            return QianfanSearchProvider(entry.base_url, entry.api_key, entry.proxy_url,
+                                         timeout_seconds=entry.timeout_seconds,
+                                         extra_params=entry.extra_params, variant="web_search")
+        return OpenAIProvider(entry.base_url, entry.api_key, entry.proxy_url,
+                              timeout_seconds=entry.timeout_seconds)
+
+    async def _note_pool_timeout(self, entry: ModelEntry):
+        """问题31（v2.12.3）自愈熔断：连续 PoolTimeout ≥3 → 重建该模型的 httpx client。
+
+        连接池账本被幽灵租约占满时（流式响应弃置不归还，物理 socket 早已消失而
+        httpcore 仍视为全部在租），等待只会每个请求空耗满 pool 超时，唯一出路是
+        丢弃旧 client。成功不清零：堵死态下每个请求都会 PoolTimeout，阈值数秒内
+        必达；部分占用态偶尔多重建一次亦无害（aclose 只影响在途的已损坏连接）。"""
+        entry.pool_timeout_streak += 1
+        if entry.pool_timeout_streak < 3:
+            return
+        entry.pool_timeout_streak = 0
+        old = self.providers_cache.pop(entry.id, None)
+        await self._aclose_providers([old] if old is not None else [])
+        self.providers_cache[entry.id] = self._build_provider(entry)
+        logger.warning(f"[连接池自愈] model={entry.id} 连续3次PoolTimeout，已重建上游 client 清理幽灵租约")
 
     async def close_all(self):
         for p in self.providers_cache.values():
@@ -1385,7 +1438,7 @@ class ModelPool:
         return "所有候选模型均不可用：用量用尽 / 安全阀触顶 / RPM·TPM 触顶 / 冷却 / 超上下文"
 
     async def execute_with_fallback(self, pool_name: str, req, requested_model: str | None = None, caller: str = "",
-                                    required_json_output: bool = False):
+                                    required_json_output: bool = False, allow_search_summary: bool = True):
         tried: set[str] = set()
         estimated = self._estimate_tokens(req)
         est_input = self._estimate_input_tokens(req)
@@ -1434,6 +1487,15 @@ class ModelPool:
                     actual_calls.append({"model": entry.id, "reason": "fallback_selected" if use_fallback else "selected"})
                 if actual_calls and actual_calls[-1]["model"] == entry.id:
                     actual_calls[-1]["detail"] = {"route_ms": route_ms, "upstream_ms": upstream_ms}
+                # v2.12.3 搜索两步式第 2 步：网页搜索的裸结果交给指定 LLM 池总结。
+                # 失败/超时/整池报错一律返回 None → 保持原始结果列表，绝不让搜索请求本身失败。
+                if allow_search_summary and getattr(entry, "summary_pool", ""):
+                    _summary_text = await search_summary.summarize_text(self, entry, req, response, caller)
+                    if _summary_text:
+                        try:
+                            response.choices[0].message.content = _summary_text
+                        except Exception:
+                            pass
                 await db.log_decision(pool_name, requested_model, entry.id, self._estimate_effective(entry, req),
                                       actual_calls, caller, actual_tokens=tokens)
                 return response, tokens, actual_calls
@@ -1473,6 +1535,23 @@ class ModelPool:
                     if override_id and not use_fallback:
                         use_fallback = True
                     continue
+                # 问题30（v2.12.3）：确定性请求缺陷 400——请求本身有问题，不冷却不切换，
+                # 结束重试并借道 last_overflow 通道把上游 400 原样透传给客户端
+                if status == 400 and _is_request_defect_error(e):
+                    last_overflow = e
+                    last_failure_overflow = True
+                    logger.warning(
+                        f"[请求缺陷400透传] pool={pool_name} model={entry.id} caller={caller!r} "
+                        f"status=400 不冷却不切换，结束重试 | {str(e)[:180]}"
+                    )
+                    actual_calls.append({
+                        "model": entry.id,
+                        "reason": "request_defect_400",
+                        "detail": {"status": 400, "no_cooldown": True, "no_switch": True, "error": str(e)[:500]},
+                    })
+                    await db.log_decision(pool_name, requested_model, None,
+                                          self._estimate_effective(entry, req), actual_calls, caller)
+                    break
                 last_failure_overflow = False
                 # 按异常类型决定冷却时长（v2.11.44 统一 5s：429/5xx/网络/其他；上下文超限 400 不冷却）
                 if isinstance(e, httpx.HTTPStatusError) and status is not None and 500 <= status < 600:
@@ -1482,6 +1561,8 @@ class ModelPool:
                 else:
                     cooldown_sec = 5
                 entry.cooldown_until = time.time() + cooldown_sec
+                if isinstance(e, httpx.PoolTimeout):
+                    await self._note_pool_timeout(entry)  # 问题31 自愈熔断
                 detail = {
                     "cooldown_sec": cooldown_sec,
                     "error_type": error_type,
@@ -1527,8 +1608,23 @@ class ModelPool:
         await db.log_decision(pool_name, requested_model, None, estimated, actual_calls, caller)
         return None, 0, actual_calls
 
+    async def _search_summary_stream(self, entry, req, pool_name: str, requested_model: str | None,
+                                     caller: str, actual_calls: list):
+        """搜索两步式（流式）：先同步取回搜索结果，再把总结池的流原样透传。
+
+        上游 web_search 不支持流式，所以搜索阶段必须走非流式——计费、并发槽、耗时统计
+        与 execute_with_fallback 完全一致（execute() 内部已入账）。
+        ★ 调用方拿到非 None 后必须直接 return：否则会再落到流式预扣分支，搜索模型被计两次。
+        返回 None 表示总结不可用，调用方继续走原有合成流（即返回裸列表）。
+        """
+        response, tokens = await self.execute(entry, req)
+        await db.log_decision(pool_name, requested_model, entry.id,
+                              self._estimate_effective(entry, req), actual_calls, caller,
+                              actual_tokens=tokens)
+        return await search_summary.summarize_stream(self, entry, req, response, caller)
+
     async def execute_stream_with_fallback(self, pool_name: str, req, requested_model: str | None = None, caller: str = "",
-                                           required_json_output: bool = False):
+                                           required_json_output: bool = False, allow_search_summary: bool = True):
         tried: set[str] = set()
         estimated = self._estimate_tokens(req)
         est_input = self._estimate_input_tokens(req)
@@ -1567,6 +1663,13 @@ class ModelPool:
                         actual_calls[-1]["reason"] = "fallback_selected"
                 else:
                     actual_calls.append({"model": entry.id, "reason": "fallback_selected" if use_fallback else "selected"})
+                # v2.12.3 搜索两步式第 2 步（流式）：见 _search_summary_stream 注释。
+                # 返回 None（总结不可用）时不 return，继续走下面的原有合成流 → 客户端拿到裸列表。
+                if allow_search_summary and getattr(entry, "summary_pool", ""):
+                    _sstream = await self._search_summary_stream(entry, req, pool_name, requested_model,
+                                                                 caller, actual_calls)
+                    if _sstream is not None:
+                        return _sstream, entry, actual_calls
                 # 决策日志后置（v2.10.8）：由 _wrap_stream 结束时一次性写入（含 final actual_tokens），
                 # INSERT 移出 TTFB 关键路径；预取即失败的尝试不产生独立行，其切换步骤随后续尝试/最终失败日志记录
                 dctx = {"pool": pool_name, "requested": requested_model,
@@ -1643,6 +1746,22 @@ class ModelPool:
                     if override_id and not use_fallback:
                         use_fallback = True
                     continue
+                # 问题30（v2.12.3）：确定性请求缺陷 400——同非流式分支，不冷却不切换直接透传
+                if status == 400 and _is_request_defect_error(e):
+                    last_overflow = e
+                    last_failure_overflow = True
+                    logger.warning(
+                        f"[请求缺陷400透传-流式] pool={pool_name} model={entry.id} caller={caller!r} "
+                        f"status=400 不冷却不切换，结束重试 | {str(e)[:180]}"
+                    )
+                    actual_calls.append({
+                        "model": entry.id,
+                        "reason": "request_defect_400",
+                        "detail": {"status": 400, "no_cooldown": True, "no_switch": True, "error": str(e)[:500]},
+                    })
+                    await db.log_decision(pool_name, requested_model, None,
+                                          self._estimate_effective(entry, req), actual_calls, caller)
+                    break
                 last_failure_overflow = False
                 if isinstance(e, httpx.HTTPStatusError) and status is not None and 500 <= status < 600:
                     cooldown_sec = 5
@@ -1651,6 +1770,8 @@ class ModelPool:
                 else:
                     cooldown_sec = 5
                 entry.cooldown_until = time.time() + cooldown_sec
+                if isinstance(e, httpx.PoolTimeout):
+                    await self._note_pool_timeout(entry)  # 问题31 自愈熔断
                 detail = {"cooldown_sec": cooldown_sec, "error_type": type(e).__name__}
                 if status is not None:
                     detail["status"] = status

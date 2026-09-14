@@ -24,3 +24,6 @@ config.yaml
 *.bak_*
 *.bak
 .zcode/
+
+# 本地改造备份（含生产配置与密钥，严禁入库）
+.backup/

@@ -25,6 +25,8 @@ class ChatCompletionRequest(BaseModel):
     response_format: Optional[dict] = None
     # 统一思考档位：off/minimal/low/medium/high/max（按模型 reasoning_map 映射为上游参数）
     reasoning_effort: Optional[str] = None
+    # 上游自定义参数透传（千帆搜索 instruction/resource_type_filter 等；openai_provider 黑名单过滤后注入）
+    extra_params: Optional[dict[str, Any]] = None
 
 
 class EmbeddingRequest(BaseModel):
@@ -73,3 +75,5 @@ class ChatCompletionResponse(BaseModel):
     model: str = ""
     choices: list[Choice] = []
     usage: UsageInfo = UsageInfo()
+    # 千帆搜索等上游的引用列表透传（OpenAI 路径直接返回本对象自动带出；Anthropic 转换忽略未知键）
+    references: Optional[list] = None

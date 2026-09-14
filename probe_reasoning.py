@@ -71,6 +71,8 @@ def build_targets(config: dict, keyword: str = "") -> list[dict]:
             proxy_url = m.get("proxy_url", "") or ""
         if not base_url or not api_key:
             continue
+        if protocol not in ("openai", "anthropic"):
+            continue  # 千帆搜索等专用协议无思考参数可言，跳过探测（避免打到不存在的 /chat/completions）
         name = m.get("name", "")
         if not name:
             continue

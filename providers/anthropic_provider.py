@@ -283,7 +283,9 @@ class AnthropicProvider:
         )
 
     async def chat_stream(self, req: ChatCompletionRequest, model_name: str,
-                          reasoning_fragment: dict | None = None) -> AsyncGenerator[str, None]:
+                          reasoning_fragment: dict | None = None,
+                          no_stream_options: bool = False) -> AsyncGenerator[str, None]:
+        # no_stream_options 仅对齐 pool 调用签名（anthropic 协议本就不发 stream_options，忽略即可）
         payload = self._build_payload(req, model_name, stream=True, reasoning_fragment=reasoning_fragment)
         completion_id = f"chatcmpl-{uuid.uuid4().hex[:8]}"
         created = int(time.time())
