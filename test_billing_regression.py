@@ -890,6 +890,15 @@ def main():
         rl = httpx.get(f"{BASE}/admin/keys/{kid}/calls", params={"limit": 1}, headers=ADMIN, timeout=15)
         check("T20d limit参数生效", len(rl.json().get("calls", [])) == 1, len(rl.json().get("calls", [])))
 
+        # ===== T21 面板静态接线：主题滑块与用量历史折线图 =====
+        pa = httpx.get(f"{BASE}/admin/", timeout=15).text
+        ph = httpx.get(f"{BASE}/hfadmin", timeout=15).text
+        check("T21a admin面板滑块接线→hfadmin", "theme-switch" in pa and "location.href='/hfadmin/'" in pa, None)
+        check("T21b hfadmin面板滑块接线→admin", "theme-switch" in ph and "location.href='/admin/'" in ph, None)
+        check("T21c 双面板折线图与调用记录容器在位",
+              all(k in pa for k in ("loadKeyUsage", "usage-calls", "Catmull-Rom"))
+              and all(k in ph for k in ("loadKeyUsage", "usage-calls", "Catmull-Rom")), None)
+
     finally:
         try:
             deep_clean()

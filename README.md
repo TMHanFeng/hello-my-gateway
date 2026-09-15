@@ -7,7 +7,7 @@
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.110%2B-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Version](https://img.shields.io/badge/version-v2.12.6-orange)](#-版本)
+[![Version](https://img.shields.io/badge/version-v2.12.7-orange)](#-版本)
 [![Status](https://img.shields.io/badge/status-stable-brightgreen)](#)
 
 对外暴露 **OpenAI 兼容**与 **Anthropic Messages** 接口，
@@ -581,6 +581,8 @@ SQLite（`gateway.db`）持久化以下表：
 ## 📜 版本
 
 ### 最新
+
+**`v2.12.7`** — **面板打磨：滑块位置统一 + 折线图反过冲 + 悬浮数据 + 手机端适配**：①**主题滑块位置统一**：admin 滑块桌面端对齐 hfadmin 顶栏右缘的精确坐标（实测右缘差 0px；媒体查询限定桌面端生效，移动端布局不受影响）②**用量折线图反过冲**：Catmull-Rom 在尖刺型计量数据（10M 单峰夹平缓小时）上会剧烈过冲振荡、甚至画出 0 以下的"负用量"，改为**单调三次插值（Fritsch–Carlson）**——曲线平滑且严格不过冲，不越过相邻数据点范围 ③**图表悬浮数据**：鼠标/触屏移动显示竖向参考线 + 数据框（昨日/今日 HH:00 · 用量 N tok），最近数据点放大指示 ④**手机端适配**：折线图宽度随容器 1:1 渲染（320-760px 自适应，字体不缩放），resize 自动按新宽度重渲 ⑤回归 122/122 断言全绿（新增 T21：双面板滑块接线与跳转目标、折线图与调用记录容器静态检查）；浏览器实测：滑块右缘差 0px、曲线包围盒完全在 0 线以上、悬浮数据框、390px 手机端渲染与触屏交互正常
 
 **`v2.12.6`** — **面板体验三连：每池调用记录 / 密钥用量历史增强 / 明暗模式一键切换**：①**调用记录改为每池保留最近 50 条**：`trim_decision_log` 由全局 500 条改为按池裁剪（scheduler 每 60s）——大池高流量不再把其他池的记录冲掉，面板按池查询恒有据可查 ②**API 密钥用量历史增强**：新增 `GET /admin/keys/{id}/calls` 端点（decision_log 按 caller=Key 名过滤，`get_decisions` 加 caller 参数）；双面板用量历史弹窗新增「最近调用记录（≤50 条，仅本 Key）」表格（时间/池/请求模型/结果 ✓✗/tokens），模态加宽 ③**右上角明暗模式滑块**：admin=夜间、hfadmin=白天，滑块状态随访问页面自动呈现，点击即在两个面板间跳转（`.theme-switch` 双面板各配色）④**用量历史图表重做**：柱状图改为**近 24 小时平滑折线图**（Catmull-Rom 贝塞尔平滑，只平滑视觉不改数据；滚动窗口跨昨日/今日，每小时数据点带悬浮明细，x 轴标注昨/今，y 轴自适应刻度）；右上角「当日总量」保留 ⑤回归 115→119 断言全绿（T20：55 连发后每池≤50 裁剪、密钥调用记录端点与字段归属、limit 参数）；浏览器实测：滑块双向跳转、双面板用量历史折线图与调用记录表渲染正确；修复测试助手 `call_count` 未按当日日期过滤导致跨天 delta 恒 0 的问题
 

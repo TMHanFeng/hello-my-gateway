@@ -92,6 +92,7 @@ body {
 .b-5h { background: rgba(56,189,248,.12); color: #38bdf8; border: 1px solid rgba(56,189,248,.3); }
 .b-local { background: rgba(52,211,153,.12); color: #34d399; border: 1px solid rgba(52,211,153,.3); }
 .theme-switch { display:inline-flex; align-items:center; gap:7px; margin-left:16px; cursor:pointer; user-select:none; }
+@media (min-width:768px) { .theme-switch { margin: -15px -21px 0 16px; } }  /* 桌面端对齐 hfadmin 滑块的精确位置（顶栏右缘同一坐标），移动端布局不受影响 */
 .theme-switch .ts-opt { font-size:12px; color:var(--muted); }
 .theme-switch .ts-opt.ts-on { color:var(--text); font-weight:600; }
 .theme-switch .ts-track { width:38px; height:20px; border-radius:10px; background:rgba(255,255,255,.16); position:relative; display:inline-block; }
@@ -2787,17 +2788,25 @@ async function loadKeyUsage() {
   }
   totalEl.textContent = td.hours.reduce((s, x) => s + x.used, 0).toLocaleString();
   rangeEl.textContent = '近 24 小时（' + fmtDay(yst).slice(5) + ' ' + String((curH + 1) % 24).padStart(2, '0') + ':00 ～ ' + fmtDay(now).slice(5) + ' ' + String(curH).padStart(2, '0') + ':00）';
-  const W = 720, H = 190, L = 52, R = 14, T = 16, B = 30, n = pts.length;
+  const W = Math.max(320, Math.min(760, el.clientWidth || 720)), H = 190, L = 52, R = 14, T = 16, B = 30, n = pts.length;  // 宽度随容器自适应（手机端 1:1 渲染，字体不缩放）
   const max = Math.max(1, ...pts.map(p => p.used));
   const X = i => L + i * (W - L - R) / (n - 1);
   const Y = v => H - B - v / max * (H - T - B);
-  // Catmull-Rom → 三次贝塞尔平滑曲线：只平滑视觉，数据点本身不变
+  // 单调三次插值（Fritsch–Carlson）：平滑且严格不过冲——曲线不会越过相邻数据点
+  // 范围（更不会出现 0 以下的负用量），比 Catmull-Rom 更适合这种尖刺型计量数据
+  const dpx = [], mp = [];
+  for (let i = 0; i < n - 1; i++) {
+    const dx = X(i + 1) - X(i);
+    dpx.push(dx);
+    mp.push((Y(pts[i + 1].used) - Y(pts[i].used)) / dx);
+  }
+  const tg = [mp[0]];
+  for (let i = 1; i < n - 1; i++) tg.push(mp[i - 1] * mp[i] <= 0 ? 0 : (mp[i - 1] + mp[i]) / 2);
+  tg.push(mp[n - 2]);
   let path = 'M ' + X(0).toFixed(1) + ' ' + Y(pts[0].used).toFixed(1);
   for (let i = 0; i < n - 1; i++) {
-    const j0 = Math.max(0, i - 1), j3 = Math.min(n - 1, i + 2);
-    const x0 = X(j0), y0 = Y(pts[j0].used), x1 = X(i), y1 = Y(pts[i].used);
-    const x2 = X(i + 1), y2 = Y(pts[i + 1].used), x3 = X(j3), y3 = Y(pts[j3].used);
-    path += ` C ${(x1 + (x2 - x0) / 6).toFixed(1)} ${(y1 + (y2 - y0) / 6).toFixed(1)}, ${(x2 - (x3 - x1) / 6).toFixed(1)} ${(y2 - (y3 - y1) / 6).toFixed(1)}, ${x2.toFixed(1)} ${y2.toFixed(1)}`;
+    const h = dpx[i];
+    path += ` C ${(X(i) + h / 3).toFixed(1)} ${(Y(pts[i].used) + tg[i] * h / 3).toFixed(1)}, ${(X(i + 1) - h / 3).toFixed(1)} ${(Y(pts[i + 1].used) - tg[i + 1] * h / 3).toFixed(1)}, ${X(i + 1).toFixed(1)} ${Y(pts[i + 1].used).toFixed(1)}`;
   }
   let svg = [0, 0.5, 1].map(f => {
     const gy = (H - B) - f * (H - T - B);
@@ -2806,9 +2815,47 @@ async function loadKeyUsage() {
     return `<line x1="${L}" y1="${gy.toFixed(1)}" x2="${W - R}" y2="${gy.toFixed(1)}" stroke="rgba(128,128,128,.25)" stroke-dasharray="3 4"/><text x="${L - 6}" y="${(gy + 4).toFixed(1)}" text-anchor="end" font-size="10" fill="var(--muted)">${gtxt}</text>`;
   }).join('');
   svg += `<path d="${path}" fill="none" stroke="var(--teal)" stroke-width="2.2" stroke-linecap="round"/>`;
-  svg += pts.map((p, i) => `<circle cx="${X(i).toFixed(1)}" cy="${Y(p.used).toFixed(1)}" r="2.2" fill="var(--teal)"><title>${p.yst ? '昨日' : '今日'}${String(p.h).padStart(2, '0')}:00 用量 ${p.used.toLocaleString()}</title></circle>`).join('');
+  svg += pts.map((p, i) => `<circle cx="${X(i).toFixed(1)}" cy="${Y(p.used).toFixed(1)}" r="2.2" fill="var(--teal)"/>`).join('');  // 悬浮数据由下方自定义 tip 呈现（原生 title 延迟大且与 tip 重复）
   svg += pts.map((p, i) => (i % 4 === 0 || i === n - 1) ? `<text x="${X(i).toFixed(1)}" y="${H - 10}" text-anchor="middle" font-size="10" fill="${p.yst ? 'var(--muted)' : 'var(--teal)'}">${p.yst ? '昨' : '今'}${String(p.h).padStart(2, '0')}时</text>` : '').join('');
   el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto">${svg}</svg>`;
+  // 悬浮交互：竖向参考线 + 数据提示框（鼠标/触屏移动即显示具体数值）
+  el.style.position = 'relative';
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block">${svg}</svg><div id="usage-tip" style="display:none;position:absolute;pointer-events:none;background:rgba(15,23,42,.96);border:1px solid rgba(52,211,153,.5);border-radius:6px;padding:4px 9px;font-size:12px;white-space:nowrap;z-index:5;color:var(--text)"></div>`;
+  const svgEl = el.querySelector('svg');
+  const tip = el.querySelector('#usage-tip');
+  const dots = svgEl.querySelectorAll('circle');
+  const guide = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+  guide.setAttribute('stroke', 'rgba(128,128,128,.5)');
+  guide.setAttribute('visibility', 'hidden');
+  svgEl.insertBefore(guide, svgEl.firstChild);
+  svgEl.addEventListener('mousemove', ev => {
+    const rct = svgEl.getBoundingClientRect();
+    const mx = (ev.clientX - rct.left) * W / rct.width;
+    let i = Math.round((mx - L) / ((W - L - R) / (n - 1)));
+    i = Math.max(0, Math.min(n - 1, i));
+    const p = pts[i];
+    guide.setAttribute('x1', X(i)); guide.setAttribute('x2', X(i));
+    guide.setAttribute('y1', T); guide.setAttribute('y2', H - B);
+    guide.setAttribute('visibility', 'visible');
+    dots.forEach((d, j) => d.setAttribute('r', j === i ? 4 : 2.2));
+    tip.innerHTML = `${p.yst ? '昨日' : '今日'}<b>${String(p.h).padStart(2, '0')}:00</b> 用量 <b style="color:var(--teal)">${p.used.toLocaleString()}</b> tok`;
+    tip.style.left = Math.max(0, Math.min(X(i) * (rct.width / W) - 60, rct.width - 140)) + 'px';
+    tip.style.top = Math.max(0, Y(p.used) * (rct.height / H) - 38) + 'px';
+    tip.style.display = 'block';
+  });
+  svgEl.addEventListener('mouseleave', () => {
+    tip.style.display = 'none';
+    guide.setAttribute('visibility', 'hidden');
+    dots.forEach(d => d.setAttribute('r', 2.2));
+  });
+  if (!window.__usageResizeBound) {
+    window.__usageResizeBound = true;
+    // 手机端/窗口缩放：宽度变化时按新容器宽度重渲（viewBox 1:1，字体不缩放）
+    window.addEventListener('resize', () => {
+      const ov = document.getElementById('overlay-usage');
+      if (ov && ov.classList.contains('show') && usageKeyId) loadKeyUsage();
+    });
+  }
   const cel = document.getElementById('usage-calls');
   if (cel) {
     const cs = await api('/admin/keys/' + usageKeyId + '/calls');
