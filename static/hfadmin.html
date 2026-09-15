@@ -226,6 +226,13 @@ main { max-width: 1240px; margin: 0 auto; padding: 40px 24px 90px; }
 .b-paid { background: rgba(255, 59, 48, 0.1); color: #d70015; }
 .b-once { background: rgba(175, 82, 222, 0.12); color: #7d26a8; }
 .b-5h { background: rgba(255, 159, 10, 0.16); color: #a04a00; }
+.b-local { background: rgba(52, 211, 153, 0.14); color: #0f9d6e; }
+.theme-switch { display:inline-flex; align-items:center; gap:7px; margin-right:12px; cursor:pointer; user-select:none; }
+.theme-switch .ts-opt { font-size:12px; color:#999; }
+.theme-switch .ts-opt.ts-on { color:#222; font-weight:600; }
+.theme-switch .ts-track { width:38px; height:20px; border-radius:10px; background:rgba(0,0,0,.15); position:relative; display:inline-block; }
+.theme-switch .ts-track.on { background:rgba(15,157,110,.25); }
+.theme-switch .ts-thumb { position:absolute; right:2px; top:2px; width:16px; height:16px; border-radius:50%; background:#0f9d6e; }
 .b-ghost { background: rgba(120, 120, 128, 0.09); color: var(--muted); }
 .b-embedding { background: rgba(175, 82, 222, 0.12); color: #7d26a8; }
 .b-rerank { background: rgba(255, 55, 95, 0.1); color: #c81e58; }
@@ -698,6 +705,11 @@ select { max-width: 100%; }
       <button class="tab" data-tab="keys">API 密钥</button>
     </nav>
     <div class="nav-right">
+      <label class="theme-switch" title="夜间模式 = admin 面板">
+        <span class="ts-opt">夜间</span>
+        <span class="ts-track on" onclick="location.href='/admin/'"><span class="ts-thumb"></span></span>
+        <span class="ts-opt ts-on">白天</span>
+      </label>
       <span class="version"><span id="gw-version">__GATEWAY_VERSION__</span></span>
       <span class="key-pill" id="key-pill" onclick="changeKey()" title="点击更换管理密码"><span class="key-dot"></span><span id="key-hint">管理密码</span></span>
     </div>
@@ -840,6 +852,9 @@ select { max-width: 100%; }
         <div class="fg"><label>模型模态</label><select name="modality" onchange="onModalityChange()"><option value="text">纯文本</option><option value="vision">多模态</option><option value="embedding">embedding（嵌入模型）</option><option value="rerank">rerank（重排模型）</option></select></div>
         <div class="fg" id="limit-fields"><label id="limit-label">每日 Token 上限（0=不限）</label><input name="daily_token_limit" type="number" value="0"></div>
         <div class="fg"><label>上下文窗口（0=不校验）</label><input name="context_window" type="number" value="0"></div>
+      </div>
+      <div id="local-fields" class="hidden">
+        <div class="hint" style="color:#0f9d6e">本地模型：不计费、不限量，仅记录用量（usage 照常入统计）；安全阀不生效。</div>
       </div>
       <div class="fg" id="valve-fields">
         <label>使用量安全阀 k：<span id="valve-pct-val" style="color:var(--teal)">100%</span></label>
@@ -1003,17 +1018,15 @@ select { max-width: 100%; }
 
 <!-- ════════ 模态：用量历史 ════════ -->
 <div class="overlay" id="overlay-usage">
-  <div class="modal" style="width:min(700px,100%)">
+  <div class="modal" style="width:min(820px,100%)">
     <h3 id="usage-key-title">API Key 用量历史</h3>
-    <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap">
-      <button class="btn btn-ghost btn-sm" onclick="shiftUsageDate(-1)">‹ 前一天</button>
-      <span id="usage-date-label" class="mono" style="font-size:15px;font-weight:600;color:var(--teal);min-width:110px;text-align:center">--</span>
-      <button class="btn btn-ghost btn-sm" onclick="shiftUsageDate(1)">后一天 ›</button>
-      <button class="btn btn-ghost btn-sm" onclick="usageDate=null;loadKeyUsage()">今天</button>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+      <span id="usage-range-label" class="mono" style="font-size:13px;font-weight:600;color:var(--teal)">近 24 小时</span>
       <span style="flex:1"></span>
       <span style="font-size:13px;color:var(--muted)">当日总量：<b id="usage-total" class="mono" style="color:var(--text)">0</b></span>
     </div>
     <div id="usage-hours"></div>
+    <div id="usage-calls"></div>
     <div class="modal-actions">
       <button type="button" class="btn btn-ghost" onclick="closeModal('overlay-usage')">关闭</button>
     </div>
@@ -1139,7 +1152,7 @@ function typeBadge(m) {
   if (m.token_type === 'one_time') return '<span class="badge b-once">一次性</span>';
   if (m.token_type === 'rolling_5h') return '<span class="badge b-5h">5h限额</span>';
   if (m.token_type === 'gift') return '<span class="badge b-5h" title="余额返还制：到账时刻按昨日消耗补回额度（上限封顶）">余额返还制</span>';
-  if (m.token_type === 'local') return '<span class="badge b-5h" title="本地模型：不计费不限量，仅记录用量">本地</span>';
+  if (m.token_type === 'local') return '<span class="badge b-local" title="本地模型：不计费不限量，仅记录用量">本地</span>';
   return '<span class="badge b-ghost">每日</span>';
 }
 function freeBadge(m) { return m.is_free ? '<span class="badge b-free">免费</span>' : '<span class="badge b-paid">付费</span>'; }
@@ -1452,7 +1465,11 @@ function onTokenTypeChange() {
   const _gf = document.getElementById('gift-fields');
   if (_gf) _gf.classList.toggle('hidden', ttype !== 'gift');  // 余额返还制区块（返还上限+人工校准入口）：仅 gift 显示
   const _lf = document.getElementById('limit-fields');
-  if (_lf) _lf.classList.toggle('hidden', ttype === 'one_time');
+  if (_lf) _lf.classList.toggle('hidden', ttype === 'one_time' || ttype === 'local');
+  const _lcf = document.getElementById('local-fields');
+  if (_lcf) _lcf.classList.toggle('hidden', ttype !== 'local');  // 本地模型提示区
+  const _vf = document.getElementById('valve-fields');
+  if (_vf) _vf.classList.toggle('hidden', ttype === 'local');  // 本地模型 limit=0 安全阀不生效，隐藏滑块
   updateGiftHint();
   onBillingChange();
   // gift 模型：拉取当前可用总额池（安全阀分母 = min(池, 用户上限)×k，随补账变化）
@@ -3015,32 +3032,72 @@ function shiftUsageDate(delta) {
 }
 async function showKeyUsage(id) {
   usageKeyId = id; usageDate = null;
-  document.getElementById('usage-key-title').textContent = 'API Key #' + id + ' · 用量历史（1h 粒度）';
+  document.getElementById('usage-key-title').textContent = 'API Key #' + id + ' · 用量历史（近 24 小时）';
   document.getElementById('overlay-usage').classList.add('show');
   loadKeyUsage();
 }
 async function loadKeyUsage() {
   const el = document.getElementById('usage-hours');
-  const dateEl = document.getElementById('usage-date-label');
+  const rangeEl = document.getElementById('usage-range-label');
   const totalEl = document.getElementById('usage-total');
   if (!usageKeyId) return;
-  const ds = usageDateStr();
-  dateEl.textContent = ds;
-  totalEl.textContent = '…';
   el.innerHTML = '<div class="hint">加载中...</div>';
-  const data = await api('/admin/keys/' + usageKeyId + '/usage?date=' + ds);
-  if (!data) return;
-  totalEl.textContent = data.total.toLocaleString();
-  const max = Math.max(1, ...data.hours.map(h => h.used));
-  el.innerHTML = '<div class="usage-grid">' + data.hours.map(h => {
-    const hh = String(h.hour).padStart(2, '0');
-    const pct = h.used > 0 ? Math.max(4, Math.round(h.used / max * 100)) : 0;
-    return `<div class="usage-col" title="${hh}:00 用量 ${h.used}">
-      <div class="usage-bar-wrap"><div class="usage-bar" style="height:${pct}%;background:${h.used > 0 ? 'linear-gradient(180deg,var(--teal),var(--cyan))' : 'transparent'}"></div></div>
-      <div class="usage-h">${hh}</div>
-      <div class="usage-v" style="color:${h.used > 0 ? 'var(--teal)' : 'var(--muted)'}">${h.used > 0 ? h.used.toLocaleString() : '0'}</div>
-    </div>`;
-  }).join('') + '</div>';
+  totalEl.textContent = '…';
+  const fmtDay = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  const now = new Date();
+  const yst = new Date(now.getTime() - 24 * 3600 * 1000);
+  const [td, yd] = await Promise.all([
+    api('/admin/keys/' + usageKeyId + '/usage?date=' + fmtDay(now)),
+    api('/admin/keys/' + usageKeyId + '/usage?date=' + fmtDay(yst)),
+  ]);
+  if (!td || !yd) return;
+  const curH = now.getHours();
+  const pts = [];
+  for (let o = -23; o <= 0; o++) {
+    const h = ((curH + o) % 24 + 24) % 24;
+    const isToday = curH + o >= 0;
+    pts.push({ h, used: (isToday ? td : yd).hours[h].used, yst: !isToday });
+  }
+  totalEl.textContent = td.hours.reduce((s, x) => s + x.used, 0).toLocaleString();
+  rangeEl.textContent = '近 24 小时（' + fmtDay(yst).slice(5) + ' ' + String((curH + 1) % 24).padStart(2, '0') + ':00 ～ ' + fmtDay(now).slice(5) + ' ' + String(curH).padStart(2, '0') + ':00）';
+  const W = 720, H = 190, L = 52, R = 14, T = 16, B = 30, n = pts.length;
+  const max = Math.max(1, ...pts.map(p => p.used));
+  const X = i => L + i * (W - L - R) / (n - 1);
+  const Y = v => H - B - v / max * (H - T - B);
+  // Catmull-Rom → 三次贝塞尔平滑曲线：只平滑视觉，数据点本身不变
+  let path = 'M ' + X(0).toFixed(1) + ' ' + Y(pts[0].used).toFixed(1);
+  for (let i = 0; i < n - 1; i++) {
+    const j0 = Math.max(0, i - 1), j3 = Math.min(n - 1, i + 2);
+    const x0 = X(j0), y0 = Y(pts[j0].used), x1 = X(i), y1 = Y(pts[i].used);
+    const x2 = X(i + 1), y2 = Y(pts[i + 1].used), x3 = X(j3), y3 = Y(pts[j3].used);
+    path += ` C ${(x1 + (x2 - x0) / 6).toFixed(1)} ${(y1 + (y2 - y0) / 6).toFixed(1)}, ${(x2 - (x3 - x1) / 6).toFixed(1)} ${(y2 - (y3 - y1) / 6).toFixed(1)}, ${x2.toFixed(1)} ${y2.toFixed(1)}`;
+  }
+  let svg = [0, 0.5, 1].map(f => {
+    const gy = (H - B) - f * (H - T - B);
+    const gv = Math.round(max * f);
+    const gtxt = gv >= 10000 ? (gv / 10000).toFixed(1) + '万' : gv.toLocaleString();
+    return `<line x1="${L}" y1="${gy.toFixed(1)}" x2="${W - R}" y2="${gy.toFixed(1)}" stroke="rgba(128,128,128,.25)" stroke-dasharray="3 4"/><text x="${L - 6}" y="${(gy + 4).toFixed(1)}" text-anchor="end" font-size="10" fill="var(--muted)">${gtxt}</text>`;
+  }).join('');
+  svg += `<path d="${path}" fill="none" stroke="var(--teal)" stroke-width="2.2" stroke-linecap="round"/>`;
+  svg += pts.map((p, i) => `<circle cx="${X(i).toFixed(1)}" cy="${Y(p.used).toFixed(1)}" r="2.2" fill="var(--teal)"><title>${p.yst ? '昨日' : '今日'}${String(p.h).padStart(2, '0')}:00 用量 ${p.used.toLocaleString()}</title></circle>`).join('');
+  svg += pts.map((p, i) => (i % 4 === 0 || i === n - 1) ? `<text x="${X(i).toFixed(1)}" y="${H - 10}" text-anchor="middle" font-size="10" fill="${p.yst ? 'var(--muted)' : 'var(--teal)'}">${p.yst ? '昨' : '今'}${String(p.h).padStart(2, '0')}时</text>` : '').join('');
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto">${svg}</svg>`;
+  const cel = document.getElementById('usage-calls');
+  if (cel) {
+    const cs = await api('/admin/keys/' + usageKeyId + '/calls');
+    if (cs && cs.calls) {
+      const rows = cs.calls.map(c => {
+        const t = new Date(c.ts * 1000).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
+        const last = (c.steps || []).slice(-1)[0] || {};
+        const res = c.selected ? '✓ ' + c.selected : '✗ ' + (last.reason || '失败');
+        const col = c.selected ? 'var(--teal)' : '#f87171';
+        return '<tr><td style="padding:4px 6px">' + t + '</td><td style="padding:4px 6px">' + esc(c.pool_name) + '</td><td style="padding:4px 6px" class="mono">' + esc(c.requested || '-') + '</td><td style="padding:4px 6px;color:' + col + '">' + esc(res) + '</td><td style="padding:4px 6px;text-align:right" class="mono">' + (c.actual_tokens || 0).toLocaleString() + '</td></tr>';
+      }).join('');
+      cel.innerHTML = '<div style="font-size:12.5px;color:#888;margin:10px 0 6px">最近调用记录（≤50 条，仅本 Key）</div>' +
+        '<div style="max-height:240px;overflow:auto;border:1px solid var(--panel-2);border-radius:6px"><table style="width:100%;border-collapse:collapse;font-size:12px">' +
+        '<thead><tr><th style="text-align:left;padding:5px 8px;color:#888">时间</th><th style="text-align:left;padding:5px 8px;color:#888">池</th><th style="text-align:left;padding:5px 8px;color:#888">请求模型</th><th style="text-align:left;padding:5px 8px;color:#888">结果</th><th style="text-align:right;padding:5px 8px;color:#888">tokens</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+    } else { cel.innerHTML = ''; }
+  }
 }
 /* 轮换日志 */
 async function showKeyRotations(id) {

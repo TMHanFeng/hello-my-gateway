@@ -196,7 +196,7 @@ def deep_clean():
         db_exec(f"DELETE FROM {t} WHERE {q}")
     db_exec(f"DELETE FROM decision_log WHERE selected IN ({','.join(chr(39)+i+chr(39) for i in TEST_IDS)}) OR pool_name IN ('zzall','zzbad','zzlocal','zzswitch')")
     db_exec("DELETE FROM one_time_state WHERE model_name='zzbt/echo-once'")
-    db_exec("DELETE FROM api_keys WHERE name='zzkey'")
+    db_exec("DELETE FROM api_keys WHERE name IN ('zzkey','zzkey2')")
     db_exec("DELETE FROM api_key_usage WHERE key_id NOT IN (SELECT id FROM api_keys)")
     db_exec("DELETE FROM api_key_hourly_usage WHERE key_id NOT IN (SELECT id FROM api_keys)")
 
@@ -219,7 +219,12 @@ def token_used(mid):
 
 
 def call_count(mid):
-    r = DB.execute("SELECT request_count FROM model_daily_stats WHERE model_name=?", (mid,)).fetchone()
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    # 按当天日期过滤（北京时间自然日，对齐 add_model_call 的 _bj_today）：
+    # 否则跨天后 fetchone 命中旧行，当日增量恒为 0
+    today = datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat()
+    r = DB.execute("SELECT request_count FROM model_daily_stats WHERE model_name=? AND date=?", (mid, today)).fetchone()
     return r["request_count"] if r else 0
 
 
@@ -854,6 +859,36 @@ def main():
             json.dump(_cache, open(_cp, "w", encoding="utf-8"), indent=1)
         except Exception:
             pass
+
+        # ===== T20 每池50条滚动保留 + 密钥最近调用记录端点 =====
+        for _ in range(55):
+            chat("zzlocal", content="hi")
+        n20 = 999
+        for _ in range(16):  # 调度器每 60s 裁剪一次，最多等 80s
+            time.sleep(5)
+            rd = httpx.get(f"{BASE}/admin/decisions", params={"pool": "zzlocal", "limit": 100}, headers=ADMIN, timeout=15)
+            n20 = len(rd.json().get("decisions", []))
+            if 0 < n20 <= 50:
+                break
+        check("T20a 每池滚动保留≤50条(裁剪后)", 0 < n20 <= 50, n20)
+        r = httpx.post(f"{BASE}/admin/keys", headers=ADMIN,
+                       json={"name": "zzkey2", "type": "user", "allowed_pools": ["zzlocal"],
+                             "token_type": "daily", "billing_mode": "token", "limit_amount": 1000000}, timeout=15)
+        kid = r.json().get("key", {}).get("id")
+        secret2 = DB.execute("SELECT secret FROM api_keys WHERE name='zzkey2'").fetchone()["secret"]
+        chat("zzlocal", auth=secret2, content="hi")
+        chat("zzlocal", auth=secret2, content="hi")
+        rc = httpx.get(f"{BASE}/admin/keys/{kid}/calls", headers=ADMIN, timeout=15)
+        jc = rc.json()
+        calls = jc.get("calls", [])
+        check("T20b 密钥调用记录端点200(≥2条)", rc.status_code == 200 and len(calls) >= 2, (rc.status_code, len(calls)))
+        check("T20c 记录归属与字段正确",
+              jc.get("key_name") == "zzkey2"
+              and all(c.get("caller") == "zzkey2" and c.get("pool_name") == "zzlocal"
+                      and c.get("selected") == "zzbt/echo-local" for c in calls[:2]),
+              [(c.get("caller"), c.get("pool_name"), c.get("selected")) for c in calls[:2]])
+        rl = httpx.get(f"{BASE}/admin/keys/{kid}/calls", params={"limit": 1}, headers=ADMIN, timeout=15)
+        check("T20d limit参数生效", len(rl.json().get("calls", [])) == 1, len(rl.json().get("calls", [])))
 
     finally:
         try:

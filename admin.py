@@ -1490,6 +1490,17 @@ async def key_usage_history(key_id: int, date: str = "", _=Depends(verify_admin)
     return {"key_id": key_id, "date": date, "hours": hours, "total": sum(x["used"] for x in hours)}
 
 
+@router.get("/keys/{key_id}/calls")
+async def key_recent_calls(key_id: int, limit: int = 50, _=Depends(verify_admin)):
+    """某 API Key 最近调用记录（v2.12.6：decision_log 按 caller=Key 名过滤，供用量历史面板展示）。"""
+    import database as db
+    rec = await db.get_api_key_by_id(key_id)
+    if not rec:
+        raise HTTPException(status_code=404, detail=f"API Key #{key_id} 不存在")
+    rows = await db.get_decisions(limit=min(limit, 50), caller=rec["name"])
+    return {"key_id": key_id, "key_name": rec["name"], "calls": rows}
+
+
 # ── 用户（预留：未来普通用户账号体系）──────────────────────────────────
 
 @router.get("/users")

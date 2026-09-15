@@ -825,14 +825,20 @@ async def wal_checkpoint():
         await db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
 
 
-async def trim_decision_log(keep: int = 500):
-    """裁剪 decision_log 至最近 keep 条（scheduler 维护任务每 60s 批量调用）。"""
+async def trim_decision_log(keep_per_pool: int = 50):
+    """按池裁剪 decision_log 至每池最近 keep_per_pool 条（scheduler 维护任务每 60s 批量调用）。
+
+    v2.12.6：由全局 500 条改为每池 50 条——池间记录互不挤占（原先大池高流量会把
+    其他池的记录整体冲掉，面板按池查询经常为空）。"""
     async with _maybe_lock():
         db = await _get_conn()
-        await db.execute(
-            "DELETE FROM decision_log WHERE id NOT IN (SELECT id FROM decision_log ORDER BY id DESC LIMIT ?)",
-            (keep,),
-        )
+        pools = [r[0] for r in await (await db.execute("SELECT DISTINCT pool_name FROM decision_log")).fetchall()]
+        for p in pools:
+            await db.execute(
+                "DELETE FROM decision_log WHERE pool_name = ? AND id NOT IN "
+                "(SELECT id FROM decision_log WHERE pool_name = ? ORDER BY id DESC LIMIT ?)",
+                (p, p, keep_per_pool),
+            )
         await _commit(db)
 
 
@@ -904,18 +910,20 @@ async def get_model_metrics(model_name: str, last_n: int = 50) -> dict:
     }
 
 
-async def get_decisions(pool_name: str | None = None, limit: int = 100) -> list[dict]:
+async def get_decisions(pool_name: str | None = None, limit: int = 100, caller: str | None = None) -> list[dict]:
     async with _maybe_lock():
         db = await _get_conn()
+        cond, args = [], []
         if pool_name:
-            cursor = await db.execute(
-                "SELECT * FROM decision_log WHERE pool_name = ? ORDER BY id DESC LIMIT ?",
-                (pool_name, limit),
-            )
-        else:
-            cursor = await db.execute(
-                "SELECT * FROM decision_log ORDER BY id DESC LIMIT ?", (limit,)
-            )
+            cond.append("pool_name = ?")
+            args.append(pool_name)
+        if caller:
+            cond.append("caller = ?")  # v2.12.6：按 Key 名过滤（密钥用量历史面板的最近调用记录）
+            args.append(caller)
+        where = (" WHERE " + " AND ".join(cond)) if cond else ""
+        cursor = await db.execute(
+            f"SELECT * FROM decision_log{where} ORDER BY id DESC LIMIT ?", (*args, limit),
+        )
         rows = await cursor.fetchall()
         out = []
         for r in rows:

@@ -7,7 +7,7 @@
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.110%2B-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Version](https://img.shields.io/badge/version-v2.12.5-orange)](#-版本)
+[![Version](https://img.shields.io/badge/version-v2.12.6-orange)](#-版本)
 [![Status](https://img.shields.io/badge/status-stable-brightgreen)](#)
 
 对外暴露 **OpenAI 兼容**与 **Anthropic Messages** 接口，
@@ -581,6 +581,8 @@ SQLite（`gateway.db`）持久化以下表：
 ## 📜 版本
 
 ### 最新
+
+**`v2.12.6`** — **面板体验三连：每池调用记录 / 密钥用量历史增强 / 明暗模式一键切换**：①**调用记录改为每池保留最近 50 条**：`trim_decision_log` 由全局 500 条改为按池裁剪（scheduler 每 60s）——大池高流量不再把其他池的记录冲掉，面板按池查询恒有据可查 ②**API 密钥用量历史增强**：新增 `GET /admin/keys/{id}/calls` 端点（decision_log 按 caller=Key 名过滤，`get_decisions` 加 caller 参数）；双面板用量历史弹窗新增「最近调用记录（≤50 条，仅本 Key）」表格（时间/池/请求模型/结果 ✓✗/tokens），模态加宽 ③**右上角明暗模式滑块**：admin=夜间、hfadmin=白天，滑块状态随访问页面自动呈现，点击即在两个面板间跳转（`.theme-switch` 双面板各配色）④**用量历史图表重做**：柱状图改为**近 24 小时平滑折线图**（Catmull-Rom 贝塞尔平滑，只平滑视觉不改数据；滚动窗口跨昨日/今日，每小时数据点带悬浮明细，x 轴标注昨/今，y 轴自适应刻度）；右上角「当日总量」保留 ⑤回归 115→119 断言全绿（T20：55 连发后每池≤50 裁剪、密钥调用记录端点与字段归属、limit 参数）；浏览器实测：滑块双向跳转、双面板用量历史折线图与调用记录表渲染正确；修复测试助手 `call_count` 未按当日日期过滤导致跨天 delta 恒 0 的问题
 
 **`v2.12.5`** — **本地模型（local 令牌类型）+ 切换窗口透传 + 千帆双协议统一性 + 思考探测计量**：①**新增 `local` 令牌类型**——LAN 自建推理（如局域网千问）不计费、不限量，仅记录用量：`_quota_check` local 分支永不拒绝，usage 照写 daily 账本与统计口径，安全阀随 limit=0 自动豁免（复用 v2.12.0 边界逻辑）；双面板令牌类型下拉/列表徽章/卡片标签；config 预置 `local-qwen` 供应商 + `qwen3.8-27b-nvfp4` 模型（`max_concurrency: 2` 对齐引擎并发上限，超时由部署者按需设置，上游文档建议 ≥180s）；用户 Key 侧照常计量（Key 与模型记账本就独立）②**切换窗口透传**：上游 503 `qwen_switching`（显卡视频↔聊天切换，附 `retry_after`）属暂态而非故障——非流式/流式两处错误分支不冷却、不切换，借道 ContextOverflowPassThrough 通道原样透传给客户端由其按 `retry_after` 重试（决策徽标 `switching_passthrough`；教训同问题30/31：不该烧池的错误别烧池）③**千帆双协议统一性**：审计 `qianfan_search`/`qianfan_web_search` 两变体调用与输出格式，修复 summary 解析路径 12 处缺省兜底（上游字段缺失或为 null 时两变体结构保持一致，不再一边 5xx 一边正常）；流式帧形/错误路径/计费路径审计一致，非流式 7 键/references 恒 list/流式帧形序列两变体完全一致，baidusearch 池内切换对客户端无感 ④**思考参数探测计量**：「自动查找思考强度」的探测请求会消耗上游 token，现按目标模型 token_type 全类型入账（gift/one_time/5h/daily/request，request 型计 1），同步 model_daily_stats 统计口径；探测线程经 run_coroutine_threadsafe 投回主循环记账、CLI 走私有常驻循环；admin 两个触发点 + CLI 全覆盖；无 usage 不记账不估算 ⑤回归 87→115 断言全绿（T17 本地模型/切换透传九项、T18 双变体结构统一十一项、T19 探测计量八项）；真实调用验证：百度搜索池（summary 变体解析新路径）、结构统一性 mock 对比通过
 
