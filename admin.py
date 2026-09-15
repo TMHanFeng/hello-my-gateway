@@ -366,6 +366,8 @@ async def add_model(request: Request, _=Depends(verify_admin)):
         "reasoning_map": body.get("reasoning_map") or {},
         "smart_estimate": bool(body.get("smart_estimate", False)),
         "no_stream_options": bool(body.get("no_stream_options", False)),
+        # v2.13.0 Headroom 选配插件：勾选模型接单时压缩出站 messages（默认 False=不参与）
+        "headroom": bool(body.get("headroom", False)),
         # v2.12.3 搜索 AI 总结（仅 qianfan_web_search 协议在面板有 UI 入口）
         "summary_pool": (body.get("summary_pool") or "").strip(),
         "summary_length": str(body.get("summary_length") or "").strip(),
@@ -563,6 +565,8 @@ async def update_model(model_id: str, request: Request, _=Depends(verify_admin))
             value = bool(value)
         if key == "no_stream_options":
             value = bool(value)
+        if key == "headroom":
+            value = bool(value)
         if key == "timeout_seconds":
             value = None if value in (None, "") else int(value)
         models[idx][key] = value
@@ -577,6 +581,7 @@ async def update_model(model_id: str, request: Request, _=Depends(verify_admin))
     if models[idx].get("modality") in ("embedding", "rerank"):
         models[idx].pop("reasoning_map", None)
         models[idx].pop("smart_estimate", None)
+        models[idx].pop("headroom", None)  # 压缩只对聊天出站 messages 有意义
 
     # v2.12.3 搜索 AI 总结：非千帆网页搜索协议显式剥离，避免切换协议后配置残留
     # （隐藏的表单控件仍会被 FormData 提交旧值，所以清理必须放在服务端）
@@ -1499,6 +1504,71 @@ async def key_recent_calls(key_id: int, limit: int = 50, _=Depends(verify_admin)
         raise HTTPException(status_code=404, detail=f"API Key #{key_id} 不存在")
     rows = await db.get_decisions(limit=min(limit, 50), caller=rec["name"])
     return {"key_id": key_id, "key_name": rec["name"], "calls": rows}
+
+
+@router.get("/headroom")
+async def headroom_get(_=Depends(verify_admin)):
+    """Headroom 选配插件当前设置（设置页读取）。available=当前解释器是否装有 headroom-ai
+    （find_spec 探测不导入；False 时开关打开也不产生压缩，自动旁路）。"""
+    return _headroom_payload()
+
+
+def _headroom_payload() -> dict:
+    import headroom_plugin
+    h = load_config().get("headroom")
+    h = h if isinstance(h, dict) else {}
+    return {"enabled": bool(h.get("enabled", False)), "mode": h.get("mode", "live"),
+            "min_tokens_to_compress": int(h.get("min_tokens_to_compress", 500)),
+            "protect_recent": int(h.get("protect_recent", 4)),
+            "timeout_seconds": int(h.get("timeout_seconds", 10)),
+            "kompress_model": str(h.get("kompress_model", "disabled")),
+            "available": headroom_plugin.lib_available()}
+
+
+@router.post("/headroom")
+async def headroom_set(request: Request, _=Depends(verify_admin)):
+    """Headroom 插件设置保存：写 config.json headroom 节点并落盘。
+    热生效（插件每请求经 load_config 读取，save_config 已刷新缓存），无需 /admin/reload。
+    先校验后改：任一字段非法即整体拒绝，不产生半写。"""
+    body = await request.json()
+    config = load_config()
+    h = config.get("headroom")
+    h = h if isinstance(h, dict) else {}
+
+    mode = str(body.get("mode", h.get("mode", "live"))).strip().lower()
+    if mode not in ("live", "dry_run"):
+        raise HTTPException(status_code=400, detail="mode 仅支持 live / dry_run")
+
+    def _int_field(key: str, default: int, lo: int, hi: int) -> int:
+        v = body.get(key, h.get(key, default))
+        try:
+            v = int(v)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail=f"{key} 必须为整数")
+        return max(lo, min(hi, v))
+
+    h["enabled"] = bool(body.get("enabled", h.get("enabled", False)))
+    h["mode"] = mode
+    h["min_tokens_to_compress"] = _int_field("min_tokens_to_compress", 500, 0, 1_000_000)
+    h["protect_recent"] = _int_field("protect_recent", 4, 0, 10_000)
+    h["timeout_seconds"] = _int_field("timeout_seconds", 10, 1, 600)
+    config["headroom"] = h
+    save_config(config)
+    return _headroom_payload()
+
+
+@router.get("/headroom/stats")
+async def headroom_stats_view(days: int = 7, _=Depends(verify_admin)):
+    """Headroom 选配插件节省统计（非必装）：近 N 天节省汇总/今日（北京时间）/按模型分布/最近 50 条明细，
+    顺带回传总开关状态供面板显示。dry_run 与 live 的记录都在（mode 字段区分，灰度决策数据源）。"""
+    import database as db
+    from pool import load_config
+    data = await db.get_headroom_summary(days=max(1, min(int(days or 7), 90)))
+    h = load_config().get("headroom")
+    h = h if isinstance(h, dict) else {}
+    data["enabled"] = bool(h.get("enabled", False))
+    data["mode"] = h.get("mode", "live")
+    return data
 
 
 # ── 用户（预留：未来普通用户账号体系）──────────────────────────────────

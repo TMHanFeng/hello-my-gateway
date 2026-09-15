@@ -1,0 +1,5 @@
+# Headroom 选配插件专用环境（.venv-headroom）：网关全量依赖 + headroom-ai 锁版本
+# 用法：python -m venv .venv-headroom && .venv-headroom/Scripts/pip install -r requirements-headroom.txt
+# 非必装：不建此环境、用原解释器启动网关时，headroom 插件自动旁路，其余功能完全不变
+-r requirements.txt
+headroom-ai==0.37.0

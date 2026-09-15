@@ -27,3 +27,6 @@ config.yaml
 
 # 本地改造备份（含生产配置与密钥，严禁入库）
 .backup/
+
+# Headroom 选配插件独立环境（非必装：删除该目录网关照常运行，插件自动旁路）
+.venv-headroom/

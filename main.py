@@ -40,6 +40,12 @@ async def lifespan(app: FastAPI):
     await init_db()
     await sync_all_refresh_times()
     start_scheduler()
+    # Headroom 选配插件（非必装）：总开关开启时后台预热库加载；未装库/未启用静默旁路
+    try:
+        import headroom_plugin
+        headroom_plugin.warmup_if_enabled()
+    except Exception:
+        pass
     host, port = server_bind()
     base = f"http://{host}:{port}"
     logger.info(f"Model Gateway 启动 | 后台: {base}/admin/  {base}/hfadmin | API: {base}/v1 | 日志: {LOG_FILE}")

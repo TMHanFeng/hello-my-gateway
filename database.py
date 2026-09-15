@@ -197,6 +197,26 @@ async def init_db():
             )
         """)
         await db.execute("CREATE INDEX IF NOT EXISTS idx_call_metrics_model ON call_metrics(model_name, id)")
+        # v2.13.0 Headroom 选配插件统计：dry_run 与 live 都记录（灰度决策数据源）。
+        # 有界性：测试期数据量极小；正式启用后照 decision_log 模式接 scheduler 低频裁剪
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS headroom_stats (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts REAL NOT NULL,
+                caller TEXT DEFAULT '',
+                pool TEXT DEFAULT '',
+                model TEXT DEFAULT '',
+                mode TEXT DEFAULT 'live',
+                tokens_before INTEGER DEFAULT 0,
+                tokens_after INTEGER DEFAULT 0,
+                tokens_saved INTEGER DEFAULT 0,
+                compression_ratio REAL DEFAULT 0,
+                transforms TEXT DEFAULT '',
+                latency_ms REAL DEFAULT 0,
+                error TEXT DEFAULT ''
+            )
+        """)
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_headroom_stats_model ON headroom_stats(model, id)")
         await db.execute("""
             CREATE TABLE IF NOT EXISTS rolling5h_state (
                 model_name TEXT PRIMARY KEY,
@@ -798,6 +818,56 @@ async def reset_5h_window(model_name: str):
             (model_name, time.time()),
         )
         await _commit(db)
+
+
+async def add_headroom_stats(caller: str, pool: str, model: str, mode: str,
+                             tokens_before: int, tokens_after: int, tokens_saved: int,
+                             compression_ratio: float, transforms: str, latency_ms: float,
+                             error: str = "") -> None:
+    """Headroom 插件压缩统计：dry_run/live 都落库（灰度决策数据源）。异常静默——统计绝不影响转发。"""
+    try:
+        async with _maybe_lock():
+            db = await _get_conn()
+            await db.execute(
+                "INSERT INTO headroom_stats (ts, caller, pool, model, mode, tokens_before, tokens_after,"
+                " tokens_saved, compression_ratio, transforms, latency_ms, error) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                (time.time(), caller or "", pool or "", model or "", mode or "live",
+                 tokens_before, tokens_after, tokens_saved, compression_ratio,
+                 transforms or "", latency_ms, error or ""),
+            )
+            await _commit(db)
+    except Exception:
+        pass
+
+
+async def get_headroom_summary(days: int = 7) -> dict:
+    """Headroom 插件节省统计：近 N 天汇总 + 今日（北京时间零点起）+ 按模型分布 + 最近 50 条明细。
+    dry_run 与 live 的记录都计入（mode 字段区分），供灰度对比。"""
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+    now = datetime.now(ZoneInfo("Asia/Shanghai"))
+    win_start = (now - timedelta(days=days)).timestamp()
+    today0 = now.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+    async with _maybe_lock():
+        db = await _get_conn()
+        total = dict(await (await db.execute(
+            "SELECT COUNT(*) AS requests, COALESCE(SUM(tokens_saved),0) AS saved,"
+            " COALESCE(SUM(tokens_before),0) AS tokens_before, COALESCE(SUM(tokens_after),0) AS tokens_after,"
+            " COALESCE(SUM(error<>''),0) AS errors,"
+            " COALESCE(AVG(latency_ms),0) AS avg_latency_ms, COALESCE(MAX(latency_ms),0) AS max_latency_ms"
+            " FROM headroom_stats WHERE ts >= ?", (win_start,))).fetchone())
+        today = dict(await (await db.execute(
+            "SELECT COUNT(*) AS requests, COALESCE(SUM(tokens_saved),0) AS saved"
+            " FROM headroom_stats WHERE ts >= ?", (today0,))).fetchone())
+        by_model = [dict(r) for r in await (await db.execute(
+            "SELECT model, COUNT(*) AS requests, COALESCE(SUM(tokens_saved),0) AS saved,"
+            " COALESCE(AVG(compression_ratio),0) AS avg_ratio"
+            " FROM headroom_stats WHERE ts >= ? AND error='' GROUP BY model ORDER BY saved DESC LIMIT 20",
+            (win_start,))).fetchall()]
+        recent = [dict(r) for r in await (await db.execute(
+            "SELECT ts, caller, pool, model, mode, tokens_before, tokens_after, tokens_saved,"
+            " compression_ratio, latency_ms, error FROM headroom_stats ORDER BY id DESC LIMIT 50")).fetchall()]
+    return {"window_days": days, "total": total, "today": today, "by_model": by_model, "recent": recent}
 
 
 async def log_decision(pool_name: str, requested: str | None, selected: str | None, estimated: int, steps: list, caller: str = "", actual_tokens: int | None = None) -> int:

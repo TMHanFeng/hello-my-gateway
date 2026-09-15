@@ -145,6 +145,9 @@ TEST_MODELS = [
      "is_free": True, "daily_token_limit": 1000000000, "smart_estimate": True},
     {"id": "zzbt/echo-nso", "name": "mock-echo-nso", "provider_id": "zzmock", "modality": "text",
      "is_free": True, "daily_token_limit": 1000000000, "no_stream_options": True},
+    # T22 Headroom 选配插件：勾选压缩的模型（总开关默认关，不影响其他用例；方案A按模型勾选）
+    {"id": "zzbt/echo-hr", "name": "mock-echo-hr", "provider_id": "zzmock", "modality": "text",
+     "is_free": True, "daily_token_limit": 1000000000, "headroom": True},
     {"id": "zzbt/echo-gift", "name": "mock-echo-gift", "provider_id": "zzark", "modality": "text",
      "is_free": True, "token_type": "gift", "daily_token_limit": 266},
     {"id": "zzbt/echo-rpm", "name": "mock-echo-rpm", "provider_id": "zzmock", "modality": "text",
@@ -183,8 +186,26 @@ def deep_clean():
     c["models"] = [m for m in c.get("models", []) if not str(m.get("id", "")).startswith("zzbt/")]
     c.get("pools", {}).pop("zzall", None)
     c.get("pools", {}).pop("zzdef", None)  # v2.11.19 曾漏清该测试池残留至生产配置
-    for pn in ("zzreq", "zzonce", "zzsmart", "zznso", "zzgift", "zzrpm", "zzvalve", "zzvnl", "zzqfp", "zzqfp2", "zzbad", "zzlocal", "zzswitch"):
+    for pn in ("zzreq", "zzonce", "zzsmart", "zznso", "zzgift", "zzrpm", "zzvalve", "zzvnl", "zzqfp", "zzqfp2", "zzbad", "zzlocal", "zzswitch", "zzhr", "zzhrctl"):
         c.get("pools", {}).pop(pn, None)
+    # T22：Headroom 总开关还原为缺省（节点不存在=关），并清理统计行
+    # （表由新代码实例的 init_db 创建；旧实例未建表时先补建，模式同 gift_state）
+    db_exec("""CREATE TABLE IF NOT EXISTS headroom_stats (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts REAL NOT NULL,
+                caller TEXT DEFAULT '',
+                pool TEXT DEFAULT '',
+                model TEXT DEFAULT '',
+                mode TEXT DEFAULT 'live',
+                tokens_before INTEGER DEFAULT 0,
+                tokens_after INTEGER DEFAULT 0,
+                tokens_saved INTEGER DEFAULT 0,
+                compression_ratio REAL DEFAULT 0,
+                transforms TEXT DEFAULT '',
+                latency_ms REAL DEFAULT 0,
+                error TEXT DEFAULT '')""")
+    c.pop("headroom", None)
+    db_exec("DELETE FROM headroom_stats WHERE model LIKE 'zzbt/%'")
     json.dump(c, open(os.path.join(REPO, "config.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=2)
     q = " OR ".join([f"model_name='{i}'" for i in TEST_IDS])
     db_exec("""CREATE TABLE IF NOT EXISTS gift_state (
@@ -261,6 +282,8 @@ def main():
     c["pools"]["zzbad"] = {"model_ids": ["zzbt/bad400-a", "zzbt/bad400-b"], "strategy": "sequential"}
     c["pools"]["zzlocal"] = {"model_ids": ["zzbt/echo-local"], "strategy": "sequential"}
     c["pools"]["zzswitch"] = {"model_ids": ["zzbt/switch-a", "zzbt/switch-b"], "strategy": "sequential"}
+    c["pools"]["zzhr"] = {"model_ids": ["zzbt/echo-hr"], "strategy": "sequential"}
+    c["pools"]["zzhrctl"] = {"model_ids": ["zzbt/echo-token"], "strategy": "sequential"}  # T22 未勾选对照
     json.dump(c, open(os.path.join(REPO, "config.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=2)
 
     # 启动隔离实例
@@ -898,6 +921,111 @@ def main():
         check("T21c 双面板折线图与调用记录容器在位",
               all(k in pa for k in ("loadKeyUsage", "usage-calls", "Catmull-Rom"))
               and all(k in ph for k in ("loadKeyUsage", "usage-calls", "Catmull-Rom")), None)
+
+        # ===== T22 Headroom 选配插件（方案A：按模型勾选，接单时判定；非必装自动旁路）=====
+        _has_hr = True
+        try:
+            import headroom  # noqa: F401
+        except Exception:
+            _has_hr = False
+        big = json.dumps([{"id": i, "name": f"item-{i}", "status": "active", "score": 0.95,
+                           "tags": ["a", "b"]} for i in range(300)], ensure_ascii=False)
+
+        def _hr_body(model):
+            return {"model": model, "max_tokens": 2000, "messages": [
+                {"role": "system", "content": "你是助手"},
+                {"role": "user", "content": "查询商品列表"},
+                {"role": "assistant", "content": None, "tool_calls": [
+                    {"id": "c1", "type": "function",
+                     "function": {"name": "list_items", "arguments": "{}"}}]},
+                {"role": "tool", "tool_call_id": "c1", "content": big},
+                {"role": "user", "content": "总结一下"}]}
+
+        def _set_hr(h):
+            c = json.load(open(os.path.join(REPO, "config.json"), encoding="utf-8"))
+            if h is None:
+                c.pop("headroom", None)
+            else:
+                c["headroom"] = h
+            json.dump(c, open(os.path.join(REPO, "config.json"), "w", encoding="utf-8"),
+                      ensure_ascii=False, indent=2)
+            httpx.post(f"{BASE}/admin/reload", headers=ADMIN, timeout=30)
+
+        def _last_hr_stat():
+            r = DB.execute("SELECT mode, tokens_before, tokens_after, tokens_saved, error FROM headroom_stats"
+                           " WHERE model='zzbt/echo-hr' ORDER BY id DESC LIMIT 1").fetchone()
+            return dict(r) if r else None
+
+        def _tool_content(n0):
+            b = captured_bodies[-1] if len(captured_bodies) > n0 else {}
+            for m in b.get("messages", []):
+                if m.get("role") == "tool":
+                    return m.get("content")
+            return None
+
+        # a) 总开关关闭（缺省）：勾选模型也绝不压缩，请求零改动
+        _set_hr(None)
+        n0 = len(captured_bodies)
+        r = httpx.post(f"{BASE}/v1/chat/completions", headers=ADMIN, json=_hr_body("zzhr"), timeout=90)
+        check("T22a 开关关→勾选模型不压缩", r.status_code == 200 and _tool_content(n0) == big,
+              (r.status_code, _tool_content(n0) == big))
+
+        # b) dry_run：正常计算压缩但不改写请求，统计入库（灰度数据源）；无库环境验证旁路不炸
+        _set_hr({"enabled": True, "mode": "dry_run", "min_tokens_to_compress": 50, "protect_recent": 0})
+        n0 = len(captured_bodies)
+        r = httpx.post(f"{BASE}/v1/chat/completions", headers=ADMIN, json=_hr_body("zzhr"), timeout=90)
+        st = _last_hr_stat()
+        if _has_hr:
+            check("T22b dry_run请求不改写", r.status_code == 200 and _tool_content(n0) == big, r.status_code)
+            check("T22c dry_run统计入库(saved>0)",
+                  st and st["mode"] == "dry_run" and st["tokens_saved"] > 0, st)
+        else:
+            check("T22b' 无库旁路(dry_run不压缩不炸)", r.status_code == 200 and _tool_content(n0) == big,
+                  (r.status_code, _has_hr))
+
+        # c) live：勾选模型请求体被压缩，响应与按上游 usage 计费完全正常
+        _set_hr({"enabled": True, "mode": "live", "min_tokens_to_compress": 50, "protect_recent": 0})
+        u0 = token_used("zzbt/echo-hr")
+        n0 = len(captured_bodies)
+        r = httpx.post(f"{BASE}/v1/chat/completions", headers=ADMIN, json=_hr_body("zzhr"), timeout=90)
+        st = _last_hr_stat()
+        if _has_hr:
+            check("T22d live请求体已压缩", r.status_code == 200 and _tool_content(n0) not in (None, big),
+                  (r.status_code, _tool_content(n0) == big))
+            check("T22e live统计saved>0", st and st["mode"] == "live" and st["tokens_saved"] > 0, st)
+        else:
+            check("T22d' 无库旁路(live不压缩)", r.status_code == 200 and _tool_content(n0) == big,
+                  (r.status_code, _has_hr))
+        check("T22f 上游usage计费不受压缩影响(Δ=133)", token_used("zzbt/echo-hr") - u0 == 133,
+              token_used("zzbt/echo-hr") - u0)
+
+        # d) 方案A核心：总开关开启时，未勾选模型（对照池）仍收原文
+        n0 = len(captured_bodies)
+        r = httpx.post(f"{BASE}/v1/chat/completions", headers=ADMIN, json=_hr_body("zzhrctl"), timeout=90)
+        check("T22g 未勾选模型收原文", r.status_code == 200 and _tool_content(n0) == big,
+              (r.status_code, _tool_content(n0) == big))
+        _set_hr(None)  # 还原总开关
+
+        # e) 双面板勾选框静态接线（复用 T21 取回的页面）
+        check("T22h 双面板headroom勾选框接线", 'id="f-headroom"' in pa and 'id="f-headroom"' in ph, None)
+
+        # f) 节省统计端点：汇总/今日/按模型/明细 + 插件开关回显
+        rs = httpx.get(f"{BASE}/admin/headroom/stats?days=7", headers=ADMIN, timeout=15)
+        rj = rs.json() if rs.status_code == 200 else {}
+        check("T22i 节省统计端点", rs.status_code == 200 and "total" in rj and "today" in rj and "recent" in rj
+              and "enabled" in rj and (not _has_hr or any(m["model"] == "zzbt/echo-hr" for m in rj.get("by_model", []))),
+              (rs.status_code, rj.get("enabled"), len(rj.get("by_model", []))))
+
+        # g) 设置端点（/admin/headroom）：读取回显 + 保存即热生效（v2.13.0 设置页的数据源）
+        r0 = httpx.get(f"{BASE}/admin/headroom", headers=ADMIN, timeout=15).json()
+        check("T22j 设置端点读取", all(k in r0 for k in ("enabled", "mode", "available", "min_tokens_to_compress")), r0)
+        r1 = httpx.post(f"{BASE}/admin/headroom", headers=ADMIN,
+                        json={"enabled": True, "mode": "dry_run", "min_tokens_to_compress": 50,
+                              "protect_recent": 0, "timeout_seconds": 10}, timeout=15)
+        r1j = r1.json() if r1.status_code == 200 else {}
+        check("T22k 设置端点保存热生效", r1.status_code == 200 and r1j.get("enabled") is True
+              and r1j.get("mode") == "dry_run" and r1j.get("min_tokens_to_compress") == 50, (r1.status_code, r1j))
+        httpx.post(f"{BASE}/admin/headroom", headers=ADMIN, json={"enabled": False}, timeout=15)  # 还原总开关
 
     finally:
         try:

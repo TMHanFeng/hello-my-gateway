@@ -13,6 +13,7 @@ from providers.anthropic_provider import AnthropicProvider
 from providers.qianfan_search import QianfanSearchProvider
 import search_summary
 import reasoning
+import headroom_plugin
 import database as db
 
 logger = logging.getLogger(__name__)
@@ -48,6 +49,9 @@ class ModelEntry:
     reasoning_map: dict = field(default_factory=dict)  # 统一思考档位 -> 上游请求体片段（reasoning.py 解析）
     smart_estimate: bool = False  # 问题22：智能估算超时（true=按 token 量动态计算超时，忽略手动秒数）
     no_stream_options: bool = False  # 问题21-B：本地 vllm 等不认 stream_options 时关闭注入（该流将无 usage 统计）
+    # Headroom 选配插件（非必装）：勾选模型在接单时压缩出站 messages 省 token；判定在回退循环内，
+    # 未勾选候选收原文——同池勾选/不勾选并存即天然 A/B。库未安装/总开关关闭时自动旁路（headroom_plugin.py）
+    headroom: bool = False
     valve_pct: int = 100  # 使用量安全阀 k（%）：已用+预估 ≥ k×最大量限制 即跳过路由；0=停用该模型；上限 0（不限量）不生效
     # v2.12.3 搜索 AI 总结（仅 qianfan_web_search 协议生效）：目标 LLM 池名 + 自由字数（原样拼进提示词）
     summary_pool: str = ""      # "" = 不总结（返回原始结果列表，行为与旧版一致）
@@ -242,6 +246,7 @@ class ModelPool:
                 reasoning_map=(m.get("reasoning_map") or {}),
                 smart_estimate=bool(m.get("smart_estimate", False)),
                 no_stream_options=bool(m.get("no_stream_options", False)),
+                headroom=bool(m.get("headroom", False)),
                 valve_pct=valve_pct,
                 summary_pool=(m.get("summary_pool") or "").strip(),
                 summary_length=str(m.get("summary_length") or "").strip(),
@@ -1446,6 +1451,7 @@ class ModelPool:
     async def execute_with_fallback(self, pool_name: str, req, requested_model: str | None = None, caller: str = "",
                                     required_json_output: bool = False, allow_search_summary: bool = True):
         tried: set[str] = set()
+        _hr_cache: dict = {}  # Headroom：本请求的压缩结果缓存（同请求多个勾选候选复用一次压缩）
         estimated = self._estimate_tokens(req)
         est_input = self._estimate_input_tokens(req)
         has_images = self._has_images(req)
@@ -1481,9 +1487,12 @@ class ModelPool:
                 break
             tried.add(entry.id)
 
+            # Headroom 选配插件（方案A）：勾选压缩的模型接单时才压缩，失败/未启用一律原文旁路
+            req_use = await headroom_plugin.maybe_compress_for_entry(entry, req, pool_name, caller, _hr_cache)
+
             t0 = time.perf_counter()
             try:
-                response, tokens = await self.execute(entry, req)
+                response, tokens = await self.execute(entry, req_use)
                 upstream_ms = round((time.perf_counter() - t0) * 1000, 1)
                 last_reason = actual_calls[-1]["reason"] if actual_calls else ""
                 if last_reason in ("selected", "single_override_selected") and actual_calls[-1]["model"] == entry.id:
@@ -1648,6 +1657,7 @@ class ModelPool:
     async def execute_stream_with_fallback(self, pool_name: str, req, requested_model: str | None = None, caller: str = "",
                                            required_json_output: bool = False, allow_search_summary: bool = True):
         tried: set[str] = set()
+        _hr_cache: dict = {}  # Headroom：本请求的压缩结果缓存（同请求多个勾选候选复用一次压缩）
         estimated = self._estimate_tokens(req)
         est_input = self._estimate_input_tokens(req)
         has_images = self._has_images(req)
@@ -1678,6 +1688,9 @@ class ModelPool:
                 break
             tried.add(entry.id)
 
+            # Headroom 选配插件（方案A）：同非流式——勾选模型接单时才压缩，旁路语义一致
+            req_use = await headroom_plugin.maybe_compress_for_entry(entry, req, pool_name, caller, _hr_cache)
+
             try:
                 last_reason = actual_calls[-1]["reason"] if actual_calls else ""
                 if last_reason in ("selected", "single_override_selected") and actual_calls[-1]["model"] == entry.id:
@@ -1697,7 +1710,7 @@ class ModelPool:
                 dctx = {"pool": pool_name, "requested": requested_model,
                         "estimated": self._estimate_effective(entry, req), "caller": caller,
                         "steps": actual_calls}
-                stream = await self.execute_stream(entry, req, decision_ctx=dctx)
+                stream = await self.execute_stream(entry, req_use, decision_ctx=dctx)
                 # 预取首个分片：真正发起上游连接并检查 HTTP 状态。
                 # 连接失败 / 429 / HTTP 错误会在此处抛出，从而触发下面的回退逻辑；
                 # 否则流式请求会"假成功"（日志显示选中但实际无响应、不兜底）。

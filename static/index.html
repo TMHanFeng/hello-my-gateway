@@ -323,7 +323,7 @@ body {
 /* 编辑弹窗：分组标题 + 选项卡片 */
 .form-sec { font-size: 11.5px; color: var(--muted); letter-spacing: 1px; margin: 20px 0 12px; padding-top: 14px; border-top: 1px dashed var(--line-hi); display: flex; align-items: center; gap: 6px; }
 .form-sec::before { content: ''; width: 3px; height: 11px; background: var(--amber); border-radius: 2px; opacity: .75; }
-.opt-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 8px; margin-bottom: 13px; }
+.opt-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-bottom: 13px; }
 .opt {
   display: flex; align-items: flex-start; gap: 8px; padding: 9px 11px;
   border: 1px solid var(--line-hi); border-radius: 7px; background: var(--bg);
@@ -447,6 +447,7 @@ body {
     <div class="tab" data-tab="stats">用量统计</div>
     <div class="tab" data-tab="logs">调用记录</div>
     <div class="tab" data-tab="keys">API 密钥</div>
+    <div class="tab" data-tab="settings">设置</div>
   </div>
 
   <div id="tab-models">
@@ -480,7 +481,8 @@ body {
         <button class="btn btn-sm" id="stat-dim-requests" onclick="setStatDim('requests')">调用次数</button>
         <button class="btn btn-sm" id="stat-dim-tokens" onclick="setStatDim('tokens')">Token 用量</button>
       </div>
-      <button class="btn btn-ghost btn-sm" onclick="loadStats()">手动刷新</button>
+        <button class="btn btn-ghost btn-sm" onclick="showHeadroomStats()">🪴 节省统计</button>
+        <button class="btn btn-ghost btn-sm" onclick="loadStats()">手动刷新</button>
     </div>
     <div id="stats-grid" class="stats-grid"></div>
   </div>
@@ -516,6 +518,42 @@ body {
           <button class="btn btn-ghost" onclick="document.getElementById('key-created').classList.add('hidden')">关闭</button>
         </div>
       </div>
+    </div>
+  </div>
+
+  <div id="tab-settings" class="hidden">
+    <div class="toolbar">
+      <div class="hint">网关选配功能开关，保存后立即热生效（无需重启）。未启用的插件完全旁路，不影响任何转发与计费。</div>
+      <button class="btn btn-ghost btn-sm" onclick="showHeadroomStats()">🪴 节省统计</button>
+    </div>
+    <div class="card" style="max-width:760px">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+        <b style="font-size:14px">🪴 Headroom 上下文压缩</b>
+        <span class="badge b-ghost" id="hr-status-badge">未启用</span>
+      </div>
+      <div class="card-sub" style="margin-bottom:10px">对勾选了「Headroom 上下文压缩」的模型，在接单时自动压缩出站大块工具输出（JSON 数组/日志等）以节省上游 token；同池未勾选模型收原文，可作 A/B 对照。实验性选配：压缩超时或异常自动旁路，绝不影响请求本身。</div>
+      <div id="hr-avail" style="font-size:12px;margin-bottom:12px"></div>
+      <form onsubmit="saveHeadroomSettings(event)">
+        <div class="f2">
+          <div class="fg"><label>总开关（关闭时模型编辑里的 Headroom 勾选框不可用）</label>
+            <label style="display:flex;align-items:center;gap:8px;font-weight:400"><input type="checkbox" id="hr-en"> 启用 Headroom 插件</label>
+          </div>
+          <div class="fg"><label>模式</label>
+            <div style="display:flex;gap:14px;padding-top:6px;flex-wrap:wrap">
+              <label style="display:flex;align-items:center;gap:5px;font-weight:400"><input type="radio" name="hr-mode" value="dry_run" checked> dry_run（只统计不改写）</label>
+              <label style="display:flex;align-items:center;gap:5px;font-weight:400"><input type="radio" name="hr-mode" value="live"> live（实际压缩）</label>
+            </div>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0 14px;margin-top:4px">
+          <div class="fg"><label>最小压缩 token 数（消息低于此不压）</label><input type="number" id="hr-min" value="500" min="0"></div>
+          <div class="fg"><label>保护最近 N 条消息不压缩</label><input type="number" id="hr-protect" value="4" min="0"></div>
+          <div class="fg"><label>压缩超时（秒，超时自动旁路）</label><input type="number" id="hr-timeout" value="10" min="1"></div>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:14px">
+          <button type="submit" class="btn btn-amber">💾 保存（热生效）</button>
+        </div>
+      </form>
     </div>
   </div>
 </div>
@@ -586,6 +624,19 @@ body {
     <div id="usage-calls"></div>
     <div class="modal-actions">
       <button type="button" class="btn btn-ghost" onclick="closeKeyUsage()">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- ════════ 模态：Headroom 节省统计 ════════ -->
+<div class="overlay" id="overlay-hrstats">
+  <div class="modal" style="width:780px;max-width:96vw">
+    <h3>🪴 Headroom 上下文压缩 · 节省统计</h3>
+    <div id="hr-summary" style="font-size:12.5px;line-height:1.9"></div>
+    <div id="hr-by-model"></div>
+    <div id="hr-recent"></div>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-ghost" onclick="closeModal('overlay-hrstats')">关闭</button>
     </div>
   </div>
 </div>
@@ -671,6 +722,7 @@ body {
         <label class="opt"><input type="checkbox" name="json_output" id="f-json-output"><span><b>支持 JSON 格式输出</b>请求带 response_format(json) 时只路由到勾选的模型</span></label>
         <label class="opt"><input type="checkbox" name="smart_estimate" id="f-smart-estimate" onchange="onSmartToggle()"><span><b>智能估算超时</b>按 token 量动态计算总超时，忽略手动秒数</span></label>
         <label class="opt"><input type="checkbox" name="no_stream_options" id="f-nso"><span><b>不发 stream_options</b>本地 vllm 等不认时勾选，该流将无 usage 统计</span></label>
+        <label class="opt"><input type="checkbox" name="headroom" id="f-headroom"><span><b>Headroom 上下文压缩</b>实验性选配：该模型接单时自动压缩出站大块工具输出省 token（服务端需装 headroom-ai，未装自动旁路）</span></label>
       </div>
       <div id="smart-live" class="hidden" style="font-size:12px;color:var(--muted);margin-bottom:13px;line-height:1.6"></div>
       <div class="fg" id="reasoning-map-fg"><label>思考映射 reasoning_map（JSON，可选）：统一档位 off/minimal/low/medium/high/max → 透传上游的请求体片段；留空 = 不注入（embedding/rerank 模型不适用）</label><textarea name="reasoning_map" rows="5" placeholder='{"off": {"thinking": {"type": "disabled"}}, "medium": {"thinking": {"type": "enabled"}}, "max": {"thinking": {"type": "enabled"}}}'></textarea><div id="reasoning-probe-strip" style="margin-top:6px"></div></div>
@@ -765,7 +817,7 @@ document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () =>
 function switchTab(name, el) {
   document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
   el.classList.add('active');
-  ['models','pools','stats','logs','keys'].forEach(t => document.getElementById('tab-' + t).classList.toggle('hidden', t !== name));
+  ['models','pools','stats','logs','keys','settings'].forEach(t => document.getElementById('tab-' + t).classList.toggle('hidden', t !== name));
   clearInterval(statsTimer); clearInterval(logsTimer);
   statsTimer = null; logsTimer = null;
   window.scrollTo(0, 0);   // 切页回顶部：否则沿用上一页的滚动偏移，短页面会直接落在底部
@@ -774,6 +826,7 @@ function switchTab(name, el) {
   if (name === 'stats') { loadStats(); statsTimer = setInterval(loadStats, 5000); }
   if (name === 'logs') { populateLogFilter(); loadDecisions(); logsTimer = setInterval(loadDecisions, 5000); }
   if (name === 'keys') loadKeys();
+  if (name === 'settings') loadHeadroomSettings();
 }
 
 function provBadge(p) { return p === 'anthropic' ? '<span class="badge b-anthropic">anthropic</span>' : p === 'qianfan_search' ? '<span class="badge b-once">千帆搜索</span>' : p === 'qianfan_web_search' ? '<span class="badge b-5h">千帆网页搜索</span>' : '<span class="badge b-openai">openai</span>'; }
@@ -2335,6 +2388,7 @@ async function editModel(id) {
   f.timeout_seconds.value = (m.timeout_seconds == null ? 120 : m.timeout_seconds);
   const _se = document.getElementById('f-smart-estimate'); if (_se) _se.checked = !!m.smart_estimate;
   const _nso = document.getElementById('f-nso'); if (_nso) _nso.checked = !!m.no_stream_options;
+  const _hr = document.getElementById('f-headroom'); if (_hr) _hr.checked = !!m.headroom;
   f.max_concurrency.value = m.max_concurrency ?? 10; f.refresh_time.value = m.refresh_time || '';
   f.gift_grant_cap.value = m.gift_grant_cap || 5000000;
   f.max_tokens.value = m.max_tokens || 0; f.ttl_seconds.value = m.ttl_seconds || 0;
@@ -2371,6 +2425,7 @@ async function submitModel(e) {
   body.json_output = document.getElementById('f-json-output') ? document.getElementById('f-json-output').checked : false;
   body.smart_estimate = document.getElementById('f-smart-estimate') ? document.getElementById('f-smart-estimate').checked : false;
   body.no_stream_options = document.getElementById('f-nso') ? document.getElementById('f-nso').checked : false;
+  body.headroom = document.getElementById('f-headroom') ? (document.getElementById('f-headroom').disabled ? false : document.getElementById('f-headroom').checked) : false;
   // 自定义参数（extra_params）已废弃：显式提交空对象，避免 PUT 合并语义保留旧值
   body.extra_params = {};
   // 思考映射：始终显式提交（空对象 = 清除），避免 PUT 时未提交键被保留旧值
@@ -2544,6 +2599,7 @@ async function testConnectivity() {
 
 setInterval(() => { document.getElementById('clock').textContent = new Date().toLocaleTimeString('zh-CN', { hour12: false }); }, 1000);
 loadModels();
+refreshHeadroomGate();
 
 /* ── API 密钥管理 ── */
 let keyPoolCache = [];
@@ -2764,6 +2820,97 @@ async function showKeyUsage(id) {
   loadKeyUsage();
 }
 function closeKeyUsage() { document.getElementById('overlay-usage').classList.remove('show'); }
+/* Headroom 选配插件：节省统计（非必装；config.json headroom.enabled 总开关，勾选模型接单时才压缩） */
+async function showHeadroomStats() {
+  const d = await api('/admin/headroom/stats?days=7');
+  if (!d) return;
+  const st = d.enabled
+    ? (d.mode === 'dry_run' ? '✅ 已启用 · dry_run（只统计不改写，灰度观察）' : '✅ 已启用 · live（出站消息实际压缩）')
+    : '⛔ 未启用：config.json 里 headroom.enabled 改 true 并 /admin/reload，且目标模型在编辑里勾选「Headroom 上下文压缩」';
+  const t = d.total || {}, td = d.today || {};
+  const fmt = n => (n || 0).toLocaleString();
+  document.getElementById('hr-summary').innerHTML =
+    '<div>插件状态：<b style="color:' + (d.enabled ? 'var(--teal)' : '#f87171') + '">' + st + '</b></div>' +
+    '<div>今日节省 <b style="color:var(--teal)">' + fmt(td.saved) + '</b> tok（' + fmt(td.requests) + ' 次）　|　近 ' + d.window_days +
+    ' 天节省 <b style="color:var(--teal)">' + fmt(t.saved) + '</b> tok（压缩前 ' + fmt(t.tokens_before) + ' → 压缩后 ' + fmt(t.tokens_after) + '）</div>' +
+    '<div>压缩 ' + fmt(t.requests) + ' 次 · 旁路/异常 ' + fmt(t.errors) + ' 次 · 耗时均值 ' + (t.avg_latency_ms || 0).toFixed(0) + 'ms / 峰值 ' + (t.max_latency_ms || 0).toFixed(0) + 'ms</div>';
+  const bm = d.by_model || [];
+  document.getElementById('hr-by-model').innerHTML = bm.length ?
+    '<div style="font-size:12.5px;color:#888;margin:10px 0 6px">按模型（近 ' + d.window_days + ' 天，成功压缩）</div>' +
+    '<div style="max-height:200px;overflow:auto;border:1px solid var(--panel-2);border-radius:6px"><table style="width:100%;border-collapse:collapse;font-size:12px">' +
+    '<thead><tr><th style="text-align:left;padding:5px 8px;color:#888">模型</th><th style="text-align:right;padding:5px 8px;color:#888">次数</th><th style="text-align:right;padding:5px 8px;color:#888">节省 tok</th><th style="text-align:right;padding:5px 8px;color:#888">平均压缩率</th></tr></thead><tbody>' +
+    bm.map(m => '<tr><td style="padding:4px 6px" class="mono">' + esc(m.model) + '</td>' +
+      '<td style="padding:4px 6px;text-align:right" class="mono">' + fmt(m.requests) + '</td>' +
+      '<td style="padding:4px 6px;text-align:right;color:var(--teal)" class="mono">' + fmt(m.saved) + '</td>' +
+      '<td style="padding:4px 6px;text-align:right" class="mono">' + ((m.avg_ratio || 0) * 100).toFixed(1) + '%</td></tr>').join('') +
+    '</tbody></table></div>' : '';
+  const rc = d.recent || [];
+  document.getElementById('hr-recent').innerHTML = rc.length ?
+    '<div style="font-size:12.5px;color:#888;margin:10px 0 6px">最近记录（≤50 条，含 dry_run 与异常旁路）</div>' +
+    '<div style="max-height:260px;overflow:auto;border:1px solid var(--panel-2);border-radius:6px"><table style="width:100%;border-collapse:collapse;font-size:12px">' +
+    '<thead><tr><th style="text-align:left;padding:5px 8px;color:#888">时间</th><th style="text-align:left;padding:5px 8px;color:#888">池 / 模型</th><th style="text-align:left;padding:5px 8px;color:#888">模式</th><th style="text-align:right;padding:5px 8px;color:#888">前 → 后</th><th style="text-align:right;padding:5px 8px;color:#888">节省</th><th style="text-align:right;padding:5px 8px;color:#888">耗时</th></tr></thead><tbody>' +
+    rc.map(r => {
+      const tm = new Date(r.ts * 1000).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
+      const mode = r.error ? '<span style="color:#f87171">✗ ' + esc(r.error.slice(0, 30)) + '</span>' : esc(r.mode);
+      return '<tr><td style="padding:4px 6px">' + tm + '</td>' +
+        '<td style="padding:4px 6px" class="mono">' + esc(r.pool) + ' / ' + esc(r.model) + '</td>' +
+        '<td style="padding:4px 6px">' + mode + '</td>' +
+        '<td style="padding:4px 6px;text-align:right" class="mono">' + fmt(r.tokens_before) + ' → ' + fmt(r.tokens_after) + '</td>' +
+        '<td style="padding:4px 6px;text-align:right;color:var(--teal)" class="mono">' + fmt(r.tokens_saved) + '</td>' +
+        '<td style="padding:4px 6px;text-align:right" class="mono">' + (r.latency_ms || 0).toFixed(0) + 'ms</td></tr>';
+    }).join('') +
+    '</tbody></table></div>' : '';
+  document.getElementById('overlay-hrstats').classList.add('show');
+}
+/* Headroom 门控：总开关关闭时模型编辑里的勾选框置灰不可勾（服务端每请求仍按总开关判定，双保险） */
+let hrMasterEnabled = false;
+async function refreshHeadroomGate() {
+  const d = await api('/admin/headroom');
+  hrMasterEnabled = !!(d && d.enabled);
+  applyHeadroomGate();
+}
+function applyHeadroomGate() {
+  const cb = document.getElementById('f-headroom');
+  if (!cb) return;
+  cb.disabled = !hrMasterEnabled;
+  if (cb.disabled) cb.checked = false;
+  const lb = cb.closest('.opt');
+  if (lb) {
+    lb.style.opacity = hrMasterEnabled ? '' : '.55';
+    lb.title = hrMasterEnabled ? '' : '需先在「设置」页启用 Headroom 插件总开关';
+  }
+}
+/* Headroom 设置页：读取/保存（保存即热生效，无需 /admin/reload） */
+async function loadHeadroomSettings() {
+  const d = await api('/admin/headroom');
+  if (!d) return;
+  hrMasterEnabled = !!d.enabled;
+  applyHeadroomGate();
+  document.getElementById('hr-en').checked = d.enabled;
+  document.getElementById('hr-min').value = d.min_tokens_to_compress;
+  document.getElementById('hr-protect').value = d.protect_recent;
+  document.getElementById('hr-timeout').value = d.timeout_seconds;
+  document.querySelectorAll('input[name="hr-mode"]').forEach(r => r.checked = (r.value === d.mode));
+  const badge = document.getElementById('hr-status-badge');
+  badge.textContent = d.enabled ? (d.mode === 'dry_run' ? '已启用 · dry_run' : '已启用 · live') : '未启用';
+  badge.className = 'badge ' + (d.enabled ? 'b-json' : 'b-ghost');
+  const av = document.getElementById('hr-avail');
+  av.textContent = d.available ? '✓ 已检测到 headroom-ai 库（.venv-headroom 环境），压缩可用'
+                               : '✗ 当前运行环境未安装 headroom-ai：开关可打开，但不会产生压缩（自动旁路）。需用 start_gateway_headroom.cmd 启动';
+  av.style.color = d.available ? 'var(--teal)' : '#f87171';
+}
+async function saveHeadroomSettings(ev) {
+  if (ev && ev.preventDefault) ev.preventDefault();
+  const body = {
+    enabled: document.getElementById('hr-en').checked,
+    mode: (document.querySelector('input[name="hr-mode"]:checked') || {}).value || 'live',
+    min_tokens_to_compress: parseInt(document.getElementById('hr-min').value) || 0,
+    protect_recent: parseInt(document.getElementById('hr-protect').value) || 0,
+    timeout_seconds: parseInt(document.getElementById('hr-timeout').value) || 10,
+  };
+  const d = await api('/admin/headroom', { method: 'POST', body: JSON.stringify(body) });
+  if (d) { toast('Headroom 设置已保存并热生效'); loadHeadroomSettings(); }
+}
 async function loadKeyUsage() {
   const el = document.getElementById('usage-hours');
   const rangeEl = document.getElementById('usage-range-label');
