@@ -1026,6 +1026,9 @@ def main():
         check("T22k 设置端点保存热生效", r1.status_code == 200 and r1j.get("enabled") is True
               and r1j.get("mode") == "dry_run" and r1j.get("min_tokens_to_compress") == 50, (r1.status_code, r1j))
         httpx.post(f"{BASE}/admin/headroom", headers=ADMIN, json={"enabled": False}, timeout=15)  # 还原总开关
+        # h) v2.13.1 设置页控件：滑动开关/模式选项卡/高亮 JS 在位（双面板）
+        check("T22l 设置页控件在位", all(k in pa for k in ("hr-switch", "hr-radio", "applyHrModeHighlight", 'data-tab="settings"'))
+              and all(k in ph for k in ("hr-switch", "hr-radio", "applyHrModeHighlight", 'data-tab="settings"')), None)
 
     finally:
         try:

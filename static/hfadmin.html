@@ -309,6 +309,21 @@ select { max-width: 100%; }
 .form-sec { font-size: 11px; font-weight: 650; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); margin: 20px 0 12px; padding-top: 16px; border-top: 1px solid rgba(0, 0, 0, 0.06); display: flex; align-items: center; gap: 6px; }
 .form-sec::before { content: ''; width: 3px; height: 11px; border-radius: 2px; background: var(--teal); opacity: .8; }
 .opt-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-bottom: 13px; }
+/* Headroom 设置卡片：开关/单选与说明文字对齐（v2.13.1） */
+.hr-row { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; padding:13px 0; border-bottom:1px solid var(--line); }
+.hr-row-label { font-size:13.5px; font-weight:600; }
+.hr-row-desc { font-size:12px; color:var(--muted); margin-top:3px; line-height:1.6; }
+.hr-switch { position:relative; display:inline-block; width:42px; height:24px; flex:none; cursor:pointer; }
+.hr-switch input { opacity:0; width:0; height:0; position:absolute; }
+.hr-switch .hr-track { position:absolute; inset:0; border-radius:12px; background:rgba(128,128,128,.35); transition:background .15s; }
+.hr-switch .hr-track::after { content:''; position:absolute; left:3px; top:3px; width:18px; height:18px; border-radius:50%; background:#fff; box-shadow:0 1px 3px rgba(0,0,0,.3); transition:transform .15s; }
+.hr-switch input:checked + .hr-track { background:var(--teal); }
+.hr-switch input:checked + .hr-track::after { transform:translateX(18px); }
+.hr-radio { display:flex; align-items:flex-start; gap:8px; padding:10px 12px; border:1px solid var(--line); border-radius:8px; cursor:pointer; }
+.hr-radio input { margin-top:3px; flex:none; }
+.hr-radio.on { border-color:var(--teal); box-shadow:inset 0 0 0 1px var(--teal); }
+.hr-radio-title { display:block; font-size:13px; font-weight:600; }
+.hr-radio-desc { display:block; font-size:11.5px; color:var(--muted); margin-top:3px; line-height:1.5; }
 .opt {
   display: flex; align-items: flex-start; gap: 8px; padding: 9px 11px;
   border: 1px solid rgba(0, 0, 0, 0.12); border-radius: 11px; background: #fff;
@@ -811,33 +826,50 @@ select { max-width: 100%; }
         <button class="btn btn-ghost btn-sm" onclick="showHeadroomStats()">🪴 节省统计</button>
       </div>
     </div>
-    <div style="border:1px solid var(--line);border-radius:10px;padding:16px;max-width:760px;background:var(--panel)">
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+    <div class="card" style="max-width:760px">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
         <b style="font-size:14px">🪴 Headroom 上下文压缩</b>
         <span class="badge b-ghost" id="hr-status-badge">未启用</span>
       </div>
-      <div class="hint" style="margin-bottom:10px">对勾选了「Headroom 上下文压缩」的模型，在接单时自动压缩出站大块工具输出（JSON 数组/日志等）以节省上游 token；同池未勾选模型收原文，可作 A/B 对照。实验性选配：压缩超时或异常自动旁路，绝不影响请求本身。</div>
-      <div id="hr-avail" style="font-size:12px;margin-bottom:12px"></div>
+      <div class="hint" style="margin-bottom:4px">对勾选了「Headroom 上下文压缩」的模型，在其接单时自动压缩出站的大块工具输出（长 JSON 数组、日志等）以节省上游 token；同池未勾选的模型收原文，可作 A/B 对照。实验性选配：压缩超时或异常自动旁路，绝不影响请求本身。</div>
+      <div id="hr-avail" style="font-size:12px;margin-bottom:2px"></div>
       <form onsubmit="saveHeadroomSettings(event)">
-        <div class="f2">
-          <div class="fg"><label>总开关（关闭时模型编辑里的 Headroom 勾选框不可用）</label>
-            <label style="display:flex;align-items:center;gap:8px;font-weight:400"><input type="checkbox" id="hr-en"> 启用 Headroom 插件</label>
-          </div>
-          <div class="fg"><label>模式</label>
-            <div style="display:flex;gap:14px;padding-top:6px;flex-wrap:wrap">
-              <label style="display:flex;align-items:center;gap:5px;font-weight:400"><input type="radio" name="hr-mode" value="dry_run" checked> dry_run（只统计不改写）</label>
-              <label style="display:flex;align-items:center;gap:5px;font-weight:400"><input type="radio" name="hr-mode" value="live"> live（实际压缩）</label>
-            </div>
-          </div>
+      <div class="hr-row">
+        <div>
+          <div class="hr-row-label">启用插件（总开关）</div>
+          <div class="hr-row-desc">开启后，模型编辑「流式与输出选项」里的「Headroom 上下文压缩」勾选框才可勾选。关闭时所有请求一律发原文——完全旁路，不影响转发与计费。</div>
         </div>
-        <div class="f3" style="margin-top:4px">
-          <div class="fg"><label>最小压缩 token 数（消息低于此不压）</label><input type="number" id="hr-min" value="500" min="0"></div>
-          <div class="fg"><label>保护最近 N 条消息不压缩</label><input type="number" id="hr-protect" value="4" min="0"></div>
-          <div class="fg"><label>压缩超时（秒，超时自动旁路）</label><input type="number" id="hr-timeout" value="10" min="1"></div>
+        <label class="hr-switch" title="启用 / 停用 Headroom 插件"><input type="checkbox" id="hr-en"><span class="hr-track"></span></label>
+      </div>
+
+      <div class="hr-row" style="display:block">
+        <div class="hr-row-label">压缩模式</div>
+        <div class="hr-row-desc">建议先用 dry_run 观察节省数据，满意后再切 live。</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">
+          <label class="hr-radio">
+            <input type="radio" name="hr-mode" value="dry_run">
+            <span><span class="hr-radio-title">dry_run · 试运行（只统计）</span><span class="hr-radio-desc">照常发送原文，后台真实计算压缩但只记录「能省多少」，不影响任何回答——零风险观察期。</span></span>
+          </label>
+          <label class="hr-radio">
+            <input type="radio" name="hr-mode" value="live">
+            <span><span class="hr-radio-title">live · 实际压缩（生效）</span><span class="hr-radio-desc">出站消息真实压缩后再发上游，token 节省立即生效。可在「用量统计 → 🪴 节省统计」核对效果。</span></span>
+          </label>
         </div>
-        <div style="display:flex;gap:8px;margin-top:14px">
-          <button type="submit" class="btn btn-amber">💾 保存（热生效）</button>
+      </div>
+
+      <div class="hr-row" style="display:block">
+        <div class="hr-row-label">压缩参数（保持默认即可）</div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0 14px;margin-top:8px">
+          <div class="fg"><label>最小压缩 token 数</label><input type="number" id="hr-min" value="500" min="0"><div class="hr-row-desc">单条消息超过此长度才压缩，越小压得越多</div></div>
+          <div class="fg"><label>保护最近消息条数</label><input type="number" id="hr-protect" value="4" min="0"><div class="hr-row-desc">结尾 N 条对话保持原样（模型正在关注的内容）</div></div>
+          <div class="fg"><label>压缩超时（秒）</label><input type="number" id="hr-timeout" value="10" min="1"><div class="hr-row-desc">压缩耗时超限即放弃，原文直发不卡请求</div></div>
         </div>
+      </div>
+
+      <div style="display:flex;gap:10px;margin-top:13px;align-items:center;flex-wrap:wrap">
+        <button type="submit" class="btn btn-amber">💾 保存（立即热生效）</button>
+        <span class="hr-row-desc" style="margin-top:0">保存后无需重启、无需 reload，立即按新设置运行</span>
+      </div>
       </form>
     </div>
   </section>
@@ -3277,6 +3309,7 @@ async function loadHeadroomSettings() {
   document.getElementById('hr-protect').value = d.protect_recent;
   document.getElementById('hr-timeout').value = d.timeout_seconds;
   document.querySelectorAll('input[name="hr-mode"]').forEach(r => r.checked = (r.value === d.mode));
+  applyHrModeHighlight();
   const badge = document.getElementById('hr-status-badge');
   badge.textContent = d.enabled ? (d.mode === 'dry_run' ? '已启用 · dry_run' : '已启用 · live') : '未启用';
   badge.className = 'badge ' + (d.enabled ? 'b-json' : 'b-ghost');
@@ -3297,6 +3330,14 @@ async function saveHeadroomSettings(ev) {
   const d = await api('/admin/headroom', { method: 'POST', body: JSON.stringify(body) });
   if (d) { toast('Headroom 设置已保存并热生效'); loadHeadroomSettings(); }
 }
+/* 模式选项卡高亮：选中的单选卡描边 */
+function applyHrModeHighlight() {
+  document.querySelectorAll('.hr-radio').forEach(l => {
+    const inp = l.querySelector('input');
+    if (inp) l.classList.toggle('on', inp.checked);
+  });
+}
+document.querySelectorAll('input[name="hr-mode"]').forEach(r => r.addEventListener('change', applyHrModeHighlight));
 /* 轮换日志 */
 async function showKeyRotations(id) {
   const data = await api('/admin/keys/' + id + '/rotations');
