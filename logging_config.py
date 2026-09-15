@@ -88,6 +88,21 @@ def _enable_windows_ansi():
             pass
 
 
+class SafeTimedRotatingFileHandler(TimedRotatingFileHandler):
+    """Windows 容错滚动：跨天 rename 时文件可能被其他进程占用（并行的测试实例、编辑器、杀软）。
+
+    原版行为：先关流再 os.rename，失败后 rolloverAt 不前进——每条日志都重试滚动并
+    向 stderr 打印整屏 Logging error，且当日记录全部被丢弃（实测日志文件冻结 16 小时）。
+    这里改为：rename 失败则放弃本次归档（当日继续写原文件，内容跨天顺延），滚动点正常
+    推进，下个零点再尝试。"""
+
+    def rotate(self, source, dest):
+        try:
+            os.rename(source, dest)
+        except OSError as e:
+            print(f"[日志滚动] {source} 被其他进程占用，跳过本次归档（当日继续写原文件）: {e}", flush=True)
+
+
 def setup_logging(console_level: int = logging.INFO, file_level: int = logging.DEBUG, console_color: bool = True) -> str:
     """配置 root logger（清除已有 handler 后重建），返回日志文件路径。"""
     os.makedirs(LOG_DIR, exist_ok=True)
@@ -105,7 +120,7 @@ def setup_logging(console_level: int = logging.INFO, file_level: int = logging.D
     console.setFormatter(_ColorFormatter(CONSOLE_FMT, datefmt=CONSOLE_DATEFMT, colored=use_color))
     root.addHandler(console)
 
-    file_h = TimedRotatingFileHandler(LOG_FILE, when="midnight", backupCount=30, encoding="utf-8")
+    file_h = SafeTimedRotatingFileHandler(LOG_FILE, when="midnight", backupCount=30, encoding="utf-8")
     file_h.setLevel(file_level)
     file_h.setFormatter(logging.Formatter(FILE_FMT, datefmt=FILE_DATEFMT))  # 文件永远纯文本，无颜色码
     root.addHandler(file_h)
