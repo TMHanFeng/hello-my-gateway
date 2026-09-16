@@ -895,20 +895,30 @@ async def wal_checkpoint():
         await db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
 
 
-async def trim_decision_log(keep_per_pool: int = 50):
-    """按池裁剪 decision_log 至每池最近 keep_per_pool 条（scheduler 维护任务每 60s 批量调用）。
+async def trim_decision_log(keep_per_pool: int = 50, keep_per_caller: int = 50):
+    """裁剪 decision_log：保留「每池最近 keep_per_pool 条」∪「每 caller 最近 keep_per_caller 条」
+    （scheduler 维护任务每 60s 批量调用）。
 
     v2.12.6：由全局 500 条改为每池 50 条——池间记录互不挤占（原先大池高流量会把
-    其他池的记录整体冲掉，面板按池查询经常为空）。"""
+    其他池的记录整体冲掉，面板按池查询经常为空）。
+    v2.13.2：补每 caller 保底——繁忙池（arkpro/mm 等，高峰 10+ 行/分钟）的 50 条窗口
+    只覆盖最近几分钟，低频突发 Key（如 505sams35，数小时一波批量调用）的记录总在
+    被查看前被其他 Key 的新记录挤掉，导致其「最近调用记录」恒为空而用量曲线正常。
+    两条规则取并集：池维度维持整体有界，Key 维度保证每个 Key 的面板展示不被冲掉。"""
     async with _maybe_lock():
         db = await _get_conn()
-        pools = [r[0] for r in await (await db.execute("SELECT DISTINCT pool_name FROM decision_log")).fetchall()]
-        for p in pools:
-            await db.execute(
-                "DELETE FROM decision_log WHERE pool_name = ? AND id NOT IN "
-                "(SELECT id FROM decision_log WHERE pool_name = ? ORDER BY id DESC LIMIT ?)",
-                (p, p, keep_per_pool),
-            )
+        await db.execute(
+            "DELETE FROM decision_log WHERE id NOT IN ("
+            "  SELECT id FROM ("
+            "    SELECT id, ROW_NUMBER() OVER (PARTITION BY pool_name ORDER BY id DESC) AS rn"
+            "    FROM decision_log) WHERE rn <= ?"
+            ") AND id NOT IN ("
+            "  SELECT id FROM ("
+            "    SELECT id, ROW_NUMBER() OVER (PARTITION BY caller ORDER BY id DESC) AS rn"
+            "    FROM decision_log) WHERE rn <= ?"
+            ")",
+            (keep_per_pool, keep_per_caller),
+        )
         await _commit(db)
 
 
