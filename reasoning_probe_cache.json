@@ -4520,5 +4520,237 @@
   "notes": [
    "档位有梯度但不支持关闭，未映射 off"
   ]
+ },
+ "openai|https://openrouter.ai/api/v1|union-alpha": {
+  "ts": "2026-09-17 14:06:05",
+  "protocol": "openai",
+  "name": "union-alpha",
+  "calls": [
+   {
+    "fragment": null,
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 15,
+    "completion_tokens": 53
+   },
+   {
+    "fragment": {
+     "reasoning_effort": "minimal"
+    },
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 20,
+    "completion_tokens": 44
+   },
+   {
+    "fragment": {
+     "reasoning_effort": "high"
+    },
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 15,
+    "completion_tokens": 38
+   },
+   {
+    "fragment": {
+     "reasoning_effort": "minimal"
+    },
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 15,
+    "completion_tokens": 41
+   },
+   {
+    "fragment": {
+     "reasoning_effort": "low"
+    },
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 15,
+    "completion_tokens": 51
+   },
+   {
+    "fragment": {
+     "reasoning_effort": "medium"
+    },
+    "status": 429,
+    "error": "{\"error\":{\"message\":\"Provider returned error\",\"code\":429,\"metadata\":{\"raw\":\"stealth/union-alpha is temporarily rate-limited upstream. Please retry shortly.\",\"pr",
+    "reasoning_len": 0,
+    "content_len": 0,
+    "completion_tokens": 0
+   },
+   {
+    "fragment": {
+     "reasoning_effort": "high"
+    },
+    "status": 429,
+    "error": "{\"error\":{\"message\":\"Provider returned error\",\"code\":429,\"metadata\":{\"raw\":\"stealth/union-alpha is temporarily rate-limited upstream. Please retry shortly.\",\"pr",
+    "reasoning_len": 0,
+    "content_len": 0,
+    "completion_tokens": 0
+   },
+   {
+    "fragment": {
+     "reasoning_effort": "max"
+    },
+    "status": 429,
+    "error": "{\"error\":{\"message\":\"Provider returned error\",\"code\":429,\"metadata\":{\"raw\":\"stealth/union-alpha is temporarily rate-limited upstream. Please retry shortly.\",\"pr",
+    "reasoning_len": 0,
+    "content_len": 0,
+    "completion_tokens": 0
+   },
+   {
+    "fragment": {
+     "reasoning": {
+      "enabled": false
+     }
+    },
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 18,
+    "completion_tokens": 47
+   },
+   {
+    "fragment": {
+     "reasoning": {
+      "enabled": true
+     }
+    },
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 15,
+    "completion_tokens": 47
+   },
+   {
+    "fragment": {
+     "reasoning": {
+      "effort": "minimal"
+     }
+    },
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 15,
+    "completion_tokens": 56
+   },
+   {
+    "fragment": {
+     "reasoning": {
+      "effort": "low"
+     }
+    },
+    "status": 429,
+    "error": "{\"error\":{\"message\":\"Provider returned error\",\"code\":429,\"metadata\":{\"raw\":\"stealth/union-alpha is temporarily rate-limited upstream. Please retry shortly.\",\"pr",
+    "reasoning_len": 0,
+    "content_len": 0,
+    "completion_tokens": 0
+   },
+   {
+    "fragment": {
+     "reasoning": {
+      "effort": "medium"
+     }
+    },
+    "status": 429,
+    "error": "{\"error\":{\"message\":\"Provider returned error\",\"code\":429,\"metadata\":{\"raw\":\"stealth/union-alpha is temporarily rate-limited upstream. Please retry shortly.\",\"pr",
+    "reasoning_len": 0,
+    "content_len": 0,
+    "completion_tokens": 0
+   },
+   {
+    "fragment": {
+     "reasoning": {
+      "effort": "high"
+     }
+    },
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 15,
+    "completion_tokens": 44
+   },
+   {
+    "fragment": {
+     "reasoning": {
+      "effort": "max"
+     }
+    },
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 15,
+    "completion_tokens": 50
+   },
+   {
+    "fragment": {
+     "thinking": {
+      "type": "disabled"
+     }
+    },
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 15,
+    "completion_tokens": 51
+   },
+   {
+    "fragment": {
+     "thinking": {
+      "type": "enabled"
+     }
+    },
+    "status": 429,
+    "error": "{\"error\":{\"message\":\"Provider returned error\",\"code\":429,\"metadata\":{\"raw\":\"stealth/union-alpha is temporarily rate-limited upstream. Please retry shortly.\",\"pr",
+    "reasoning_len": 0,
+    "content_len": 0,
+    "completion_tokens": 0
+   },
+   {
+    "fragment": {
+     "enable_thinking": false
+    },
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 15,
+    "completion_tokens": 47
+   },
+   {
+    "fragment": {
+     "enable_thinking": true
+    },
+    "status": 429,
+    "error": "{\"error\":{\"message\":\"Provider returned error\",\"code\":429,\"metadata\":{\"raw\":\"stealth/union-alpha is temporarily rate-limited upstream. Please retry shortly.\",\"pr",
+    "reasoning_len": 0,
+    "content_len": 0,
+    "completion_tokens": 0
+   }
+  ],
+  "baseline_reasoning": 0,
+  "default_thinking": "关",
+  "family": "",
+  "off_fragment": null,
+  "on_fragment": null,
+  "level_lens": {
+   "minimal": 0,
+   "low": 0,
+   "medium": 0,
+   "high": 0,
+   "max": 0
+  },
+  "levels_effective": false,
+  "suggested": {},
+  "notes": [
+   "reasoning_effort 写法被接受但行为无变化，继续试下一族",
+   "reasoning{effort} 写法被接受但行为无变化，继续试下一族",
+   "所有思考参数写法均无效/被拒绝，映射留空（不支持思考控制）"
+  ]
  }
 }
