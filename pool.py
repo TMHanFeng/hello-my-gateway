@@ -266,6 +266,9 @@ class ModelPool:
                 "slow_latency_threshold": int(pool_cfg.get("slow_latency_threshold", 3000)),
                 "load_balance": pool_cfg.get("load_balance", False),
                 "owner_key_id": pool_cfg.get("owner_key_id"),
+                # v2.13.3 Switch 切换：开启后该池可被 POST /{池名} + switch=local|net 定向调用
+                # （local=池内 token_type 为 local 的本地模型，net=其余云端模型）
+                "switch_enabled": bool(pool_cfg.get("switch_enabled", False)),
             }
 
         # Auto-create 兜底池 (fallback pool): empty by default, user manually adds models.
@@ -794,7 +797,7 @@ class ModelPool:
     async def _select_from_pool(self, pool_name: str, estimated_tokens: int = 0, exclude: set | None = None,
                                 has_images: bool = False, visiting: set | None = None,
                                 required_modality: str | None = None, required_json_output: bool = False,
-                                est_input: int = 0):
+                                est_input: int = 0, switch_role: str = ""):
         exclude = exclude or set()
         visiting = visiting or set()
         if pool_name in visiting:
@@ -803,9 +806,11 @@ class ModelPool:
 
         meta = self.pools.get(pool_name) or self.pools.get("auto") or {}
 
-        # Single-model override: when set, only use the specified model
+        # Single-model override: when set, only use the specified model.
+        # v2.13.3 Switch 切换请求旁路：锁定模型可能属于另一侧，会绕过侧别过滤
+        # （switch:local 静默落到 net 侧 = 脱敏语义破坏），故 switch 请求一律忽略锁定。
         override_id = self.single_override.get(pool_name)
-        if override_id and override_id not in exclude:
+        if override_id and not switch_role and override_id not in exclude:
             entry = self.registry.get(override_id)
             if entry:
                 ok, reason, detail = await self._check_available(
@@ -824,6 +829,7 @@ class ModelPool:
 
         units = []
         broken_refs = []
+        switch_matched = 0
         for raw in meta.get("model_ids", []):
             if raw.startswith("pool:"):
                 if raw[5:] in self.pools:
@@ -831,7 +837,13 @@ class ModelPool:
                 else:
                     broken_refs.append(raw)
             elif raw in self.registry:
-                units.append(("model", self.registry[raw]))
+                entry = self.registry[raw]
+                # v2.13.3 Switch 侧别过滤：local=token_type 为 local 的本地模型，net=其余云端模型；
+                # 过滤之后可用性检查/按序重试/冷却照旧（同侧多模型仍可在同侧内换）
+                if switch_role and (entry.token_type == "local") != (switch_role == "local"):
+                    continue
+                switch_matched += 1
+                units.append(("model", entry))
             else:
                 broken_refs.append(raw)
 
@@ -846,6 +858,10 @@ class ModelPool:
                 self.round_robin[pool_name] = (idx + 1) % len(units)
 
         steps = []
+        # v2.13.3 Switch：该池没有对应侧的候选时显式记录（failure_detail 据此给出明确指引而非笼统不可用）
+        if switch_role and switch_matched == 0:
+            steps.append({"model": f"switch:{switch_role}", "reason": "switch_no_match",
+                          "detail": {"hint": "池内没有该侧模型（local=token_type 为 local 的本地模型，net=其余云端模型）"}})
         # 引用失效显式记录：不再静默跳过（此前断裂引用会让 json 判定/选模无声失败）
         for ref in broken_refs:
             steps.append({"model": ref, "reason": "ref_not_found",
@@ -873,7 +889,7 @@ class ModelPool:
                 sub_entry, sub_steps = await self._select_from_pool(
                     val, estimated_tokens, exclude, has_images, visiting,
                     required_modality=required_modality, required_json_output=required_json_output,
-                    est_input=est_input,
+                    est_input=est_input, switch_role=switch_role,
                 )
                 steps.extend(sub_steps)
                 if sub_entry is not None:
@@ -884,7 +900,7 @@ class ModelPool:
     async def select_model(self, pool_name: str, requested_model: str | None = None, estimated_tokens: int = 0,
                            exclude: set | None = None, has_images: bool = False,
                            required_modality: str | None = None, required_json_output: bool = False,
-                           est_input: int = 0):
+                           est_input: int = 0, switch_role: str = ""):
         exclude = exclude or set()
         steps = []
 
@@ -914,7 +930,7 @@ class ModelPool:
         return await self._select_from_pool(
             pool_name, estimated_tokens, exclude, has_images,
             required_modality=required_modality, required_json_output=required_json_output,
-            est_input=est_input
+            est_input=est_input, switch_role=switch_role
         )
 
     @asynccontextmanager
@@ -1436,6 +1452,9 @@ class ModelPool:
         broken = [str(s.get("model")) for s in steps if s.get("reason") == "ref_not_found"]
         if broken:
             return f"池配置存在失效引用: {'、'.join(broken[:5])}（引用的池或模型不存在）。请到模型池管理检查引用名称"
+        # v2.13.3 Switch：该侧无候选——明确指引而非笼统的不可用提示
+        if any(s.get("reason") == "switch_no_match" for s in steps):
+            return "Switch 切换无候选：池内没有该侧模型（local=token_type 为 local 的本地模型，net=其余云端模型）。请到模型池管理补齐对应侧模型"
         # json 硬门槛：全部候选因 no_json_output 被拦 → 明确指引而非笼统的不可用提示
         if any(s.get("reason") == "no_json_output" for s in steps) and not attempted:
             return "请求要求 JSON 格式输出，但该池没有任何支持格式输出（json）的模型。请在模型管理勾选“支持格式输出（json）”（默认不支持）"
@@ -1449,9 +1468,12 @@ class ModelPool:
         return "所有候选模型均不可用：用量用尽 / 安全阀触顶 / RPM·TPM 触顶 / 冷却 / 超上下文"
 
     async def execute_with_fallback(self, pool_name: str, req, requested_model: str | None = None, caller: str = "",
-                                    required_json_output: bool = False, allow_search_summary: bool = True):
+                                    required_json_output: bool = False, allow_search_summary: bool = True,
+                                    switch_role: str = ""):
         tried: set[str] = set()
         _hr_cache: dict = {}  # Headroom：本请求的压缩结果缓存（同请求多个勾选候选复用一次压缩）
+        # v2.13.3 Switch 切换：决策日志 requested 记 switch:local/net（面板调用记录即显示走了哪侧）
+        _req_log = f"switch:{switch_role}" if switch_role else requested_model
         estimated = self._estimate_tokens(req)
         est_input = self._estimate_input_tokens(req)
         has_images = self._has_images(req)
@@ -1473,7 +1495,8 @@ class ModelPool:
                                                        required_json_output=required_json_output, est_input=est_input)
             else:
                 entry, steps = await self.select_model(pool_name, requested_model, estimated, exclude=tried, has_images=has_images,
-                                                       required_json_output=required_json_output, est_input=est_input)
+                                                       required_json_output=required_json_output, est_input=est_input,
+                                                       switch_role=switch_role)
             route_ms = round((time.perf_counter() - _t_sel) * 1000, 1)
 
             if steps:
@@ -1481,7 +1504,8 @@ class ModelPool:
 
             if entry is None:
                 # Main pool / single model cannot serve — escalate to fallback pool once.
-                if not use_fallback and fb_name:
+                # v2.13.3 Switch 请求不升级兜底：兜底池模型不属于任何侧，滑过去=静默跨侧，宁可 503 让客户端重试
+                if not use_fallback and fb_name and not switch_role:
                     use_fallback = True
                     continue
                 break
@@ -1511,7 +1535,7 @@ class ModelPool:
                             response.choices[0].message.content = _summary_text
                         except Exception:
                             pass
-                await db.log_decision(pool_name, requested_model, entry.id, self._estimate_effective(entry, req),
+                await db.log_decision(pool_name, _req_log, entry.id, self._estimate_effective(entry, req),
                                       actual_calls, caller, actual_tokens=tokens)
                 return response, tokens, actual_calls
             except RateLimitError:
@@ -1526,7 +1550,7 @@ class ModelPool:
                     "reason": "fallback_switch_429" if use_fallback else "switch_429",
                     "detail": detail,
                 })
-                if override_id and not use_fallback:
+                if override_id and not use_fallback and not switch_role:
                     use_fallback = True
                 continue
             except Exception as e:
@@ -1547,7 +1571,7 @@ class ModelPool:
                         "reason": "context_overflow",
                         "detail": {"status": 400, "no_cooldown": True, "error": str(e)[:500]},
                     })
-                    if override_id and not use_fallback:
+                    if override_id and not use_fallback and not switch_role:
                         use_fallback = True
                     continue
                 # 问题30（v2.12.3）：确定性请求缺陷 400——请求本身有问题，不冷却不切换，
@@ -1564,7 +1588,7 @@ class ModelPool:
                         "reason": "request_defect_400",
                         "detail": {"status": 400, "no_cooldown": True, "no_switch": True, "error": str(e)[:500]},
                     })
-                    await db.log_decision(pool_name, requested_model, None,
+                    await db.log_decision(pool_name, _req_log, None,
                                           self._estimate_effective(entry, req), actual_calls, caller)
                     break
                 # 本地模型切换窗口（如局域网千问 503 qwen_switching + retry_after）：显卡在
@@ -1580,7 +1604,7 @@ class ModelPool:
                         "reason": "switching_passthrough",
                         "detail": {"status": 503, "no_cooldown": True, "no_switch": True},
                     })
-                    await db.log_decision(pool_name, requested_model, None,
+                    await db.log_decision(pool_name, _req_log, None,
                                           self._estimate_effective(entry, req), actual_calls, caller)
                     raise ContextOverflowPassThrough(503, _upstream_error_body(e))
                 last_failure_overflow = False
@@ -1628,15 +1652,15 @@ class ModelPool:
                     "reason": "fallback_switch_error" if use_fallback else "switch_error",
                     "detail": detail,
                 })
-                if override_id and not use_fallback:
+                if override_id and not use_fallback and not switch_role:
                     use_fallback = True
                 continue
 
         if last_failure_overflow and last_overflow is not None:
             # 整池都无法容纳该请求：把上游上下文超限 400 原样透传（与直连一致，客户端可据此自愈）
-            await db.log_decision(pool_name, requested_model, None, estimated, actual_calls, caller)
+            await db.log_decision(pool_name, _req_log, None, estimated, actual_calls, caller)
             raise ContextOverflowPassThrough(400, _upstream_error_body(last_overflow))
-        await db.log_decision(pool_name, requested_model, None, estimated, actual_calls, caller)
+        await db.log_decision(pool_name, _req_log, None, estimated, actual_calls, caller)
         return None, 0, actual_calls
 
     async def _search_summary_stream(self, entry, req, pool_name: str, requested_model: str | None,
@@ -1655,9 +1679,12 @@ class ModelPool:
         return await search_summary.summarize_stream(self, entry, req, response, caller)
 
     async def execute_stream_with_fallback(self, pool_name: str, req, requested_model: str | None = None, caller: str = "",
-                                           required_json_output: bool = False, allow_search_summary: bool = True):
+                                           required_json_output: bool = False, allow_search_summary: bool = True,
+                                           switch_role: str = ""):
         tried: set[str] = set()
         _hr_cache: dict = {}  # Headroom：本请求的压缩结果缓存（同请求多个勾选候选复用一次压缩）
+        # v2.13.3 Switch 切换：决策日志 requested 记 switch:local/net（面板调用记录即显示走了哪侧）
+        _req_log = f"switch:{switch_role}" if switch_role else requested_model
         estimated = self._estimate_tokens(req)
         est_input = self._estimate_input_tokens(req)
         has_images = self._has_images(req)
@@ -1677,12 +1704,14 @@ class ModelPool:
                                                        required_json_output=required_json_output, est_input=est_input)
             else:
                 entry, steps = await self.select_model(pool_name, requested_model, estimated, exclude=tried, has_images=has_images,
-                                                       required_json_output=required_json_output, est_input=est_input)
+                                                       required_json_output=required_json_output, est_input=est_input,
+                                                       switch_role=switch_role)
             if steps:
                 actual_calls.extend(s for s in steps if s["reason"] != "already_tried")
 
             if entry is None:
-                if not use_fallback and fb_name:
+                # v2.13.3 Switch 请求不升级兜底：兜底池模型不属于任何侧，滑过去=静默跨侧，宁可 503 让客户端重试
+                if not use_fallback and fb_name and not switch_role:
                     use_fallback = True
                     continue
                 break
@@ -1701,13 +1730,13 @@ class ModelPool:
                 # v2.12.3 搜索两步式第 2 步（流式）：见 _search_summary_stream 注释。
                 # 返回 None（总结不可用）时不 return，继续走下面的原有合成流 → 客户端拿到裸列表。
                 if allow_search_summary and getattr(entry, "summary_pool", ""):
-                    _sstream = await self._search_summary_stream(entry, req, pool_name, requested_model,
+                    _sstream = await self._search_summary_stream(entry, req, pool_name, _req_log,
                                                                  caller, actual_calls)
                     if _sstream is not None:
                         return _sstream, entry, actual_calls
                 # 决策日志后置（v2.10.8）：由 _wrap_stream 结束时一次性写入（含 final actual_tokens），
                 # INSERT 移出 TTFB 关键路径；预取即失败的尝试不产生独立行，其切换步骤随后续尝试/最终失败日志记录
-                dctx = {"pool": pool_name, "requested": requested_model,
+                dctx = {"pool": pool_name, "requested": _req_log,
                         "estimated": self._estimate_effective(entry, req), "caller": caller,
                         "steps": actual_calls}
                 stream = await self.execute_stream(entry, req_use, decision_ctx=dctx)
@@ -1758,7 +1787,7 @@ class ModelPool:
                     "reason": "fallback_switch_429" if use_fallback else "switch_429",
                     "detail": {"cooldown_sec": 5, "status": 429},
                 })
-                if override_id and not use_fallback:
+                if override_id and not use_fallback and not switch_role:
                     use_fallback = True
                 continue
             except Exception as e:
@@ -1778,7 +1807,7 @@ class ModelPool:
                         "reason": "context_overflow",
                         "detail": {"status": 400, "no_cooldown": True, "error": str(e)[:500]},
                     })
-                    if override_id and not use_fallback:
+                    if override_id and not use_fallback and not switch_role:
                         use_fallback = True
                     continue
                 # 问题30（v2.12.3）：确定性请求缺陷 400——同非流式分支，不冷却不切换直接透传
@@ -1794,7 +1823,7 @@ class ModelPool:
                         "reason": "request_defect_400",
                         "detail": {"status": 400, "no_cooldown": True, "no_switch": True, "error": str(e)[:500]},
                     })
-                    await db.log_decision(pool_name, requested_model, None,
+                    await db.log_decision(pool_name, _req_log, None,
                                           self._estimate_effective(entry, req), actual_calls, caller)
                     break
                 # 本地模型切换窗口透传——同非流式分支，503 qwen_switching 不冷却不切换直接透传
@@ -1808,7 +1837,7 @@ class ModelPool:
                         "reason": "switching_passthrough",
                         "detail": {"status": 503, "no_cooldown": True, "no_switch": True},
                     })
-                    await db.log_decision(pool_name, requested_model, None,
+                    await db.log_decision(pool_name, _req_log, None,
                                           self._estimate_effective(entry, req), actual_calls, caller)
                     raise ContextOverflowPassThrough(503, _upstream_error_body(e))
                 last_failure_overflow = False
@@ -1851,15 +1880,15 @@ class ModelPool:
                     "reason": "fallback_switch_error" if use_fallback else "switch_error",
                     "detail": detail,
                 })
-                if override_id and not use_fallback:
+                if override_id and not use_fallback and not switch_role:
                     use_fallback = True
                 continue
 
         if last_failure_overflow and last_overflow is not None:
             # 整池都无法容纳该请求：把上游上下文超限 400 原样透传（与直连一致，客户端可据此自愈）
-            await db.log_decision(pool_name, requested_model, None, estimated, actual_calls, caller)
+            await db.log_decision(pool_name, _req_log, None, estimated, actual_calls, caller)
             raise ContextOverflowPassThrough(400, _upstream_error_body(last_overflow))
-        await db.log_decision(pool_name, requested_model, None, estimated, actual_calls, caller)
+        await db.log_decision(pool_name, _req_log, None, estimated, actual_calls, caller)
         return None, None, actual_calls
 
     async def speedtest(self, model_ids: list[str] | None = None) -> list[dict]:

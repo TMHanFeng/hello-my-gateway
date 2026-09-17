@@ -88,6 +88,7 @@ POST /v1/chat/completions
 
 ```jsonc
 "search_summary": {
+  "caller_key": "mg-…",              // 专门网关 Key（完整值）：内层总结的记录(caller)与用量挂它名下；空=沿用原请求 caller
   "max_fetch_urls": 8,               // 0 = 完全不抓 URL（只用 references 自带正文）
   "fetch_concurrency": 5,
   "fetch_timeout_seconds": 8,
@@ -280,3 +281,50 @@ Start-Process explorer.exe -ArgumentList '"D:\AIcoding\model-gateway\start_gatew
 - ⚠️ **关掉这个窗口 = 网关停止**。若要"窗口关掉也不停"的静默后台模式，仍用原来的
   `start_gateway.ps1`（它把主程序以隐藏窗口拉起，输出重定向到 `logs\`）。
 - 当前生产：`cmd` PID 37096（窗口）→ `python` PID 36944（网关），`gateway.pid` 已同步。
+
+---
+
+## 12. 追加批次 — 总结调用挂专门记账 Key（caller_key）
+
+### 12.1 背景与动机
+
+改造前内层总结调用（如 `arktext`）的 `caller` 透传发起搜索请求的用户 Key，导致：
+
+1. 终端用户的「最近调用记录」被总结行混入（一条搜索请求产生两行：搜索行挂用户 Key、
+   总结行也挂用户 Key，池列却是 arktext，观感混乱）；
+2. 总结的真实开销（每次几千 token）分散记在各个用户 Key 名下，看不到功能总成本。
+
+### 12.2 方案
+
+`config.json → search_summary.caller_key` 配置一把**专门网关 Key 的完整值**（生产为
+`baidusearch` / `mg-2b85…d01`，已建）。命中时：
+
+- **调用记录**：内层总结的 `decision_log.caller` = 专门 Key 的 **name**（`baidusearch`）；
+  外层搜索行仍挂原请求者不变。面板按 Key 过滤时，用户 Key 名下只剩自己的搜索行，
+  所有总结行聚合在 `baidusearch` 名下。
+- **Key 用量**：按该 Key 自己的 `billing_mode`/`token_type` 计量（`keyauth.charge_key_usage`，
+  语义与用户 Key 直连完全一致）——生产 Key 已设 `daily / token / 1亿限额`（≈不限量但计量生效，
+  之前 `token_type=''` 且无限额时 charge 会被 keyauth 静默忽略，只挂记录不记用量）。
+- **不限流**：内层调用不做 `key_usage_available` 预检——专门 Key 限额耗尽只影响记账展示，
+  绝不静默降级搜索总结质量。
+- **回退**：未配置 / Key 被删 / 轮换宽限期过 → 沿用原 caller（旧行为），只打一行 warning，
+  总结绝不因记账失败而失败。
+
+实现（`search_summary.py`）：`dedicated_key()` 按 `get_api_key_by_secret_or_previous` 解析
+（Key 轮换宽限期内旧值仍可解析）；`summarize_text` 调用后按 tokens 挂账；
+`summarize_stream` 在转发循环里捕获内层 usage 帧、`finally` 挂账（客户端中途断开也计）。
+
+### 12.3 边界说明
+
+- 内层调用是进程内直调 `execute_with_fallback`，本就不过鉴权——专门 Key 只是**记账身份**，
+  其 `allowed_pools` 不参与判定；arktext 上游 key 消耗仍记在火山那把 key 上（不变）。
+- `decision_log` 裁剪（v2.13.2 每池50 ∪ 每Key 50）对总结行同样生效：`baidusearch` 名下
+  按其 caller 维度保留最近 50 条。
+
+### 12.4 验证
+
+- 回归套件新增 T23 八项：内层记录 caller=专门Key / 外层记录原请求者不变 / Key 用量 +133 /
+  总结模型自身配额照常入账 / 流式捕获 usage 帧挂账 133 / 生产 caller_key 端到端解析为
+  `baidusearch` / 不存在的 Key 回退原 caller 不炸；**142/142 全绿**（8651 隔离实例 + mock 上游）。
+- 测试对 `caller_key` 的临时改写均还原生产原值（用例 finally + `deep_clean` 双保险）。
+- **生效条件**：模块代码变更需重启网关（`caller_key` 配置本身支持 `/admin/reload` 热加载）。

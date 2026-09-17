@@ -58,9 +58,55 @@ def warmup_if_enabled():
         try:
             if _headroom_cfg().get("enabled", False):
                 _ensure_loaded()
+                warm_kompress_if_enabled()
         except Exception:
             pass
     threading.Thread(target=_warm, daemon=True, name="headroom-warmup").start()
+
+
+# Kompress 纯文本压缩的默认 ML 模型（ModernBERT 双token头；首次使用自动从 HuggingFace 下载权重）
+KOMPRESS_DEFAULT_MODEL = "chopratejas/kompress-v2-base"
+
+
+def ml_text_available() -> bool:
+    """Kompress ML 依赖是否可用（torch 或 onnxruntime 二选一 + transformers）。
+    find_spec 探测不触发导入（torch 导入链很重），供设置页显示可用性。"""
+    try:
+        from importlib.util import find_spec
+        return find_spec("torch") is not None or find_spec("onnxruntime") is not None
+    except Exception:
+        return False
+
+
+def warm_kompress_if_enabled():
+    """kompress_model 启用时后台预热 ML 权重（daemon 线程，绝不阻塞调用方）。
+
+    进程启动（warmup_if_enabled）与设置页保存开启时各调一次。下载/加载完成前，
+    库对文本内容按"模型未就绪"透传原文，请求零影响；就绪后深压缩路径自动激活。"""
+    def _warm():
+        try:
+            if not _headroom_cfg().get("enabled", False):
+                return
+            _ensure_loaded()
+            if _compress_fn is None:
+                return
+            model = str(_headroom_cfg().get("kompress_model", "disabled"))
+            if model == "disabled":
+                return
+            from headroom.transforms.kompress_compressor import (
+                ensure_background_download,
+                is_kompress_available,
+            )
+            if not is_kompress_available():
+                logger.info("[headroom] Kompress ML 依赖缺失（需 torch 或 onnxruntime+transformers），"
+                            "纯文本压缩不生效，仅规则压缩——见 requirements-headroom.txt 可选段")
+                return
+            ensure_background_download(model)
+            logger.info(f"[headroom] Kompress ML 权重后台下载已触发 model={model}"
+                        "（就绪前自然语言内容照常透传原文）")
+        except Exception as e:
+            logger.info(f"[headroom] Kompress 预热跳过（不影响转发）: {e}")
+    threading.Thread(target=_warm, daemon=True, name="headroom-kompress-warm").start()
 
 
 def _disable_ccr():

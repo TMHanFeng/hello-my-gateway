@@ -143,15 +143,22 @@ def _overflow_passthrough_response(e: ContextOverflowPassThrough):
     return JSONResponse(status_code=e.status_code, content=body_obj)
 
 
-async def _chat_handler(request: Request, auth: dict):
+async def _chat_handler(request: Request, auth: dict, forced_pool: str | None = None,
+                        switch_role: str = "", body: dict | None = None):
     # 请求体大小预检：Content-Length 超 20MB 直接拒绝（在解析 JSON 之前）
     cl = request.headers.get("content-length")
     if cl and cl.isdigit() and int(cl) > 20 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="请求体过大（上限 20MB）")
-    try:
-        body = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid JSON body")
+    if body is None:
+        try:
+            body = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid JSON body")
+    # v2.13.3 Switch 切换（POST /{池名}）：池名来自 URL 路径，body.model 一律改写为池名
+    if forced_pool:
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=400, detail="Invalid JSON body")
+        body["model"] = forced_pool
 
     is_anthropic = is_anthropic_request(dict(request.headers), body)
     if is_anthropic:
@@ -179,7 +186,7 @@ async def _chat_handler(request: Request, auth: dict):
                 detail=f"非法 reasoning_effort '{req.reasoning_effort}'，支持: {'/'.join(reasoning.LEVELS + ['auto'])}",
             )
 
-    pool_name = _resolve(req.model or "auto")
+    pool_name = forced_pool or _resolve(req.model or "auto")
     if pool_name is None:
         raise HTTPException(
             status_code=404,
@@ -210,7 +217,8 @@ async def _chat_handler(request: Request, auth: dict):
     if req.stream:
         try:
             stream, entry, steps = await pool.execute_stream_with_fallback(
-                pool_name, req, None, caller, required_json_output=required_json_output)
+                pool_name, req, None, caller, required_json_output=required_json_output,
+                switch_role=switch_role)
         except ContextOverflowPassThrough as e:
             return _overflow_passthrough_response(e)
         if stream is None:
@@ -239,7 +247,8 @@ async def _chat_handler(request: Request, auth: dict):
 
     try:
         response, tokens, steps = await pool.execute_with_fallback(pool_name, req, None, caller,
-                                                                   required_json_output=required_json_output)
+                                                                   required_json_output=required_json_output,
+                                                                   switch_role=switch_role)
     except ContextOverflowPassThrough as e:
         return _overflow_passthrough_response(e)
     # === Issue 6 诊断日志（DEBUG 级别）===
@@ -520,6 +529,36 @@ async def health():
 @app.get("/version")
 async def version_info():
     return {"version": GATEWAY_VERSION, "commit": GATEWAY_COMMIT}
+
+
+# ================= 池级 Switch 切换端点（v2.13.3，配合 dsh 脱敏网关插件） =================
+# 不走 /v1：POST /{池名} + switch=local|net 定向调用池内一侧模型
+# （local=池内 token_type 为 local 的本地模型，net=其余云端模型；仅管理面板开启 switch 的池响应）。
+# 注册在所有既有路由之后，不遮蔽任何固定路径；未知池名返回明确 404。
+
+@app.post("/{pool_name}")
+async def pool_switch_chat(pool_name: str, request: Request, auth: dict = Depends(verify_key)):
+    if pool_name not in pool.pools:
+        raise HTTPException(status_code=404, detail=f"未知模型池 '{pool_name}'：对外仅可调用模型池，不能直接指定单个模型")
+    if auth["kind"] == "key_user" and not keyauth.is_pool_allowed(auth.get("key"), pool_name):
+        raise HTTPException(status_code=403, detail=f"该 API Key 无权访问模型池 '{pool_name}'")
+    if not pool.pools[pool_name].get("switch_enabled"):
+        raise HTTPException(status_code=403, detail=f"模型池 '{pool_name}' 未开启 Switch 切换，无法按 local/net 定向调用")
+    switch = (request.query_params.get("switch") or "").strip().lower()
+    body = None
+    if not switch:
+        # query 未带 switch 时读 body 兜底：?switch=local 与 {"switch":"local"} 两种传参都兼容
+        try:
+            body = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid JSON body")
+        switch = str(body.get("switch") or "").strip().lower() if isinstance(body, dict) else ""
+    if switch not in ("local", "net"):
+        raise HTTPException(status_code=422,
+                            detail=f"非法 switch 参数 '{switch or '(缺失)'}'：仅支持 local（本地模型）或 net（云端模型）")
+    if isinstance(body, dict):
+        body.pop("switch", None)  # 网关自有路由参数，不透传上游
+    return await _chat_handler(request, auth, forced_pool=pool_name, switch_role=switch, body=body)
 
 
 # hfadmin 页面缓存（v2.11.42）：169KB read_text 是同步阻塞 IO，原先每次刷新都在事件循环内全量重读；

@@ -61,6 +61,28 @@ def _sync_pool():
     pool.reload()
 
 
+def _expand_pool_members(config: dict, pool_name: str, visiting: set | None = None) -> tuple[list, list]:
+    """按 config 递归展开池的全部模型成员（支持 pool: 子池引用）。
+
+    返回 (models, broken)：models 为可直接解析的模型 id；broken 为引用了不存在池的断裂引用。"""
+    visiting = visiting or set()
+    if pool_name in visiting:
+        return [], []
+    visiting = visiting | {pool_name}
+    models, broken = [], []
+    for raw in (config.get("pools", {}).get(pool_name, {}) or {}).get("model_ids", []):
+        if isinstance(raw, str) and raw.startswith("pool:"):
+            if raw[5:] in config.get("pools", {}):
+                sub_models, sub_broken = _expand_pool_members(config, raw[5:], visiting)
+                models.extend(sub_models)
+                broken.extend(sub_broken)
+            else:
+                broken.append(raw)
+        elif raw:
+            models.append(raw)
+    return models, broken
+
+
 def verify_admin(request: Request):
     config = load_config()
     expected = config.get("server", {}).get("api_key", "")
@@ -893,6 +915,27 @@ async def update_pool(pool_name: str, request: Request, _=Depends(verify_admin))
     pools = config.setdefault("pools", {})
     if pool_name not in pools:
         pools[pool_name] = {}
+    # v2.13.3 Switch 切换开关：先校验后改配置（本文件约定：被拒绝的改动不得残留共享缓存）。
+    # 开启时按本次提交的 model_ids 校验池内两侧齐全：local=token_type 为 local 的本地模型，net=其余云端模型
+    if "switch_enabled" in body and bool(body["switch_enabled"]) and not pools[pool_name].get("switch_enabled"):
+        from main import pool as _pool
+        probe = {"pools": {**config.get("pools", {}), pool_name: {**pools[pool_name], "model_ids": model_ids}}}
+        members, broken = _expand_pool_members(probe, pool_name)
+        if broken:
+            raise HTTPException(status_code=400,
+                                detail=f"开启 Switch 前先修复断裂引用: {'、'.join(sorted(set(broken))[:5])}（引用的池不存在）")
+        unknown = sorted({m for m in members if m not in _pool.registry})
+        if unknown:
+            raise HTTPException(status_code=400,
+                                detail=f"开启 Switch 前先移除不存在的模型引用: {'、'.join(unknown[:5])}")
+        locals_ = sorted({m for m in members if _pool.registry[m].token_type == "local"})
+        nets = sorted({m for m in members if m not in unknown and _pool.registry[m].token_type != "local"})
+        if not locals_:
+            raise HTTPException(status_code=400,
+                                detail="开启 Switch 需要池内含本地模型：请先将模型令牌类型设为 local（本地）再加入池")
+        if not nets:
+            raise HTTPException(status_code=400,
+                                detail="开启 Switch 需要池内含云端模型：当前全部为本地模型（local），请加入至少一个云端模型")
     pools[pool_name]["model_ids"] = model_ids
     if "strategy" in body:
         pools[pool_name]["strategy"] = body["strategy"]
@@ -915,6 +958,8 @@ async def update_pool(pool_name: str, request: Request, _=Depends(verify_admin))
             pools[pool_name]["load_balance"] = False
     if slow_threshold is not None:
         pools[pool_name]["slow_latency_threshold"] = slow_threshold
+    if "switch_enabled" in body:
+        pools[pool_name]["switch_enabled"] = bool(body["switch_enabled"])
 
     save_config(config)
     restart_scheduler()
@@ -1522,6 +1567,8 @@ def _headroom_payload() -> dict:
             "protect_recent": int(h.get("protect_recent", 4)),
             "timeout_seconds": int(h.get("timeout_seconds", 10)),
             "kompress_model": str(h.get("kompress_model", "disabled")),
+            "kompress_enabled": str(h.get("kompress_model", "disabled")) != "disabled",
+            "ml_available": headroom_plugin.ml_text_available(),
             "available": headroom_plugin.lib_available()}
 
 
@@ -1552,8 +1599,18 @@ async def headroom_set(request: Request, _=Depends(verify_admin)):
     h["min_tokens_to_compress"] = _int_field("min_tokens_to_compress", 500, 0, 1_000_000)
     h["protect_recent"] = _int_field("protect_recent", 4, 0, 10_000)
     h["timeout_seconds"] = _int_field("timeout_seconds", 10, 1, 600)
+    # v2.13.3 纯文本压缩开关：开启=ML 模型压自然语言（已有自定义模型 id 则保留），关闭=纯规则压缩
+    import headroom_plugin
+    kompress_enabled = bool(body.get("kompress_enabled", h.get("kompress_model", "disabled") != "disabled"))
+    if kompress_enabled:
+        cur = str(h.get("kompress_model", "disabled"))
+        h["kompress_model"] = cur if cur != "disabled" else headroom_plugin.KOMPRESS_DEFAULT_MODEL
+    else:
+        h["kompress_model"] = "disabled"
     config["headroom"] = h
     save_config(config)
+    if kompress_enabled:
+        headroom_plugin.warm_kompress_if_enabled()   # 后台触发权重下载，不阻塞保存请求
     return _headroom_payload()
 
 

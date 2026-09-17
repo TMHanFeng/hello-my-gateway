@@ -3736,5 +3736,789 @@
   "notes": [
    "基线请求失败，跳过该组合"
   ]
+ },
+ "openai|http://127.0.0.1:8125/v1|mock-echo-probe": {
+  "ts": "2026-09-17 11:20:30",
+  "protocol": "openai",
+  "name": "mock-echo-probe",
+  "calls": [
+   {
+    "fragment": null,
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 2,
+    "completion_tokens": 33
+   },
+   {
+    "fragment": {
+     "reasoning_effort": "minimal"
+    },
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 2,
+    "completion_tokens": 33
+   },
+   {
+    "fragment": {
+     "reasoning_effort": "high"
+    },
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 2,
+    "completion_tokens": 33
+   },
+   {
+    "fragment": {
+     "reasoning_effort": "minimal"
+    },
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 2,
+    "completion_tokens": 33
+   },
+   {
+    "fragment": {
+     "reasoning_effort": "low"
+    },
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 2,
+    "completion_tokens": 33
+   },
+   {
+    "fragment": {
+     "reasoning_effort": "medium"
+    },
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 2,
+    "completion_tokens": 33
+   },
+   {
+    "fragment": {
+     "reasoning_effort": "high"
+    },
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 2,
+    "completion_tokens": 33
+   },
+   {
+    "fragment": {
+     "reasoning_effort": "max"
+    },
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 2,
+    "completion_tokens": 33
+   },
+   {
+    "fragment": {
+     "reasoning": {
+      "enabled": false
+     }
+    },
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 2,
+    "completion_tokens": 33
+   },
+   {
+    "fragment": {
+     "reasoning": {
+      "enabled": true
+     }
+    },
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 2,
+    "completion_tokens": 33
+   },
+   {
+    "fragment": {
+     "reasoning": {
+      "effort": "minimal"
+     }
+    },
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 2,
+    "completion_tokens": 33
+   },
+   {
+    "fragment": {
+     "reasoning": {
+      "effort": "low"
+     }
+    },
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 2,
+    "completion_tokens": 33
+   },
+   {
+    "fragment": {
+     "reasoning": {
+      "effort": "medium"
+     }
+    },
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 2,
+    "completion_tokens": 33
+   },
+   {
+    "fragment": {
+     "reasoning": {
+      "effort": "high"
+     }
+    },
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 2,
+    "completion_tokens": 33
+   },
+   {
+    "fragment": {
+     "reasoning": {
+      "effort": "max"
+     }
+    },
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 2,
+    "completion_tokens": 33
+   },
+   {
+    "fragment": {
+     "thinking": {
+      "type": "disabled"
+     }
+    },
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 2,
+    "completion_tokens": 33
+   },
+   {
+    "fragment": {
+     "thinking": {
+      "type": "enabled"
+     }
+    },
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 2,
+    "completion_tokens": 33
+   },
+   {
+    "fragment": null,
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 2,
+    "completion_tokens": 33
+   },
+   {
+    "fragment": null,
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 2,
+    "completion_tokens": 33
+   },
+   {
+    "fragment": null,
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 2,
+    "completion_tokens": 33
+   },
+   {
+    "fragment": null,
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 2,
+    "completion_tokens": 33
+   },
+   {
+    "fragment": null,
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 2,
+    "completion_tokens": 33
+   },
+   {
+    "fragment": {
+     "enable_thinking": false
+    },
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 2,
+    "completion_tokens": 33
+   },
+   {
+    "fragment": {
+     "enable_thinking": true
+    },
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 2,
+    "completion_tokens": 33
+   },
+   {
+    "fragment": null,
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 2,
+    "completion_tokens": 33
+   },
+   {
+    "fragment": null,
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 2,
+    "completion_tokens": 33
+   },
+   {
+    "fragment": null,
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 2,
+    "completion_tokens": 33
+   },
+   {
+    "fragment": null,
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 2,
+    "completion_tokens": 33
+   },
+   {
+    "fragment": null,
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 2,
+    "completion_tokens": 33
+   }
+  ],
+  "baseline_reasoning": 0,
+  "default_thinking": "关",
+  "family": "",
+  "off_fragment": null,
+  "on_fragment": null,
+  "level_lens": {
+   "minimal": 0,
+   "low": 0,
+   "medium": 0,
+   "high": 0,
+   "max": 0
+  },
+  "levels_effective": false,
+  "suggested": {},
+  "notes": [
+   "reasoning_effort 写法被接受但行为无变化，继续试下一族",
+   "reasoning{effort} 写法被接受但行为无变化，继续试下一族",
+   "thinking{type} 写法被接受但行为无变化，继续试下一族",
+   "enable_thinking 写法被接受但行为无变化，继续试下一族",
+   "所有思考参数写法均无效/被拒绝，映射留空（不支持思考控制）"
+  ]
+ },
+ "openai|http://127.0.0.1:8125/v1|mock-echo-probe-req": {
+  "ts": "2026-09-17 11:20:42",
+  "protocol": "openai",
+  "name": "mock-echo-probe-req",
+  "calls": [
+   {
+    "fragment": null,
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 2,
+    "completion_tokens": 33
+   },
+   {
+    "fragment": {
+     "reasoning_effort": "minimal"
+    },
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 2,
+    "completion_tokens": 33
+   },
+   {
+    "fragment": {
+     "reasoning_effort": "high"
+    },
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 2,
+    "completion_tokens": 33
+   },
+   {
+    "fragment": {
+     "reasoning_effort": "minimal"
+    },
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 2,
+    "completion_tokens": 33
+   },
+   {
+    "fragment": {
+     "reasoning_effort": "low"
+    },
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 2,
+    "completion_tokens": 33
+   },
+   {
+    "fragment": {
+     "reasoning_effort": "medium"
+    },
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 2,
+    "completion_tokens": 33
+   },
+   {
+    "fragment": {
+     "reasoning_effort": "high"
+    },
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 2,
+    "completion_tokens": 33
+   },
+   {
+    "fragment": {
+     "reasoning_effort": "max"
+    },
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 2,
+    "completion_tokens": 33
+   },
+   {
+    "fragment": {
+     "reasoning": {
+      "enabled": false
+     }
+    },
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 2,
+    "completion_tokens": 33
+   },
+   {
+    "fragment": {
+     "reasoning": {
+      "enabled": true
+     }
+    },
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 2,
+    "completion_tokens": 33
+   },
+   {
+    "fragment": {
+     "reasoning": {
+      "effort": "minimal"
+     }
+    },
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 2,
+    "completion_tokens": 33
+   },
+   {
+    "fragment": {
+     "reasoning": {
+      "effort": "low"
+     }
+    },
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 2,
+    "completion_tokens": 33
+   },
+   {
+    "fragment": {
+     "reasoning": {
+      "effort": "medium"
+     }
+    },
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 2,
+    "completion_tokens": 33
+   },
+   {
+    "fragment": {
+     "reasoning": {
+      "effort": "high"
+     }
+    },
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 2,
+    "completion_tokens": 33
+   },
+   {
+    "fragment": {
+     "reasoning": {
+      "effort": "max"
+     }
+    },
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 2,
+    "completion_tokens": 33
+   },
+   {
+    "fragment": {
+     "thinking": {
+      "type": "disabled"
+     }
+    },
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 2,
+    "completion_tokens": 33
+   },
+   {
+    "fragment": {
+     "thinking": {
+      "type": "enabled"
+     }
+    },
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 2,
+    "completion_tokens": 33
+   },
+   {
+    "fragment": null,
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 2,
+    "completion_tokens": 33
+   },
+   {
+    "fragment": null,
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 2,
+    "completion_tokens": 33
+   },
+   {
+    "fragment": null,
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 2,
+    "completion_tokens": 33
+   },
+   {
+    "fragment": null,
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 2,
+    "completion_tokens": 33
+   },
+   {
+    "fragment": null,
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 2,
+    "completion_tokens": 33
+   },
+   {
+    "fragment": {
+     "enable_thinking": false
+    },
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 2,
+    "completion_tokens": 33
+   },
+   {
+    "fragment": {
+     "enable_thinking": true
+    },
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 2,
+    "completion_tokens": 33
+   },
+   {
+    "fragment": null,
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 2,
+    "completion_tokens": 33
+   },
+   {
+    "fragment": null,
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 2,
+    "completion_tokens": 33
+   },
+   {
+    "fragment": null,
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 2,
+    "completion_tokens": 33
+   },
+   {
+    "fragment": null,
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 2,
+    "completion_tokens": 33
+   },
+   {
+    "fragment": null,
+    "status": 200,
+    "error": "",
+    "reasoning_len": 0,
+    "content_len": 2,
+    "completion_tokens": 33
+   }
+  ],
+  "baseline_reasoning": 0,
+  "default_thinking": "关",
+  "family": "",
+  "off_fragment": null,
+  "on_fragment": null,
+  "level_lens": {
+   "minimal": 0,
+   "low": 0,
+   "medium": 0,
+   "high": 0,
+   "max": 0
+  },
+  "levels_effective": false,
+  "suggested": {},
+  "notes": [
+   "reasoning_effort 写法被接受但行为无变化，继续试下一族",
+   "reasoning{effort} 写法被接受但行为无变化，继续试下一族",
+   "thinking{type} 写法被接受但行为无变化，继续试下一族",
+   "enable_thinking 写法被接受但行为无变化，继续试下一族",
+   "所有思考参数写法均无效/被拒绝，映射留空（不支持思考控制）"
+  ]
+ },
+ "openai|http://192.168.5.105:5000/v1|Qwen3.8-27B": {
+  "ts": "2026-09-14 14:08:02",
+  "protocol": "openai",
+  "name": "Qwen3.8-27B",
+  "calls": [
+   {
+    "fragment": null,
+    "status": 200,
+    "error": "",
+    "reasoning_len": 275,
+    "content_len": 29,
+    "completion_tokens": 202
+   },
+   {
+    "fragment": {
+     "reasoning_effort": "minimal"
+    },
+    "status": 200,
+    "error": "",
+    "reasoning_len": 129,
+    "content_len": 29,
+    "completion_tokens": 111
+   },
+   {
+    "fragment": {
+     "reasoning_effort": "high"
+    },
+    "status": 200,
+    "error": "",
+    "reasoning_len": 206,
+    "content_len": 50,
+    "completion_tokens": 164
+   },
+   {
+    "fragment": {
+     "reasoning_effort": "minimal"
+    },
+    "status": 200,
+    "error": "",
+    "reasoning_len": 234,
+    "content_len": 44,
+    "completion_tokens": 197
+   },
+   {
+    "fragment": {
+     "reasoning_effort": "low"
+    },
+    "status": 200,
+    "error": "",
+    "reasoning_len": 346,
+    "content_len": 35,
+    "completion_tokens": 268
+   },
+   {
+    "fragment": {
+     "reasoning_effort": "medium"
+    },
+    "status": 200,
+    "error": "",
+    "reasoning_len": 201,
+    "content_len": 50,
+    "completion_tokens": 162
+   },
+   {
+    "fragment": {
+     "reasoning_effort": "high"
+    },
+    "status": 200,
+    "error": "",
+    "reasoning_len": 181,
+    "content_len": 30,
+    "completion_tokens": 150
+   },
+   {
+    "fragment": {
+     "reasoning_effort": "max"
+    },
+    "status": 200,
+    "error": "",
+    "reasoning_len": 215,
+    "content_len": 38,
+    "completion_tokens": 175
+   },
+   {
+    "fragment": {
+     "thinking": {
+      "type": "disabled"
+     }
+    },
+    "status": 200,
+    "error": "",
+    "reasoning_len": 198,
+    "content_len": 48,
+    "completion_tokens": 174
+   },
+   {
+    "fragment": {
+     "enable_thinking": false
+    },
+    "status": 200,
+    "error": "",
+    "reasoning_len": 161,
+    "content_len": 38,
+    "completion_tokens": 140
+   },
+   {
+    "fragment": {
+     "reasoning": {
+      "enabled": false
+     }
+    },
+    "status": 200,
+    "error": "",
+    "reasoning_len": 176,
+    "content_len": 46,
+    "completion_tokens": 154
+   }
+  ],
+  "baseline_reasoning": 275,
+  "default_thinking": "开",
+  "family": "reasoning_effort",
+  "off_fragment": {
+   "reasoning_effort": "minimal"
+  },
+  "on_fragment": {
+   "reasoning_effort": "high"
+  },
+  "level_lens": {
+   "minimal": 234,
+   "low": 346,
+   "medium": 201,
+   "high": 181,
+   "max": 215
+  },
+  "levels_effective": true,
+  "suggested": {
+   "minimal": {
+    "reasoning_effort": "minimal"
+   },
+   "low": {
+    "reasoning_effort": "low"
+   },
+   "medium": {
+    "reasoning_effort": "medium"
+   },
+   "high": {
+    "reasoning_effort": "high"
+   },
+   "max": {
+    "reasoning_effort": "max"
+   }
+  },
+  "notes": [
+   "档位有梯度但不支持关闭，未映射 off"
+  ]
  }
 }

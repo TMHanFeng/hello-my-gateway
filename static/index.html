@@ -572,6 +572,14 @@ body {
         </div>
       </div>
 
+      <div class="hr-row">
+        <div>
+          <div class="hr-row-label">纯文本压缩（Kompress ML 模型）</div>
+          <div class="hr-row-desc">关闭 = 纯规则压缩（仅 JSON / 工具输出等结构化大块）。开启后额外对中段自然语言消息做有损压缩：首次自动从 HuggingFace 下载模型权重（数百 MB，后台进行，就绪前该类内容照常透传原文）。<span id="hr-ml-avail"></span></div>
+        </div>
+        <label class="hr-switch" title="启用 / 停用 Kompress ML 纯文本压缩"><input type="checkbox" id="hr-kompress"><span class="hr-track"></span></label>
+      </div>
+
       <div class="hr-row" style="display:block">
         <div class="hr-row-label">压缩参数（保持默认即可）</div>
         <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0 14px;margin-top:8px">
@@ -1114,6 +1122,11 @@ document.querySelectorAll('.threshold-ctl').forEach(ctl => {
             <span class="track"></span>
             <span class="sw-label">负载均衡</span>
           </label>
+          <label class="switch lb-switch" title="Switch 切换：开启后客户端可 POST /池名 + switch=local|net 定向调用池内一侧（local=令牌类型为 local 的本地模型，net=其余云端模型）；要求池内两侧都有模型">
+            <input type="checkbox" ${pool.switch_enabled ? 'checked' : ''} onchange="togglePoolSwitch('${name}', this.checked)">
+            <span class="track"></span>
+            <span class="sw-label">Switch 切换</span>
+          </label>
           <div class="threshold-ctl" title="自动择优模式下，超过此延迟(ms)的模型排到末尾；0=不限">
             <span class="th-label">⏱ 阈值</span>
             <div class="th-input-wrap">
@@ -1148,6 +1161,7 @@ document.querySelectorAll('.threshold-ctl').forEach(ctl => {
       </div>` : ''}
       ${pool.auto_order ? '<div class="auto-note">⚡ 自动择优已开启：先排除不可用接口（用量用尽 / RPM·TPM 触顶），再在可用接口中按调用延迟从低到高优先调用。下方显示顺序保持不变，关闭后按设定顺序调用。</div>' : ''}
       ${pool.load_balance ? '<div class="lb-note">🔄 负载均衡已开启：每次请求按池内模型顺序轮流分配（第一个→第二个→…循环往复），请求均匀分摊到每个模型/子池，避免某一个模型负载过高。关闭后按设定顺序调用。</div>' : ''}
+      ${pool.switch_enabled ? '<div class="auto-note">🔀 Switch 切换已开启：客户端可 POST <b>/{池名}</b> 并带 <b>switch=local|net</b> 定向调用一侧——local=令牌类型为 local 的本地模型，net=其余云端模型。同侧全不可用时报 503，不会跨侧调用；每次路由在调用记录里显示为 switch:local / switch:net。</div>' : ''}
       <div class="pool-items" data-pool="${name}">
         ${ids.map((id, i) => poolItemHTML(name, id, i)).join('') || '<div class="hint">该池为空，从下方添加接口或子池。</div>'}
       </div>
@@ -1515,6 +1529,19 @@ async function toggleLoadBalance(name, enabled) {
     if (enabled && hadAo) toast('自动择优已自动关闭（与负载均衡互斥）');
     loadPools();
   }
+}
+// v2.13.3 Switch 切换开关：开启被拒（池内缺某侧模型）时 api() 自动 toast 服务端原因
+async function togglePoolSwitch(name, enabled) {
+  const data = await api('/admin/pools');
+  if (!data) return;
+  const p = data.pools[name];
+  if (!p) { toast('池 "' + name + '" 不存在，请刷新页面重试', true); return; }
+  const ok = await api(poolPath(name), { method: 'PUT', body: JSON.stringify({ model_ids: p.model_ids, switch_enabled: enabled }) });
+  if (ok) {
+    await api('/admin/reload', { method: 'POST' });
+    toast(enabled ? '池 ' + name + ' 已开启 Switch 切换' : '池 ' + name + ' 已关闭 Switch 切换');
+  }
+  loadPools();  // 失败也重拉：勾选回弹为服务端真实状态
 }
 async function setSlowThreshold(name, val) {
   const v = parseInt(val);
@@ -2922,6 +2949,13 @@ async function loadHeadroomSettings() {
   document.getElementById('hr-min').value = d.min_tokens_to_compress;
   document.getElementById('hr-protect').value = d.protect_recent;
   document.getElementById('hr-timeout').value = d.timeout_seconds;
+  document.getElementById('hr-kompress').checked = !!d.kompress_enabled;
+  const ml = document.getElementById('hr-ml-avail');
+  if (ml) {
+    ml.textContent = d.ml_available ? '✓ ML 依赖已就绪'
+                                    : '✗ ML 依赖未安装（torch 或 onnxruntime + transformers，见 requirements-headroom.txt）';
+    ml.style.color = d.ml_available ? 'var(--teal)' : '#f87171';
+  }
   document.querySelectorAll('input[name="hr-mode"]').forEach(r => r.checked = (r.value === d.mode));
   applyHrModeHighlight();
   const badge = document.getElementById('hr-status-badge');
@@ -2940,6 +2974,7 @@ async function saveHeadroomSettings(ev) {
     min_tokens_to_compress: parseInt(document.getElementById('hr-min').value) || 0,
     protect_recent: parseInt(document.getElementById('hr-protect').value) || 0,
     timeout_seconds: parseInt(document.getElementById('hr-timeout').value) || 10,
+    kompress_enabled: document.getElementById('hr-kompress').checked,
   };
   const d = await api('/admin/headroom', { method: 'POST', body: JSON.stringify(body) });
   if (d) { toast('Headroom 设置已保存并热生效'); loadHeadroomSettings(); }

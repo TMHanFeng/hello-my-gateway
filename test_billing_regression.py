@@ -122,6 +122,8 @@ cfg = json.load(open(os.path.join(REPO, "config.json"), encoding="utf-8"))
 ADMIN = {"Authorization": "Bearer " + cfg["server"]["api_key"], "Content-Type": "application/json"}
 DB = sqlite3.connect(os.path.join(REPO, "gateway.db"))
 DB.row_factory = sqlite3.Row
+# T23：生产 search_summary.caller_key 原值（用例内临时改写，结束时/deep_clean 必须原样还原）
+CK0 = (cfg.get("search_summary") or {}).get("caller_key") or ""
 
 RESULTS = []
 
@@ -163,6 +165,11 @@ TEST_MODELS = [
     # T14 千帆网页搜索（qianfan_web_search）：裸结果合成 chat 响应
     {"id": "zzbt/echo-qfws", "name": "mock-echo-qfws", "provider_id": "zzqf2", "modality": "text",
      "is_free": True, "billing_mode": "request"},
+    # T23（v2.13.4）搜索总结专门 Key：qfws2 挂总结池 zzsump（caller_key 由用例内动态配置）
+    {"id": "zzbt/echo-qfws2", "name": "mock-echo-qfws2", "provider_id": "zzqf2", "modality": "text",
+     "is_free": True, "billing_mode": "request", "summary_pool": "zzsump"},
+    {"id": "zzbt/echo-sum", "name": "mock-echo-sum", "provider_id": "zzmock", "modality": "text",
+     "is_free": True, "daily_token_limit": 1000000000},
     # T15（问题30）确定性缺陷 400：池内两个候选，第一个必 400，验证不切换不冷却
     {"id": "zzbt/bad400-a", "name": "mock-bad400-a", "provider_id": "zzmock", "modality": "text", "is_free": True},
     {"id": "zzbt/bad400-b", "name": "mock-bad400-b", "provider_id": "zzmock", "modality": "text", "is_free": True},
@@ -170,6 +177,13 @@ TEST_MODELS = [
     {"id": "zzbt/echo-local", "name": "mock-echo-local", "provider_id": "zzmock", "modality": "text", "is_free": True, "token_type": "local"},
     {"id": "zzbt/switch-a", "name": "mock-switching-a", "provider_id": "zzmock", "modality": "text", "is_free": True},
     {"id": "zzbt/switch-b", "name": "mock-echo-switch-b", "provider_id": "zzmock", "modality": "text", "is_free": True},
+    # T24（v2.13.3）Switch 切换：local 侧=token_type local，net 侧=其余；sw-local2 带 RPM=1 验证同侧耗尽不跨侧
+    {"id": "zzbt/sw-local", "name": "mock-sw-local", "provider_id": "zzmock", "modality": "text",
+     "is_free": True, "token_type": "local"},
+    {"id": "zzbt/sw-local2", "name": "mock-sw-local2", "provider_id": "zzmock", "modality": "text",
+     "is_free": True, "token_type": "local", "rpm_limit": 1},
+    {"id": "zzbt/sw-net", "name": "mock-sw-net", "provider_id": "zzmock", "modality": "text",
+     "is_free": True, "daily_token_limit": 1000000000},
 ]
 TEST_IDS = [m["id"] for m in TEST_MODELS]
 
@@ -186,8 +200,18 @@ def deep_clean():
     c["models"] = [m for m in c.get("models", []) if not str(m.get("id", "")).startswith("zzbt/")]
     c.get("pools", {}).pop("zzall", None)
     c.get("pools", {}).pop("zzdef", None)  # v2.11.19 曾漏清该测试池残留至生产配置
-    for pn in ("zzreq", "zzonce", "zzsmart", "zznso", "zzgift", "zzrpm", "zzvalve", "zzvnl", "zzqfp", "zzqfp2", "zzbad", "zzlocal", "zzswitch", "zzhr", "zzhrctl"):
+    for pn in ("zzreq", "zzonce", "zzsmart", "zznso", "zzgift", "zzrpm", "zzvalve", "zzvnl", "zzqfp", "zzqfp2",
+               "zzqfws2", "zzsump", "zzbad", "zzlocal", "zzswitch", "zzhr", "zzhrctl", "zzsw", "zzsw2"):
         c.get("pools", {}).pop(pn, None)
+    # T23：还原 search_summary 专门 Key 与抓取开关为生产原值（用例中途崩溃时兜底）
+    ss = c.get("search_summary")
+    if isinstance(ss, dict):
+        if CK0:
+            ss["caller_key"] = CK0
+        else:
+            ss.pop("caller_key", None)
+        if "max_fetch_urls" in ss:
+            ss["max_fetch_urls"] = 8
     # T22：Headroom 总开关还原为缺省（节点不存在=关），并清理统计行
     # （表由新代码实例的 init_db 创建；旧实例未建表时先补建，模式同 gift_state）
     db_exec("""CREATE TABLE IF NOT EXISTS headroom_stats (
@@ -215,9 +239,9 @@ def deep_clean():
     # v2.11.40 起 request_log 表退役（RPM/TPM 内存化），不再列入清理
     for t in ["token_usage", "model_daily_stats", "call_metrics", "gift_state"]:
         db_exec(f"DELETE FROM {t} WHERE {q}")
-    db_exec(f"DELETE FROM decision_log WHERE selected IN ({','.join(chr(39)+i+chr(39) for i in TEST_IDS)}) OR pool_name IN ('zzall','zzbad','zzlocal','zzswitch')")
+    db_exec(f"DELETE FROM decision_log WHERE selected IN ({','.join(chr(39)+i+chr(39) for i in TEST_IDS)}) OR pool_name IN ('zzall','zzbad','zzlocal','zzswitch','zzsump','zzqfws2','zzsw','zzsw2')")
     db_exec("DELETE FROM one_time_state WHERE model_name='zzbt/echo-once'")
-    db_exec("DELETE FROM api_keys WHERE name IN ('zzkey','zzkey2')")
+    db_exec("DELETE FROM api_keys WHERE name IN ('zzkey','zzkey2','zzkey3','zzkey4')")
     db_exec("DELETE FROM api_key_usage WHERE key_id NOT IN (SELECT id FROM api_keys)")
     db_exec("DELETE FROM api_key_hourly_usage WHERE key_id NOT IN (SELECT id FROM api_keys)")
 
@@ -254,6 +278,26 @@ def last_decision(selected):
     return dict(r) if r else None
 
 
+def up_count(mid):
+    """T24：mock 上游收到该模型 id 请求体的累计次数（增量断言路由去向）"""
+    return sum(1 for b in captured_bodies if b.get("model") == mid)
+
+
+def sw_chat(pool, switch=None, via="query", stream=False, content="hi", auth=None, timeout=60):
+    """T24：POST /{池名} 切换请求。via=query 走 ?switch=，via=body 走 JSON 字段。"""
+    body = {"max_tokens": 500, "messages": [{"role": "user", "content": content}]}
+    body["model"] = pool  # 模拟 dsh 客户端带 model 字段（网关应改写为池名）
+    if switch is not None and via == "body":
+        body["switch"] = switch
+    if stream:
+        body["stream"] = True
+    h = dict(ADMIN)
+    if auth:
+        h["Authorization"] = "Bearer " + auth
+    url = f"{BASE}/{pool}" + (f"?switch={switch}" if (switch is not None and via == "query") else "")
+    return httpx.post(url, headers=h, json=body, timeout=timeout)
+
+
 def main():
     deep_clean()
     # 注册 mock provider + 测试模型 + 池
@@ -279,9 +323,14 @@ def main():
     c["pools"]["zzvnl"] = {"model_ids": ["zzbt/echo-nolimit"], "strategy": "sequential"}
     c["pools"]["zzqfp"] = {"model_ids": ["zzbt/echo-qf"], "strategy": "sequential"}
     c["pools"]["zzqfp2"] = {"model_ids": ["zzbt/echo-qfws"], "strategy": "sequential"}
+    c["pools"]["zzqfws2"] = {"model_ids": ["zzbt/echo-qfws2"], "strategy": "sequential"}
+    c["pools"]["zzsump"] = {"model_ids": ["zzbt/echo-sum"], "strategy": "sequential"}
     c["pools"]["zzbad"] = {"model_ids": ["zzbt/bad400-a", "zzbt/bad400-b"], "strategy": "sequential"}
     c["pools"]["zzlocal"] = {"model_ids": ["zzbt/echo-local"], "strategy": "sequential"}
     c["pools"]["zzswitch"] = {"model_ids": ["zzbt/switch-a", "zzbt/switch-b"], "strategy": "sequential"}
+    # T24 Switch 切换池：switch_enabled 直接写 config（管理端校验在 l 组单独验证）
+    c["pools"]["zzsw"] = {"model_ids": ["zzbt/sw-local", "zzbt/sw-net"], "strategy": "sequential", "switch_enabled": True}
+    c["pools"]["zzsw2"] = {"model_ids": ["zzbt/sw-local2", "zzbt/sw-net"], "strategy": "sequential", "switch_enabled": True}
     c["pools"]["zzhr"] = {"model_ids": ["zzbt/echo-hr"], "strategy": "sequential"}
     c["pools"]["zzhrctl"] = {"model_ids": ["zzbt/echo-token"], "strategy": "sequential"}  # T22 未勾选对照
     json.dump(c, open(os.path.join(REPO, "config.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=2)
@@ -1018,17 +1067,168 @@ def main():
 
         # g) 设置端点（/admin/headroom）：读取回显 + 保存即热生效（v2.13.0 设置页的数据源）
         r0 = httpx.get(f"{BASE}/admin/headroom", headers=ADMIN, timeout=15).json()
-        check("T22j 设置端点读取", all(k in r0 for k in ("enabled", "mode", "available", "min_tokens_to_compress")), r0)
+        check("T22j 设置端点读取", all(k in r0 for k in ("enabled", "mode", "available", "min_tokens_to_compress",
+                                                          "kompress_enabled", "kompress_model", "ml_available")), r0)
         r1 = httpx.post(f"{BASE}/admin/headroom", headers=ADMIN,
                         json={"enabled": True, "mode": "dry_run", "min_tokens_to_compress": 50,
-                              "protect_recent": 0, "timeout_seconds": 10}, timeout=15)
+                              "protect_recent": 0, "timeout_seconds": 10, "kompress_enabled": True}, timeout=15)
         r1j = r1.json() if r1.status_code == 200 else {}
         check("T22k 设置端点保存热生效", r1.status_code == 200 and r1j.get("enabled") is True
               and r1j.get("mode") == "dry_run" and r1j.get("min_tokens_to_compress") == 50, (r1.status_code, r1j))
+        check("T22m 纯文本压缩开关回环", r1j.get("kompress_enabled") is True and r1j.get("kompress_model") not in (None, "", "disabled"), r1j)
+        r2 = httpx.post(f"{BASE}/admin/headroom", headers=ADMIN,
+                        json={"enabled": False, "kompress_enabled": False}, timeout=15).json()
+        check("T22n 纯文本压缩关闭还原", r2.get("kompress_enabled") is False and r2.get("kompress_model") == "disabled", r2)
         httpx.post(f"{BASE}/admin/headroom", headers=ADMIN, json={"enabled": False}, timeout=15)  # 还原总开关
-        # h) v2.13.1 设置页控件：滑动开关/模式选项卡/高亮 JS 在位（双面板）
-        check("T22l 设置页控件在位", all(k in pa for k in ("hr-switch", "hr-radio", "applyHrModeHighlight", 'data-tab="settings"'))
-              and all(k in ph for k in ("hr-switch", "hr-radio", "applyHrModeHighlight", 'data-tab="settings"')), None)
+        # h) v2.13.1 设置页控件：滑动开关/模式选项卡/高亮 JS 在位（双面板）；v2.13.3 增 hr-kompress 开关
+        check("T22l 设置页控件在位", all(k in pa for k in ("hr-switch", "hr-radio", "applyHrModeHighlight", 'data-tab="settings"', "hr-kompress"))
+              and all(k in ph for k in ("hr-switch", "hr-radio", "applyHrModeHighlight", 'data-tab="settings"', "hr-kompress")), None)
+
+        # ===== T23（v2.13.4）搜索总结专门 Key：内层总结调用的记录(caller)与 Key 用量挂到 caller_key =====
+        # 流程：建专门 Key zzkey3 → config.search_summary.caller_key 指向它（热 reload）→
+        # 调 zzqfws2（qianfan_web_search + summary_pool=zzsump）→ 断言内层/外层决策记录归属与用量挂账。
+        r = httpx.post(f"{BASE}/admin/keys", headers=ADMIN,
+                       json={"name": "zzkey3", "type": "user", "allowed_pools": [],
+                             "token_type": "daily", "billing_mode": "token", "limit_amount": 1000000}, timeout=15)
+        k3id = r.json().get("key", {}).get("id")
+        k3secret = DB.execute("SELECT secret FROM api_keys WHERE name='zzkey3'").fetchone()["secret"]
+
+        def _k3_used():
+            row = DB.execute("SELECT used_amount FROM api_key_usage WHERE key_id=?", (k3id,)).fetchone()
+            return row["used_amount"] if row else 0
+
+        def _set_ck(secret):
+            """临时改写 caller_key（None=还原生产原值 CK0）；max_fetch_urls=0 避免用例真抓 example.com。"""
+            c = json.load(open(os.path.join(REPO, "config.json"), encoding="utf-8"))
+            ss = c.setdefault("search_summary", {})
+            target = secret or CK0
+            if target:
+                ss["caller_key"] = target
+            else:
+                ss.pop("caller_key", None)
+            ss["max_fetch_urls"] = 0 if secret else 8
+            json.dump(c, open(os.path.join(REPO, "config.json"), "w", encoding="utf-8"),
+                      ensure_ascii=False, indent=2)
+            httpx.post(f"{BASE}/admin/reload", headers=ADMIN, timeout=30)
+
+        try:
+            _set_ck(k3secret)
+            u3 = _k3_used()
+            r = chat("zzqfws2", content="news")
+            row = DB.execute("SELECT caller FROM decision_log WHERE pool_name='zzsump' ORDER BY id DESC LIMIT 1").fetchone()
+            check("T23a 内层总结记录caller=专门Key", r.status_code == 200 and row and row["caller"] == "zzkey3",
+                  (r.status_code, dict(row) if row else None))
+            row = DB.execute("SELECT caller FROM decision_log WHERE pool_name='zzqfws2' ORDER BY id DESC LIMIT 1").fetchone()
+            check("T23b 外层搜索记录caller=原请求者不变", row and row["caller"] == "管理员", dict(row) if row else None)
+            check("T23c 专门Key用量入账133", _k3_used() - u3 == 133, _k3_used() - u3)
+            check("T23d 总结模型自身配额照常入账", token_used("zzbt/echo-sum") == 133, token_used("zzbt/echo-sum"))
+
+            u3 = _k3_used()
+            r = chat("zzqfws2", stream=True)
+            check("T23e 流式总结200", r.status_code == 200, r.status_code)
+            check("T23f 流式专门Key入账133(捕获内层usage帧)", _k3_used() - u3 == 133, _k3_used() - u3)
+
+            _set_ck(None)  # 还原生产 caller_key；共享生产库 → baidusearch 真实存在，端到端验证归属
+            r = chat("zzqfws2", content="news")
+            row = DB.execute("SELECT caller FROM decision_log WHERE pool_name='zzsump' ORDER BY id DESC LIMIT 1").fetchone()
+            check("T23g 生产caller_key还原后记录挂baidusearch", r.status_code == 200 and row and row["caller"] == "baidusearch",
+                  (r.status_code, dict(row) if row else None))
+
+            _set_ck("mg-ffffffffffffffffffffffffffffffff")  # 不存在的 Key → 回退原 caller，总结绝不因记账失败而炸
+            r = chat("zzqfws2", content="news")
+            row = DB.execute("SELECT caller FROM decision_log WHERE pool_name='zzsump' ORDER BY id DESC LIMIT 1").fetchone()
+            check("T23h Key不存在时回退原caller(降级不炸)", r.status_code == 200 and row and row["caller"] == "管理员",
+                  (r.status_code, dict(row) if row else None))
+        finally:
+            _set_ck(None)
+
+        # ===== T24（v2.13.3）池级 Switch 切换：POST /{池名} + switch=local|net 定向路由 =====
+        r = httpx.post(f"{BASE}/admin/keys", headers=ADMIN,
+                       json={"name": "zzkey4", "type": "user", "allowed_pools": ["zzsw"],
+                             "token_type": "daily", "billing_mode": "token", "limit_amount": 1000000}, timeout=15)
+        secret4 = DB.execute("SELECT secret FROM api_keys WHERE name='zzkey4'").fetchone()["secret"]
+        # a) 未开 switch 的池拒绝（zzall 普通池）
+        r = sw_chat("zzall", switch="local")
+        check("T24a 未开Switch的池403", r.status_code == 403 and "未开启" in r.text, (r.status_code, r.text[:120]))
+        # b) 非法值 / 缺失值明确报错（列出合法值）
+        r = sw_chat("zzsw", switch="cloud")
+        check("T24b1 非法switch值422", r.status_code == 422 and "local" in r.text and "net" in r.text,
+              (r.status_code, r.text[:150]))
+        r = httpx.post(f"{BASE}/zzsw", headers=ADMIN,
+                       json={"model": "zzsw", "max_tokens": 100, "messages": [{"role": "user", "content": "hi"}]}, timeout=60)
+        check("T24b2 缺失switch422", r.status_code == 422 and "缺失" in r.text, (r.status_code, r.text[:150]))
+        # c) 无权限 key / 未知池
+        r = sw_chat("zzsw2", switch="local", auth=secret4)
+        check("T24c1 无权限key403", r.status_code == 403 and "无权" in r.text, (r.status_code, r.text[:120]))
+        r = httpx.post(f"{BASE}/zzpoolxx", headers=ADMIN, json={"model": "zzpoolxx", "messages": []}, timeout=15)
+        check("T24c2 未知池404", r.status_code == 404, r.status_code)
+        # d) switch:local → 本地侧；e) switch:net（body 传参）→ 云端侧；另一侧零调用
+        # （上游请求体的 model=模型接口 name，与既有用例 mock-echo-switch-b 口径一致）
+        n_loc, n_net = up_count("mock-sw-local"), up_count("mock-sw-net")
+        r = sw_chat("zzsw", switch="local")
+        check("T24d switch:local路由local侧", r.status_code == 200
+              and up_count("mock-sw-local") == n_loc + 1 and up_count("mock-sw-net") == n_net,
+              (r.status_code, r.text[:120]))
+        r = sw_chat("zzsw", switch="net", via="body")
+        check("T24e switch:net路由net侧(body传参)", r.status_code == 200
+              and up_count("mock-sw-net") == n_net + 1 and up_count("mock-sw-local") == n_loc + 1,
+              (r.status_code, r.text[:120]))
+        # f) 决策日志 requested 记 switch 侧别；g) /admin/decisions 端点可查
+        row = DB.execute("SELECT requested, selected FROM decision_log WHERE pool_name='zzsw' ORDER BY id DESC LIMIT 1").fetchone()
+        check("T24f 决策日志requested=switch:net", row and row["requested"] == "switch:net" and row["selected"] == "zzbt/sw-net",
+              dict(row) if row else None)
+        rd = httpx.get(f"{BASE}/admin/decisions", params={"pool": "zzsw", "limit": 10}, headers=ADMIN, timeout=15)
+        dec = rd.json().get("decisions", [])
+        check("T24g 决策端点可查switch路由", rd.status_code == 200 and any(d.get("requested") == "switch:local" for d in dec),
+              [(d.get("requested"), d.get("selected")) for d in dec[:3]])
+        # h) 同侧耗尽不跨侧：sw-local2 RPM=1，第二次 local 请求 503 且云端侧零调用（旁路兜底池升级）
+        n_loc2 = up_count("mock-sw-local2")
+        r = sw_chat("zzsw2", switch="local")
+        check("T24h1 首次local路由成功", r.status_code == 200 and up_count("mock-sw-local2") == n_loc2 + 1,
+              (r.status_code, r.text[:120]))
+        n_net2 = up_count("mock-sw-net")
+        r = sw_chat("zzsw2", switch="local")
+        check("T24h2 同侧耗尽503不跨侧", r.status_code == 503 and up_count("mock-sw-net") == n_net2,
+              (r.status_code, r.text[:150]))
+        # i) 授权 key 正常调用并计费（计量路径与 /v1 完全复用）
+        u4_0 = DB.execute("SELECT used_amount FROM api_key_usage WHERE key_id=(SELECT id FROM api_keys WHERE name='zzkey4')").fetchone()
+        u4_0 = u4_0["used_amount"] if u4_0 else 0
+        r = sw_chat("zzsw", switch="net", auth=secret4)
+        u4_1 = DB.execute("SELECT used_amount FROM api_key_usage WHERE key_id=(SELECT id FROM api_keys WHERE name='zzkey4')").fetchone()
+        check("T24i 授权key调用并计费133", r.status_code == 200 and u4_1 and u4_1["used_amount"] - u4_0 == 133,
+              (r.status_code, (u4_1["used_amount"] - u4_0) if u4_1 else None))
+        # j) 流式；k) body 缺 model 字段（网关改写/补齐为池名）
+        n_net3 = up_count("mock-sw-net")
+        r = sw_chat("zzsw", switch="net", stream=True)
+        check("T24j 流式switch:net", r.status_code == 200 and "[DONE]" in r.text and up_count("mock-sw-net") == n_net3 + 1,
+              (r.status_code, "[DONE]" in r.text))
+        n_loc3 = up_count("mock-sw-local")
+        r = httpx.post(f"{BASE}/zzsw?switch=local", headers=ADMIN,
+                       json={"messages": [{"role": "user", "content": "hi"}]}, timeout=60)
+        check("T24k body缺model字段网关补齐", r.status_code == 200 and up_count("mock-sw-local") == n_loc3 + 1,
+              (r.status_code, r.text[:120]))
+        # l) 开池校验：缺任一侧 400；被拒改动不残留配置；两侧齐全可开
+        r = httpx.put(f"{BASE}/admin/pools/zzsw", headers=ADMIN,
+                      json={"model_ids": ["zzbt/sw-local", "zzbt/sw-net"], "switch_enabled": False}, timeout=15)
+        check("T24l0 关闭Switch200", r.status_code == 200, r.status_code)
+        r = httpx.put(f"{BASE}/admin/pools/zzsw", headers=ADMIN,
+                      json={"model_ids": ["zzbt/sw-local"], "switch_enabled": True}, timeout=15)
+        check("T24l1 只挂local侧开启400", r.status_code == 400 and "云端" in r.text, (r.status_code, r.text[:150]))
+        r = httpx.put(f"{BASE}/admin/pools/zzsw", headers=ADMIN,
+                      json={"model_ids": ["zzbt/sw-net"], "switch_enabled": True}, timeout=15)
+        check("T24l2 只挂net侧开启400", r.status_code == 400 and "本地" in r.text, (r.status_code, r.text[:150]))
+        gp = httpx.get(f"{BASE}/admin/pools", headers=ADMIN, timeout=15).json()["pools"]["zzsw"]
+        check("T24l3 被拒改动不残留配置", gp.get("model_ids") == ["zzbt/sw-local", "zzbt/sw-net"] and gp.get("switch_enabled") is False,
+              gp)
+        r = httpx.put(f"{BASE}/admin/pools/zzsw", headers=ADMIN,
+                      json={"model_ids": ["zzbt/sw-local", "zzbt/sw-net"], "switch_enabled": True}, timeout=15)
+        check("T24l4 两侧齐全开启200并透出", r.status_code == 200 and r.json().get("pool", {}).get("switch_enabled") is True,
+              r.status_code)
+        # m) 双面板 Switch 控件在位
+        ph = open(os.path.join(REPO, "static", "hfadmin.html"), encoding="utf-8").read()
+        pa = open(os.path.join(REPO, "static", "index.html"), encoding="utf-8").read()
+        check("T24m 双面板Switch控件在位", all(k in ph for k in ("togglePoolSwitch", "switch_enabled"))
+              and all(k in pa for k in ("togglePoolSwitch", "switch_enabled")), None)
 
     finally:
         try:

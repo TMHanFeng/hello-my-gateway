@@ -3,3 +3,10 @@
 # 非必装：不建此环境、用原解释器启动网关时，headroom 插件自动旁路，其余功能完全不变
 -r requirements.txt
 headroom-ai==0.37.0
+
+# ── 可选：Kompress ML 纯文本压缩（v2.13.3 设置页「纯文本压缩」开关）──────
+# 不装也能正常用（仅规则压缩 JSON/工具输出）；要开启设置页的「纯文本压缩」开关则必须安装，
+# ML 权重（chopratejas/kompress-v2-base，数百 MB）在开关打开时自动从 HuggingFace 后台下载。
+# torch 装 CPU 版即可：pip install torch --index-url https://download.pytorch.org/whl/cpu
+# torch
+# transformers

@@ -16,6 +16,8 @@ import json
 import logging
 import re
 
+import database as db
+import keyauth
 import search_sse
 from web_fetch import fetch_pages
 
@@ -32,6 +34,9 @@ DEFAULTS = {
     "max_total_chars": 12000,         # 送进 LLM 的资料总量上限
     "fetch_proxy_url": "",
     "block_private_hosts": True,
+    # 专门网关 Key（完整 mg-… 值）：内层总结调用的记录（caller）与用量都挂到它名下，
+    # 不混入终端用户的「最近调用记录」；空 = 沿用发起搜索请求的原 caller（旧行为）
+    "caller_key": "",
 }
 
 # references 里对总结无价值、且容易污染提示词的字段
@@ -54,6 +59,35 @@ def cfg_of(pool_obj) -> dict:
         if v is not None:
             out[k] = v
     return out
+
+
+async def dedicated_key(pool_obj) -> dict | None:
+    """解析专门记账 Key（config.search_summary.caller_key = 完整 Key 值）。
+
+    命中时内层总结调用的调用记录（decision_log.caller）与 Key 用量都挂到该 Key 名下；
+    未配置或 Key 已删除/轮换过期返回 None（沿用原 caller），绝不让记账影响总结本身。
+    """
+    secret = str(cfg_of(pool_obj).get("caller_key") or "").strip()
+    if not secret:
+        return None
+    try:
+        return await db.get_api_key_by_secret_or_previous(secret)
+    except Exception as e:
+        logger.warning(f"[搜索总结] 专门 Key 解析失败，沿用原 caller: {type(e).__name__}: {str(e)[:120]}")
+        return None
+
+
+async def _charge_dedicated(dk: dict | None, tokens: int):
+    """内层总结用量挂账到专门 Key（语义与用户 Key 直连一致：按次计 1 / 按 token 计真实值；
+    管理员 Key、未设限额自动忽略——与 charge_key_usage 行为对齐；任何失败只记日志）。"""
+    if dk is None:
+        return
+    try:
+        amount = 1 if dk.get("billing_mode") == "request" else int(tokens or 0)
+        if amount > 0:
+            await keyauth.charge_key_usage(dk, amount)
+    except Exception as e:
+        logger.warning(f"[搜索总结] 专门 Key 记账失败: {type(e).__name__}: {str(e)[:120]}")
 
 
 def last_user_text(req) -> str:
@@ -210,10 +244,14 @@ async def summarize_text(pool_obj, entry, req, response, caller: str = "") -> st
     if not summary_pool:
         return None
     try:
+        dk = await dedicated_key(pool_obj)
         messages = await _prepare(pool_obj, entry, req, response)
         sreq = make_request(messages)
         r2, tokens, _steps = await pool_obj.execute_with_fallback(
-            summary_pool, sreq, None, caller, allow_search_summary=False)
+            summary_pool, sreq, None, (dk.get("name") or caller) if dk else caller,
+            allow_search_summary=False)
+        if r2 is not None:
+            await _charge_dedicated(dk, tokens)
         if r2 is None or not getattr(r2, "choices", None):
             logger.warning(f"[搜索总结] 总结池 '{summary_pool}' 全部候选失败，降级为原始结果列表")
             return None
@@ -238,10 +276,12 @@ async def summarize_stream(pool_obj, entry, req, response, caller: str = ""):
     if not summary_pool:
         return None
     try:
+        dk = await dedicated_key(pool_obj)
         messages = await _prepare(pool_obj, entry, req, response)
         sreq = make_request(messages, stream=True)
         inner, _inner_entry, _steps = await pool_obj.execute_stream_with_fallback(
-            summary_pool, sreq, None, caller, allow_search_summary=False)
+            summary_pool, sreq, None, (dk.get("name") or caller) if dk else caller,
+            allow_search_summary=False)
         if inner is None:
             logger.warning(f"[搜索总结] 总结池 '{summary_pool}' 全部候选失败，降级为原始结果列表")
             return None
@@ -257,25 +297,33 @@ async def summarize_stream(pool_obj, entry, req, response, caller: str = ""):
         # v2.12.3：把总结池的 OpenAI 帧转成与 hp(web_summary) 完全一致的搜索帧形，
         # 差异只留在"值"上（model=web_search、request_id、content、references 条数）。
         yield search_sse.first_frame(rid, model_name, refs)
+        captured = 0
         try:
-            async for chunk in inner:
-                if not isinstance(chunk, str) or not chunk.lstrip().startswith("data: "):
-                    continue
-                body = chunk.strip()[6:].strip()
-                if body == "[DONE]":
-                    continue
-                try:
-                    obj = json.loads(body)
-                except Exception:
-                    continue
-                d = search_sse.delta_of(obj)
-                if d is None:
-                    continue
-                _role, content = d
-                if content:
-                    yield search_sse.frame(rid, model_name, content=content, role="")
-        except Exception as e:
-            logger.warning(f"[搜索总结] 总结流中断: {type(e).__name__}: {str(e)[:200]}")
+            try:
+                async for chunk in inner:
+                    if not isinstance(chunk, str) or not chunk.lstrip().startswith("data: "):
+                        continue
+                    body = chunk.strip()[6:].strip()
+                    if body == "[DONE]":
+                        continue
+                    try:
+                        obj = json.loads(body)
+                    except Exception:
+                        continue
+                    u = obj.get("usage")
+                    if isinstance(u, dict) and u.get("total_tokens"):
+                        captured = int(u["total_tokens"])
+                    d = search_sse.delta_of(obj)
+                    if d is None:
+                        continue
+                    _role, content = d
+                    if content:
+                        yield search_sse.frame(rid, model_name, content=content, role="")
+            except Exception as e:
+                logger.warning(f"[搜索总结] 总结流中断: {type(e).__name__}: {str(e)[:200]}")
+        finally:
+            # 客户端中途断开也要挂账（上游 token 已消耗）；未配置专门 Key 时是空操作
+            await _charge_dedicated(dk, captured)
         yield search_sse.stop_frame(rid, model_name)
         yield search_sse.DONE
 
