@@ -1,0 +1,68 @@
+{
+  "id": "headroom",
+  "name": "Headroom 上下文压缩",
+  "version": "1.0.0",
+  "icon": "🪴",
+  "author": "model-gateway",
+  "kind": "builtin",
+  "order": 20,
+  "description": "对勾选了 Headroom 的模型，在其接单时自动压缩出站大块工具输出（长 JSON/日志），降低上游 token 消耗。非必装三重保障：库未装自动旁路、总开关默认关、按模型勾选；压缩超时/异常一律原文直发，绝不 fail-closed。",
+  "homepage": "https://github.com/headroomlabs-ai/headroom",
+  "config_scope": "dedicated",
+  "default_enabled": false,
+  "config_schema": [
+    {
+      "key": "mode",
+      "type": "enum",
+      "default": "dry_run",
+      "options": [
+        {
+          "value": "dry_run",
+          "label": "dry_run · 只统计不改写"
+        },
+        {
+          "value": "live",
+          "label": "live · 实际压缩生效"
+        }
+      ],
+      "title": "压缩模式",
+      "desc": "建议先 dry_run 观察节省数据，满意后切 live"
+    },
+    {
+      "key": "min_tokens_to_compress",
+      "type": "int",
+      "default": 500,
+      "min": 0,
+      "max": 1000000,
+      "title": "最小压缩 token 数",
+      "desc": "单条消息超过此长度才压缩"
+    },
+    {
+      "key": "protect_recent",
+      "type": "int",
+      "default": 4,
+      "min": 0,
+      "max": 10000,
+      "title": "保护最近消息条数",
+      "desc": "结尾 N 条对话保持原样"
+    },
+    {
+      "key": "timeout_seconds",
+      "type": "int",
+      "default": 10,
+      "min": 1,
+      "max": 600,
+      "title": "压缩超时（秒）",
+      "desc": "超限即放弃，原文直发"
+    },
+    {
+      "key": "kompress_model",
+      "type": "str",
+      "default": "disabled",
+      "title": "Kompress ML 模型",
+      "desc": "disabled=纯规则压缩；填模型 id 开启纯文本 ML 压缩"
+    }
+  ],
+  "ui_hint": "还需在「模型管理」页编辑具体模型并勾选「Headroom 上下文压缩」，该模型接单时才触发压缩。",
+  "requirements": "requirements.txt"
+}

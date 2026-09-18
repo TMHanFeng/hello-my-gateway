@@ -1,0 +1,15 @@
+{
+  "id": "switch_pool",
+  "name": "Switch 切换池",
+  "version": "1.0.0",
+  "icon": "🔀",
+  "author": "model-gateway",
+  "kind": "builtin",
+  "order": 10,
+  "description": "对开启 Switch 的模型池提供 POST /{池名}?switch=local|net 定向路由：local=池内本地模型（令牌类型 local），net=池内其余云端模型。语义红线：绝不静默跨侧，本侧全部不可用即 503，不进兜底池。",
+  "homepage": "",
+  "config_scope": "managed",
+  "default_enabled": true,
+  "config_schema": [],
+  "ui_hint": "每个池的 Switch 开关在「模型池」页的池卡片上；本开关为插件总闸，停用后所有池拒绝切换请求（/v1 调用不受影响）。"
+}

@@ -1,13 +1,13 @@
 @echo off
 title Model Gateway - port 8650
-cd /d D:\AIcoding\model-gateway
+cd /d "%~dp0.."
 echo ==========================================================
 echo  Model Gateway  ^|  port 8650  ^|  %DATE% %TIME%
 echo  dir: D:\AIcoding\model-gateway
 echo  log: logs\gateway.log  (console output mirrored here)
 echo ==========================================================
 echo.
-D:\miniconda\python.exe main.py
+D:\miniconda\python.exe -m app.main
 echo.
 echo ==========================================================
 echo  Gateway process exited with code %ERRORLEVEL%

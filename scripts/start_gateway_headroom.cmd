@@ -1,6 +1,6 @@
 @echo off
 title Model Gateway + Headroom plugin - port 8650
-cd /d D:\AIcoding\model-gateway
+cd /d "%~dp0.."
 echo ==========================================================
 echo  Model Gateway + Headroom 选配插件 ^| port 8650
 echo  dir: D:\AIcoding\model-gateway
@@ -10,7 +10,7 @@ echo  请改用 start_gateway_window.cmd（插件自动旁路，非必装）
 echo  log: logs\gateway.log  (console output mirrored here)
 echo ==========================================================
 echo.
-.venv-headroom\Scripts\python.exe main.py
+.venv-headroom\Scripts\python.exe -m app.main
 echo.
 echo ==========================================================
 echo  Gateway process exited with code %ERRORLEVEL%

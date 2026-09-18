@@ -135,7 +135,7 @@ def register_main_loop(loop) -> None:
 
 async def _charge_probe_ledger(model: dict, total_tokens: int) -> None:
     """按模型 token_type 把探测消耗写入对应账本（rolling_5h 用 db 原语等价 pool._charge_rolling_5h）。"""
-    import database as db
+    from app.core import database as db
     mid = model["id"]
     charge = 1 if model.get("billing_mode") == "request" else total_tokens
     tt = model.get("token_type") or "daily"
@@ -584,7 +584,8 @@ def main():
 
     if args.apply:
         n = apply_to_config(cache, config)
-        bak = CONFIG_PATH.with_name("config.json.bak_reasoning")
+        from app.core.paths import CONFIG_BAK_DIR
+        bak = CONFIG_BAK_DIR / "config.json.bak_reasoning"   # 备份统一归档 backup/config/
         if not bak.exists():
             pass  # 第 0 步已备份；此处不再覆盖首份备份
         CONFIG_PATH.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")

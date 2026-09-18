@@ -4,8 +4,8 @@ from apscheduler.triggers.interval import IntervalTrigger
 from pathlib import Path
 from shutil import copyfile
 import logging
-import database as db
-from pool import load_config
+from app.core import database as db
+from app.core.config import load_config, CONFIG_BAK_PATH
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +47,7 @@ async def refresh_model(model_id: str):
     await db.reset_daily_usage(model_id)
     # 配额预检有 5s TTL 缓存：刷新后立即失效，避免刚重置的模型在缓存窗口内仍被判"用量已尽"
     try:
-        from main import pool
+        from app.main import pool
         pool._invalidate_quota_cache(model_id)
     except Exception:
         pass
@@ -71,7 +71,7 @@ async def grant_gift_model(model_id: str):
     except Exception:
         logger.exception(f"[赠还补账] {model_id} 失败")
     try:
-        from main import pool
+        from app.main import pool
         pool._invalidate_quota_cache(model_id)
     except Exception:
         pass
@@ -89,8 +89,8 @@ async def sync_all_refresh_times(cfg: dict | None = None):
                 await db.sync_model_refresh_time(m["id"], rt)
 
 
-CONFIG_PATH = Path(__file__).parent / "config.json"
-BACKUP_PATH = Path(__file__).parent / "config.json.bak"
+from app.core.paths import CONFIG_PATH
+BACKUP_PATH = CONFIG_BAK_PATH
 
 
 def backup_config():
@@ -98,7 +98,7 @@ def backup_config():
     try:
         if CONFIG_PATH.exists():
             copyfile(CONFIG_PATH, BACKUP_PATH)
-            logger.info(f"[BACKUP] config.json 已备份至 config.json.bak")
+            logger.info(f"[BACKUP] config.json 已备份至 {BACKUP_PATH}")
     except Exception as e:
         logger.error(f"[BACKUP-FAIL] 备份失败: {e}")
 

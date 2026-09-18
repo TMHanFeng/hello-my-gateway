@@ -16,10 +16,10 @@ import json
 import logging
 import re
 
-import database as db
-import keyauth
-import search_sse
-from web_fetch import fetch_pages
+from app.core import database as db
+from app.core import keyauth
+from app.gateway import search_sse
+from app.gateway.web_fetch import fetch_pages
 
 logger = logging.getLogger(__name__)
 
@@ -203,7 +203,7 @@ def build_summary_messages(req, refs, pages: dict | None, cfg: dict, summary_len
 
 def make_request(messages: list[dict], stream: bool = False):
     """构造一次内部 Chat Completions 请求（走 pool 的完整链路，需要真 req 对象）。"""
-    from models import ChatCompletionRequest, ChatMessage
+    from app.core.models import ChatCompletionRequest, ChatMessage
     return ChatCompletionRequest(
         model="__search_summary__",
         messages=[ChatMessage(role=m["role"], content=m["content"]) for m in messages],

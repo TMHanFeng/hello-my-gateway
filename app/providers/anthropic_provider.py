@@ -3,9 +3,9 @@ import time
 import uuid
 import json
 from typing import AsyncGenerator
-from models import ChatCompletionRequest, ChatCompletionResponse, UsageInfo, Choice, ChoiceMessage
+from app.core.models import ChatCompletionRequest, ChatCompletionResponse, UsageInfo, Choice, ChoiceMessage
 from .openai_provider import RateLimitError
-import reasoning
+from app.core import reasoning
 
 
 class AnthropicProvider:

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Headroom 上下文压缩选配插件（非必装，方案A：按模型勾选、执行期判定）。
+"""Headroom 上下文压缩插件（原 headroom_plugin.py 的插件化封装，dedicated 配置域）。
 
 定位：对勾选了 headroom 的模型，在其真正接单时（pool.execute*_with_fallback 循环内）
 压缩出站 messages，降低上游 token 消耗。未勾选的候选模型收到的仍是原文——同一池内
@@ -10,16 +10,25 @@
      本模块在 worker 线程内懒 import，未安装/导入失败 → 进程生命周期内永久旁路，
      网关在任何解释器下照常启动与转发。
   2. 配置级：config.json "headroom".enabled 总开关默认 false，关闭时只有
-     一次 dict 取值 + 一次 bool 判断的开销；改动经 /admin/reload 热生效。
+     一次 dict 取值 + 一次 bool 判断的开销；改动即时热生效（无需重启/reload）。
   3. 模型级：仅 ModelEntry.headroom=True 的候选触发压缩。
 
 故障旁路：压缩超时/异常/结果回装失败一律返回原请求体，绝不 fail-closed；
 dry_run 模式正常计算压缩但只记 headroom_stats、请求照发原文（灰度数据来源）。
+
+插件化（v2.14.0）：dedicated 配置域——设置仍持久化于 config.json "headroom" 节点，
+与既有 /admin/headroom 兼容别名共用同一套读写；启停/设置经插件中心 API 即时生效。
 """
 import asyncio
 import logging
 import threading
 import time
+
+from fastapi import APIRouter, Depends, HTTPException, Request
+
+from app.admin.deps import verify_admin
+from app.core.config import load_config, save_config
+from app.plugins.base import GatewayPlugin
 
 logger = logging.getLogger(__name__)
 
@@ -52,11 +61,11 @@ def _ensure_loaded():
 
 
 def warmup_if_enabled():
-    """lifespan 启动时调用：总开关开启则后台线程预热 import + CCR 补丁，
+    """启动时调用：总开关开启则后台线程预热 import + CCR 补丁，
     首笔请求不再承担库加载成本；未启用/未装库时静默（无 headroom 环境里探测失败即旁路）。"""
     def _warm():
         try:
-            if _headroom_cfg().get("enabled", False):
+            if headroom_cfg().get("enabled", False):
                 _ensure_loaded()
                 warm_kompress_if_enabled()
         except Exception:
@@ -85,12 +94,12 @@ def warm_kompress_if_enabled():
     库对文本内容按"模型未就绪"透传原文，请求零影响；就绪后深压缩路径自动激活。"""
     def _warm():
         try:
-            if not _headroom_cfg().get("enabled", False):
+            if not headroom_cfg().get("enabled", False):
                 return
             _ensure_loaded()
             if _compress_fn is None:
                 return
-            model = str(_headroom_cfg().get("kompress_model", "disabled"))
+            model = str(headroom_cfg().get("kompress_model", "disabled"))
             if model == "disabled":
                 return
             from headroom.transforms.kompress_compressor import (
@@ -99,7 +108,7 @@ def warm_kompress_if_enabled():
             )
             if not is_kompress_available():
                 logger.info("[headroom] Kompress ML 依赖缺失（需 torch 或 onnxruntime+transformers），"
-                            "纯文本压缩不生效，仅规则压缩——见 requirements-headroom.txt 可选段")
+                            "纯文本压缩不生效，仅规则压缩——依赖清单见插件目录内 requirements.txt")
                 return
             ensure_background_download(model)
             logger.info(f"[headroom] Kompress ML 权重后台下载已触发 model={model}"
@@ -133,9 +142,8 @@ def _disable_ccr():
     logger.info("[headroom] CCR 已关闭（网关库模式无检索工具，标记注入一并禁用）")
 
 
-def _headroom_cfg() -> dict:
+def headroom_cfg() -> dict:
     """读 config.json "headroom" 节点（load_config 带 mtime 缓存，热路径零 IO）。"""
-    from pool import load_config  # 函数级导入：避免与 pool.py 的模块级相互导入成环
     h = load_config().get("headroom")
     return h if isinstance(h, dict) else {}
 
@@ -174,9 +182,10 @@ def _sync_compress(msgs: list, model_id: str, hcfg: dict):
                         config=cfg)
 
 
-async def maybe_compress_for_entry(entry, req, pool_name: str, caller: str, cache: dict):
-    """池回退循环插点：entry 接单时判定是否压缩。cache 为每次 execute 调用传入的 dict，
-    同一请求的多个勾选候选复用一次压缩结果；压缩失败/不适用时本请求不再重试。"""
+async def compress_entry(entry, req, pool_name: str, caller: str, cache: dict):
+    """池回退循环插点（插件中心 active_compressor 路由到此）：entry 接单时判定是否压缩。
+    cache 为每次 execute 调用传入的 dict，同一请求的多个勾选候选复用一次压缩结果；
+    压缩失败/不适用时本请求不再重试。"""
     if not getattr(entry, "headroom", False):
         return req                      # 模型未勾选：最快路径
     if cache.get("done"):
@@ -185,7 +194,7 @@ async def maybe_compress_for_entry(entry, req, pool_name: str, caller: str, cach
         return req                      # 本请求已判定不适用/失败：不重试
     cache["skip"] = True                # 占位：以下任一分支不通过则本请求不再尝试
 
-    hcfg = _headroom_cfg()
+    hcfg = headroom_cfg()
     if not hcfg.get("enabled", False):
         return req
     mode = hcfg.get("mode", "live")
@@ -218,7 +227,7 @@ async def maybe_compress_for_entry(entry, req, pool_name: str, caller: str, cach
         ratio = round(float(result.compression_ratio), 4)
         transforms = ",".join(result.transforms_applied)[:500]
     try:
-        from database import add_headroom_stats
+        from app.core.database import add_headroom_stats
         await add_headroom_stats(caller, pool_name, entry.id, mode, before, after,
                                  saved, ratio, transforms, latency_ms, error)
     except Exception:
@@ -227,7 +236,7 @@ async def maybe_compress_for_entry(entry, req, pool_name: str, caller: str, cach
     if result is None or mode == "dry_run" or not saved:
         return req                      # dry_run 只记统计；零收益时不改写请求
     try:
-        from models import ChatMessage
+        from app.core.models import ChatMessage
         req2 = req.model_copy(update={"messages": [ChatMessage(**m) for m in result.messages]})
     except Exception as e:
         logger.warning(f"[headroom] 压缩结果回装失败旁路 model={entry.id}: {type(e).__name__}: {e}")
@@ -237,3 +246,128 @@ async def maybe_compress_for_entry(entry, req, pool_name: str, caller: str, cach
     logger.info(f"[headroom] 已压缩 pool={pool_name} model={entry.id} caller={caller!r} "
                 f"{before}->{after} tok（省{saved}，压缩率{ratio:.0%}）{latency_ms}ms [{transforms}]")
     return req2
+
+
+# ================= 设置读写与统计（插件自带 API，挂载于 /admin/plugins/headroom） =================
+
+def settings_payload() -> dict:
+    """Headroom 插件当前设置（设置页读取）。available=当前解释器是否装有 headroom-ai
+    （find_spec 探测不导入；False 时开关打开也不产生压缩，自动旁路）。"""
+    h = headroom_cfg()
+    return {"enabled": bool(h.get("enabled", False)), "mode": h.get("mode", "live"),
+            "min_tokens_to_compress": int(h.get("min_tokens_to_compress", 500)),
+            "protect_recent": int(h.get("protect_recent", 4)),
+            "timeout_seconds": int(h.get("timeout_seconds", 10)),
+            "kompress_model": str(h.get("kompress_model", "disabled")),
+            "kompress_enabled": str(h.get("kompress_model", "disabled")) != "disabled",
+            "ml_available": ml_text_available(),
+            "available": lib_available()}
+
+
+def save_settings(body: dict) -> dict:
+    """Headroom 插件设置保存：写 config.json headroom 节点并落盘。
+    热生效（插件每请求经 load_config 读取，save_config 已刷新缓存），无需 /admin/reload。
+    先校验后改：任一字段非法即整体拒绝，不产生半写。"""
+    h = headroom_cfg()
+
+    mode = str(body.get("mode", h.get("mode", "live"))).strip().lower()
+    if mode not in ("live", "dry_run"):
+        raise HTTPException(status_code=400, detail="mode 仅支持 live / dry_run")
+
+    def _int_field(key: str, default: int, lo: int, hi: int) -> int:
+        v = body.get(key, h.get(key, default))
+        try:
+            v = int(v)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail=f"{key} 必须为整数")
+        return max(lo, min(hi, v))
+
+    h["enabled"] = bool(body.get("enabled", h.get("enabled", False)))
+    h["mode"] = mode
+    h["min_tokens_to_compress"] = _int_field("min_tokens_to_compress", 500, 0, 1_000_000)
+    h["protect_recent"] = _int_field("protect_recent", 4, 0, 10_000)
+    h["timeout_seconds"] = _int_field("timeout_seconds", 10, 1, 600)
+    # 纯文本压缩开关：开启=ML 模型压自然语言（已有自定义模型 id 则保留），关闭=纯规则压缩
+    kompress_enabled = bool(body.get("kompress_enabled", h.get("kompress_model", "disabled") != "disabled"))
+    if kompress_enabled:
+        cur = str(h.get("kompress_model", "disabled"))
+        h["kompress_model"] = cur if cur != "disabled" else KOMPRESS_DEFAULT_MODEL
+    else:
+        h["kompress_model"] = "disabled"
+    config = dict(load_config())
+    config["headroom"] = h
+    save_config(config)
+    if kompress_enabled:
+        warm_kompress_if_enabled()   # 后台触发权重下载，不阻塞保存请求
+    return settings_payload()
+
+
+async def stats_view(days: int = 7) -> dict:
+    """Headroom 插件节省统计：近 N 天汇总/今日/按模型分布/最近 50 条明细，
+    顺带回传总开关状态。dry_run 与 live 的记录都在（mode 字段区分，灰度决策数据源）。"""
+    from app.core.database import get_headroom_summary
+    data = await get_headroom_summary(days=max(1, min(int(days or 7), 90)))
+    h = headroom_cfg()
+    data["enabled"] = bool(h.get("enabled", False))
+    data["mode"] = h.get("mode", "live")
+    return data
+
+
+# 插件自带 API 的独立命名空间：/admin/plugin_settings/<插件id>/*
+# （不用 /admin/plugins/<id>，避免与插件中心 GET /admin/plugins/{pid} 详情路由撞路径）
+router = APIRouter(prefix="/admin/plugin_settings/headroom", tags=["plugin:headroom"])
+
+
+@router.get("")
+@router.get("/")
+async def plugin_settings_get(_=Depends(verify_admin)):
+    return settings_payload()
+
+
+@router.post("")
+@router.post("/")
+async def plugin_settings_set(request: Request, _=Depends(verify_admin)):
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+    return save_settings(body)
+
+
+@router.get("/stats")
+async def plugin_stats(days: int = 7, _=Depends(verify_admin)):
+    return await stats_view(days)
+
+
+# ================= 插件适配层 =================
+
+class HeadroomPlugin(GatewayPlugin):
+    """dedicated 配置域插件：设置持久化在 config.json "headroom" 节点（历史兼容）。"""
+
+    @property
+    def router(self):
+        return router
+
+    def is_enabled(self) -> bool:
+        return bool(headroom_cfg().get("enabled", False))
+
+    def set_enabled(self, flag: bool) -> None:
+        # 插件中心总闸与设置页「启用插件」同一落点，语义完全一致
+        save_settings({"enabled": bool(flag)})
+
+    def on_startup(self, app) -> None:
+        warmup_if_enabled()
+
+    def active_compressor(self):
+        # manager 只在 is_enabled 时询问；返回自身表示可提供 compress_entry hook
+        return self
+
+    def get_config(self) -> dict:
+        return settings_payload()
+
+    def set_config(self, cfg: dict) -> dict:
+        return save_settings(cfg or {})
+
+
+def create_plugin(manifest):
+    return HeadroomPlugin(manifest)

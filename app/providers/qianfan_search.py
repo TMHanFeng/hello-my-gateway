@@ -16,9 +16,9 @@ from typing import AsyncGenerator
 
 import httpx
 
-from models import ChatCompletionRequest, ChatCompletionResponse, UsageInfo, Choice, ChoiceMessage
+from app.core.models import ChatCompletionRequest, ChatCompletionResponse, UsageInfo, Choice, ChoiceMessage
 from .openai_provider import RateLimitError  # 复用同一异常类：pool 层 except 按此捕获
-import search_sse  # v2.12.3 搜索流式帧统一：两变体结构一致、值可区分
+from app.gateway import search_sse  # v2.12.3 搜索流式帧统一：两变体结构一致、值可区分
 
 # 搜索专属参数（instruction/resource_type_filter/search_match 等）经此注入，核心字段黑名单防覆盖
 _RESERVED_KEYS = {"model", "messages", "stream", "stream_options", "input",

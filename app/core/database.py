@@ -7,12 +7,12 @@ import time
 import json
 from pathlib import Path
 
-DB_PATH = Path(__file__).parent / "gateway.db"
+from app.core.paths import DB_PATH  # 统一路径常量（data/gateway.db，运行时产物与代码隔离）
 
 
 def _bj_today() -> str:
     """今日日期（YYYY-MM-DD，北京时间自然日）。
-    与 keyauth._today 一致（不 import keyauth 避免循环依赖，独立实现）。"""
+    与 keyauth._today 一致（不 from app.core import keyauth 避免循环依赖，独立实现）。"""
     from datetime import datetime
     from zoneinfo import ZoneInfo
     return datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat()

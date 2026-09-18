@@ -2,7 +2,7 @@
 # 行为：开窗显示启动进度 -> 健康检查通过后本窗口自动关闭，主程序转入后台静默运行
 #       60 秒未通过健康检查则窗口停留并提示日志位置，按回车才关闭
 $ErrorActionPreference = 'Stop'
-$dir  = 'D:\AIcoding\model-gateway'
+$dir  = Split-Path -Parent $PSScriptRoot   # 仓库根（脚本相对，随仓库位置自适应）
 $py   = 'D:\miniconda\python.exe'
 $base = 'http://127.0.0.1:8650'
 
@@ -23,7 +23,7 @@ if (Test-Health) {
 Write-Host '[Model Gateway] 正在启动...'
 $out = Join-Path $dir 'logs\gateway_stdout.log'
 $err = Join-Path $dir 'logs\gateway_stderr.log'
-$proc = Start-Process -FilePath $py -ArgumentList 'main.py' -WorkingDirectory $dir `
+$proc = Start-Process -FilePath $py -ArgumentList '-m', 'app.main' -WorkingDirectory $dir `
         -WindowStyle Hidden -RedirectStandardOutput $out -RedirectStandardError $err -PassThru
 Write-Host "[Model Gateway] 进程已拉起 PID $($proc.Id)，等待健康检查..."
 

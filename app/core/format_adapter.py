@@ -8,7 +8,7 @@
 
 import json
 
-import reasoning
+from app.core import reasoning
 
 _OPENAI_REQUEST_KEYS = [
     "model",

@@ -2,7 +2,7 @@
 """计费回归套件(问题24 不变量固化)+ 思考/估算回归。
 
 用法:python test_billing_regression.py
-- 自行启动隔离实例(端口 8651,共享 gateway.db,结束清理测试数据),不影响 8650 生产。
+- 自行启动隔离实例(端口 8651,共享 data/gateway.db,结束清理测试数据),不影响 8650 生产。
 - mock 上游(127.0.0.1:8125):流式 SSE / 非流式 JSON,usage 可控,记录收到的请求体。
 - 全部断言通过 exit 0;任何失败 exit 1(优化阶段必须全绿才继续)。
 """
@@ -120,7 +120,7 @@ threading.Thread(target=srv.serve_forever, daemon=True).start()
 
 cfg = json.load(open(os.path.join(REPO, "config.json"), encoding="utf-8"))
 ADMIN = {"Authorization": "Bearer " + cfg["server"]["api_key"], "Content-Type": "application/json"}
-DB = sqlite3.connect(os.path.join(REPO, "gateway.db"))
+DB = sqlite3.connect(os.path.join(REPO, "data", "gateway.db"))
 DB.row_factory = sqlite3.Row
 # T23：生产 search_summary.caller_key 原值（用例内临时改写，结束时/deep_clean 必须原样还原）
 CK0 = (cfg.get("search_summary") or {}).get("caller_key") or ""
@@ -345,7 +345,7 @@ def main():
             subprocess.run(["taskkill", "/PID", _pid, "/F"], capture_output=True)
     time.sleep(1)
     env = dict(os.environ, MODEL_GATEWAY_PORT="8651")
-    proc = subprocess.Popen([sys.executable, "main.py"], cwd=REPO, env=env,
+    proc = subprocess.Popen([sys.executable, "-m", "app.main"], cwd=REPO, env=env,
                             stdout=open(os.path.join(REPO, "logs", "regression_8651.log"), "ab"),
                             stderr=subprocess.STDOUT)
     try:

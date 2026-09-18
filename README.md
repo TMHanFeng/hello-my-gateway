@@ -7,7 +7,7 @@
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.110%2B-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Version](https://img.shields.io/badge/version-v2.12.7-orange)](#-版本)
+[![Version](https://img.shields.io/badge/version-v2.14.0-orange)](#-版本)
 [![Status](https://img.shields.io/badge/status-stable-brightgreen)](#)
 
 对外暴露 **OpenAI 兼容**与 **Anthropic Messages** 接口，
@@ -16,6 +16,34 @@
 [**快速开始**](#-快速开始) · [**核心特性**](#-核心特性) · [**架构**](#-架构) · [**API 文档**](#-对外-api) · [**版本**](#-版本)
 
 </div>
+
+---
+
+## 📦 v2.14.0 工程化重构与插件中心
+
+本仓库（hello-my-gateway）是 model-gateway 的**重构工作副本**：代码按功能分层 + 设置页升级为插件中心。
+
+```
+app/
+├── main.py            # FastAPI 入口（端点/生命周期）
+├── core/              # 基础层：config / database / models / keyauth / reasoning / format_adapter / scheduler / logging / paths
+├── gateway/           # 转发层：pool（选模/回退/计费）+ search_summary / search_sse / web_fetch
+├── admin/             # 管理面 API（/admin/*）+ 共享鉴权 deps
+├── providers/         # 上游协议适配（openai / anthropic / qianfan_search）
+├── tools/             # probe_reasoning 等内部工具
+└── plugins/           # ★ 插件中心：manager + base + installed/<插件>/
+    └── installed/
+        ├── switch_pool/   # 🔀 Switch 切换池（热插拔，POST /{池名}?switch=local|net）
+        └── headroom/      # 🪴 Headroom 上下文压缩（热插拔，默认停用）
+providers→app/providers，static/ 前端，scripts/ 启动脚本，docs/ 全部文档，tests/ 回归测试
+backup/ 备份统一归档（config/ db/ static/ snapshots/，见 backup/README.md）
+data/ 运行时数据（gateway.db、探测缓存、dev pid），与代码隔离
+```
+
+- **插件中心**：面板「🧩 插件中心」页管理插件（卡片/启停开关/每插件设置），启用/停用/改配置**即时热生效**；
+  自定义插件 = 在 `app/plugins/installed/` 放一个含 `manifest.json` 的文件夹 + 点「扫描新插件」，零代码即接
+  （开发规范见 `docs/插件中心开发指南.md`；API：`/admin/plugins/*`）。
+- **端口纪律**：生产 8650 仅由用户本人启动；开发/测试一律用 `scripts/start_dev_8651.ps1`（强制 8651 + 仅监听 127.0.0.1）。
 
 ---
 

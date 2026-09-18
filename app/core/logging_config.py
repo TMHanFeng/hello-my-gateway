@@ -12,7 +12,7 @@ import os
 import sys
 from logging.handlers import TimedRotatingFileHandler
 
-LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
+from app.core.paths import LOG_DIR
 LOG_FILE = os.path.join(LOG_DIR, "gateway.log")
 
 CONSOLE_FMT = "[%(asctime)s] %(levelname)-5s | %(message)s"

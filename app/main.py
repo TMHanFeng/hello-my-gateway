@@ -1,20 +1,23 @@
 import os
 import time
 import json
-from pathlib import Path
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, HTTPException, Depends
 from fastapi.responses import StreamingResponse, RedirectResponse, HTMLResponse, JSONResponse
 from pydantic import ValidationError
-from models import ChatCompletionRequest, EmbeddingRequest, RerankRequest
-from pool import ModelPool, load_config, ContextOverflowPassThrough
-from database import init_db, close_db
-import database as db
-import keyauth
-import reasoning
-from scheduler import start_scheduler, sync_all_refresh_times
-from admin import router as admin_router, GATEWAY_VERSION, GATEWAY_COMMIT, get_gateway_version
-from format_adapter import (
+from app.core.models import ChatCompletionRequest, EmbeddingRequest, RerankRequest
+from app.gateway.pool import ModelPool, ContextOverflowPassThrough
+from app.core.config import load_config
+from app.core.database import init_db, close_db
+from app.core import database as db
+from app.core import keyauth
+from app.core import reasoning
+from app.core.scheduler import start_scheduler, sync_all_refresh_times
+from app.core.paths import STATIC_DIR
+from app.admin.routes import router as admin_router, GATEWAY_VERSION, GATEWAY_COMMIT, get_gateway_version
+from app.plugins.manager import plugin_center
+from app.plugins.routes import router as plugins_router
+from app.core.format_adapter import (
     is_anthropic_request,
     anthropic_to_openai,
     openai_to_anthropic_response,
@@ -22,7 +25,7 @@ from format_adapter import (
 )
 
 import logging
-from logging_config import setup_logging, LOG_FILE
+from app.core.logging_config import setup_logging, LOG_FILE
 logger = logging.getLogger(__name__)
 
 
@@ -40,22 +43,20 @@ async def lifespan(app: FastAPI):
     await init_db()
     await sync_all_refresh_times()
     start_scheduler()
-    # Headroom 选配插件（非必装）：总开关开启时后台预热库加载；未装库/未启用静默旁路
-    try:
-        import headroom_plugin
-        headroom_plugin.warmup_if_enabled()
-    except Exception:
-        pass
+    # 插件中心：触发已启用插件的 on_startup（如 Headroom 预热库加载；未装库/未启用静默旁路）
+    plugin_center.startup(app)
     host, port = server_bind()
     base = f"http://{host}:{port}"
-    logger.info(f"Model Gateway 启动 | 后台: {base}/admin/  {base}/hfadmin | API: {base}/v1 | 日志: {LOG_FILE}")
+    logger.info(f"Model Gateway 启动 | 后台: {base}/admin/  {base}/hfadmin | 插件: {base}/admin/plugins | 日志: {LOG_FILE}")
     yield
+    plugin_center.shutdown()
     await pool.close_all()
     await close_db()
 
 
 app = FastAPI(title="Model Gateway", lifespan=lifespan)
 app.include_router(admin_router)
+app.include_router(plugins_router)
 pool = ModelPool()
 
 
@@ -531,34 +532,9 @@ async def version_info():
     return {"version": GATEWAY_VERSION, "commit": GATEWAY_COMMIT}
 
 
-# ================= 池级 Switch 切换端点（v2.13.3，配合 dsh 脱敏网关插件） =================
-# 不走 /v1：POST /{池名} + switch=local|net 定向调用池内一侧模型
-# （local=池内 token_type 为 local 的本地模型，net=其余云端模型；仅管理面板开启 switch 的池响应）。
-# 注册在所有既有路由之后，不遮蔽任何固定路径；未知池名返回明确 404。
-
-@app.post("/{pool_name}")
-async def pool_switch_chat(pool_name: str, request: Request, auth: dict = Depends(verify_key)):
-    if pool_name not in pool.pools:
-        raise HTTPException(status_code=404, detail=f"未知模型池 '{pool_name}'：对外仅可调用模型池，不能直接指定单个模型")
-    if auth["kind"] == "key_user" and not keyauth.is_pool_allowed(auth.get("key"), pool_name):
-        raise HTTPException(status_code=403, detail=f"该 API Key 无权访问模型池 '{pool_name}'")
-    if not pool.pools[pool_name].get("switch_enabled"):
-        raise HTTPException(status_code=403, detail=f"模型池 '{pool_name}' 未开启 Switch 切换，无法按 local/net 定向调用")
-    switch = (request.query_params.get("switch") or "").strip().lower()
-    body = None
-    if not switch:
-        # query 未带 switch 时读 body 兜底：?switch=local 与 {"switch":"local"} 两种传参都兼容
-        try:
-            body = await request.json()
-        except Exception:
-            raise HTTPException(status_code=400, detail="Invalid JSON body")
-        switch = str(body.get("switch") or "").strip().lower() if isinstance(body, dict) else ""
-    if switch not in ("local", "net"):
-        raise HTTPException(status_code=422,
-                            detail=f"非法 switch 参数 '{switch or '(缺失)'}'：仅支持 local（本地模型）或 net（云端模型）")
-    if isinstance(body, dict):
-        body.pop("switch", None)  # 网关自有路由参数，不透传上游
-    return await _chat_handler(request, auth, forced_pool=pool_name, switch_role=switch, body=body)
+# 池级 Switch 切换端点（POST /{池名}?switch=local|net）已插件化：
+# 由 app/plugins/installed/switch_pool 在插件中心 load_all 时动态注册/注销（可热插拔），
+# 末尾的 plugin_center.load_all(app) 保证其路由排在所有固定路径之后，不遮蔽任何既有端点。
 
 
 # hfadmin 页面缓存（v2.11.42）：169KB read_text 是同步阻塞 IO，原先每次刷新都在事件循环内全量重读；
@@ -571,15 +547,19 @@ async def hfadmin_page():
     """HF 科技感管理面板：与 /admin 共用同一套后端 API（verify_admin 认证），
     页面本身无需认证（与原 /admin 一致），所有 /admin/* API 均受 Bearer 保护。"""
     try:
-        mtime = (Path(__file__).parent / "static" / "hfadmin.html").stat().st_mtime
+        mtime = (STATIC_DIR / "hfadmin.html").stat().st_mtime
     except OSError:
         mtime = None
     if _hfadmin_html_cache["html"] == "" or mtime != _hfadmin_html_cache["mtime"]:
-        _hfadmin_html_cache["html"] = (Path(__file__).parent / "static" / "hfadmin.html").read_text(encoding="utf-8")
+        _hfadmin_html_cache["html"] = (STATIC_DIR / "hfadmin.html").read_text(encoding="utf-8")
         _hfadmin_html_cache["mtime"] = mtime
     # no-cache：面板迭代频繁，禁止浏览器拿旧 HTML（曾因缓存旧版导致"加载慢"的 canvas 全屏重绘长期滞留）
     return HTMLResponse(content=_hfadmin_html_cache["html"].replace("__GATEWAY_VERSION__", get_gateway_version()),
                         headers={"Cache-Control": "no-cache"})
+
+
+# ── 插件中心装配：扫描 installed/ 目录、挂载插件路由、恢复启用态（Switch 路由在此动态注册，排在所有固定路径之后）──
+plugin_center.load_all(app)
 
 
 if __name__ == "__main__":
@@ -595,7 +575,7 @@ if __name__ == "__main__":
         os.environ["MODEL_GATEWAY_PORT"] = str(args.port)
     host, port = server_bind()
     uvicorn.run(
-        "main:app",
+        "app.main:app",
         host=host,
         port=port,
         reload=False,

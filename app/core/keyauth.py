@@ -14,7 +14,7 @@ import secrets
 import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
-import database as db
+from app.core import database as db
 
 ROLLING_5H_SECONDS = 5 * 3600
 

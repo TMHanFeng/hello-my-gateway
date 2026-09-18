@@ -8,17 +8,17 @@ from zoneinfo import ZoneInfo
 from pathlib import Path
 from dataclasses import dataclass, field
 import httpx
-from providers.openai_provider import OpenAIProvider, RateLimitError
-from providers.anthropic_provider import AnthropicProvider
-from providers.qianfan_search import QianfanSearchProvider
-import search_summary
-import reasoning
-import headroom_plugin
-import database as db
+from app.providers.openai_provider import OpenAIProvider, RateLimitError
+from app.providers.anthropic_provider import AnthropicProvider
+from app.providers.qianfan_search import QianfanSearchProvider
+from app.gateway import search_summary
+from app.core import reasoning
+from app.core.config import load_config, save_config  # re-export：旧调用方兼容
+from app.core.paths import CONFIG_PATH  # 统一路径常量（项目根 config.json）
+from app.core import database as db
+from app.plugins.manager import plugin_center  # 插件中心：压缩等请求管线 hook 经此路由到插件
 
 logger = logging.getLogger(__name__)
-
-CONFIG_PATH = Path(__file__).parent / "config.json"
 
 
 @dataclass
@@ -144,34 +144,7 @@ def _upstream_error_body(e: Exception) -> str:
     return str(e)
 
 
-_config_cache: dict | None = None
-_config_mtime: float | None = None
-
-
-def load_config() -> dict:
-    # 热路径（每个请求的 verify_key）都会调用：mtime 未变化时直接返回缓存，
-    # 避免每请求同步读盘+解析 config.json；外部改动（含手工编辑）会因 mtime 变化自动失效
-    global _config_cache, _config_mtime
-    try:
-        mtime = CONFIG_PATH.stat().st_mtime
-    except OSError:
-        mtime = None
-    if _config_cache is None or mtime != _config_mtime:
-        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-            _config_cache = json.load(f)
-        _config_mtime = mtime
-    return _config_cache
-
-
-def save_config(config: dict):
-    global _config_cache, _config_mtime
-    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-        json.dump(config, f, ensure_ascii=False, indent=2)
-    _config_cache = config
-    try:
-        _config_mtime = CONFIG_PATH.stat().st_mtime
-    except OSError:
-        _config_mtime = None
+# load_config / save_config 已迁至 app.core.config（横切能力与业务解耦），此处 import 后 re-export
 
 
 class ModelPool:
@@ -1472,6 +1445,7 @@ class ModelPool:
                                     switch_role: str = ""):
         tried: set[str] = set()
         _hr_cache: dict = {}  # Headroom：本请求的压缩结果缓存（同请求多个勾选候选复用一次压缩）
+        compressor = plugin_center.active_compressor()  # 已启用的压缩插件，未启用为 None（零开销旁路）
         # v2.13.3 Switch 切换：决策日志 requested 记 switch:local/net（面板调用记录即显示走了哪侧）
         _req_log = f"switch:{switch_role}" if switch_role else requested_model
         estimated = self._estimate_tokens(req)
@@ -1512,7 +1486,8 @@ class ModelPool:
             tried.add(entry.id)
 
             # Headroom 选配插件（方案A）：勾选压缩的模型接单时才压缩，失败/未启用一律原文旁路
-            req_use = await headroom_plugin.maybe_compress_for_entry(entry, req, pool_name, caller, _hr_cache)
+            # 压缩 hook 由插件中心路由：Headroom 插件启用且该模型勾选时才压缩，其余一律原文旁路
+            req_use = (await compressor.compress_entry(entry, req, pool_name, caller, _hr_cache)) if compressor else req
 
             t0 = time.perf_counter()
             try:
@@ -1683,6 +1658,7 @@ class ModelPool:
                                            switch_role: str = ""):
         tried: set[str] = set()
         _hr_cache: dict = {}  # Headroom：本请求的压缩结果缓存（同请求多个勾选候选复用一次压缩）
+        compressor = plugin_center.active_compressor()  # 已启用的压缩插件，未启用为 None（零开销旁路）
         # v2.13.3 Switch 切换：决策日志 requested 记 switch:local/net（面板调用记录即显示走了哪侧）
         _req_log = f"switch:{switch_role}" if switch_role else requested_model
         estimated = self._estimate_tokens(req)
@@ -1718,7 +1694,8 @@ class ModelPool:
             tried.add(entry.id)
 
             # Headroom 选配插件（方案A）：同非流式——勾选模型接单时才压缩，旁路语义一致
-            req_use = await headroom_plugin.maybe_compress_for_entry(entry, req, pool_name, caller, _hr_cache)
+            # 压缩 hook 由插件中心路由：Headroom 插件启用且该模型勾选时才压缩，其余一律原文旁路
+            req_use = (await compressor.compress_entry(entry, req, pool_name, caller, _hr_cache)) if compressor else req
 
             try:
                 last_reason = actual_calls[-1]["reason"] if actual_calls else ""

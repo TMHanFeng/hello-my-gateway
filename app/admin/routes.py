@@ -5,18 +5,17 @@ import asyncio
 import logging
 import subprocess
 import threading
-from pool import load_config, save_config
-import database as db
-from scheduler import restart_scheduler
-from providers.openai_provider import OpenAIProvider
-from providers.anthropic_provider import AnthropicProvider
-from providers.qianfan_search import QianfanSearchProvider
-import search_summary
+from app.core.config import load_config, save_config
+from app.core import database as db
+from app.core.scheduler import restart_scheduler
+from app.providers.openai_provider import OpenAIProvider
+from app.providers.anthropic_provider import AnthropicProvider
+from app.providers.qianfan_search import QianfanSearchProvider
+from app.gateway import search_summary
 
 router = APIRouter(prefix="/admin")
 
-FRONTEND_PATH = Path(__file__).parent / "static" / "index.html"
-REPO_DIR = Path(__file__).parent
+from app.core.paths import FRONTEND_PATH, PROJECT_ROOT as REPO_DIR  # 统一路径常量（仓库根 static/index.html）
 
 
 def _read_git_version() -> tuple[str, str]:
@@ -57,7 +56,7 @@ def get_gateway_version() -> str:
 
 def _sync_pool():
     """Reload in-memory pool after config changes so /v1/models stays current."""
-    from main import pool
+    from app.main import pool
     pool.reload()
 
 
@@ -83,16 +82,8 @@ def _expand_pool_members(config: dict, pool_name: str, visiting: set | None = No
     return models, broken
 
 
-def verify_admin(request: Request):
-    config = load_config()
-    expected = config.get("server", {}).get("api_key", "")
-    if not expected:
-        return
-    auth = request.headers.get("Authorization", "")
-    if auth.startswith("Bearer "):
-        auth = auth[7:]
-    if auth != expected:
-        raise HTTPException(status_code=401, detail="Invalid API key")
+# verify_admin 已上移 app/admin/deps.py（admin 路由与插件中心路由共用同一套 Bearer 校验）
+from app.admin.deps import verify_admin  # noqa: E402,F401
 
 
 # 面板页面缓存（v2.11.42）：148KB read_text 是同步阻塞 IO，原先每次刷新都在事件循环内全量重读；
@@ -147,8 +138,8 @@ def _probe_key_of(m: dict, providers: dict, protocol_default: str = "openai") ->
 async def get_reasoning(_=Depends(verify_admin)):
     """思考参数查询（纯本地读取，不发上游请求）：每个模型的探测结论 + 当前生效映射 +
     六档实际注入片段。供编辑弹窗辅助填空与调试查询。"""
-    import reasoning as _reasoning
-    import probe_reasoning
+    from app.core import reasoning as _reasoning
+    from app.tools import probe_reasoning
     config = load_config()
     providers_by_id = {p["id"]: p for p in config.get("providers", [])}
     pools_cfg = config.get("pools", {})
@@ -266,7 +257,7 @@ async def gift_calibrate(request: Request, _=Depends(verify_admin)):
                             g_new, today, y_new,
                             today if after_grant else None, today)
     try:
-        from main import pool as _pool
+        from app.main import pool as _pool
         _pool._invalidate_quota_cache(model_id)
     except Exception:
         pass
@@ -277,7 +268,7 @@ async def gift_calibrate(request: Request, _=Depends(verify_admin)):
 @router.post("/reasoning/probe")
 async def probe_reasoning_api(request: Request, _=Depends(verify_admin)):
     """强制重测单个模型的思考参数（后台执行，结果只写探测缓存，不改 reasoning_map）。"""
-    import probe_reasoning
+    from app.tools import probe_reasoning
     body = await request.json()
     model_id = (body.get("model_id") or "").strip()
     if not model_id:
@@ -315,7 +306,7 @@ def _auto_probe_model(model_id: str):
     embedding/rerank、无连接信息、探测失败的模型静默跳过——不影响模型本身使用。
     """
     try:
-        import probe_reasoning
+        from app.tools import probe_reasoning
         config = load_config()
         model = next((m for m in config.get("models", []) if m.get("id") == model_id), None)
         if not model or model.get("modality") in ("embedding", "rerank"):
@@ -426,7 +417,7 @@ async def add_model(request: Request, _=Depends(verify_admin)):
                   .get("protocol") if pid else body.get("provider", "openai")) or "openai"
     if _proto_new == "qianfan_web_search":
         if entry.get("summary_pool"):
-            from main import pool as _pool
+            from app.main import pool as _pool
             _why = search_summary.pool_ineligible_reason(_pool, entry["summary_pool"])
             if _why:
                 raise HTTPException(status_code=400, detail=_why)
@@ -444,7 +435,7 @@ async def add_model(request: Request, _=Depends(verify_admin)):
     probe_status = "skipped"
     if entry.get("modality") not in ("embedding", "rerank"):
         try:
-            import probe_reasoning
+            from app.tools import probe_reasoning
             cached = probe_reasoning.cached_suggestion(entry, config.get("providers", []))
             if cached:
                 entry["reasoning_map"] = cached
@@ -466,7 +457,7 @@ async def get_model_load(model_id: str, _=Depends(verify_admin)):
 
     active = 正在上游处理中（持有 max_concurrency 槽位）；waiting = 排队等槽。
     max_concurrency=0（不限）时 unlimited=True，active/waiting 照常给出。"""
-    from main import pool as _pool
+    from app.main import pool as _pool
     entry = _pool.registry.get(model_id)
     if entry is None:
         raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found")
@@ -482,7 +473,7 @@ async def get_model_load(model_id: str, _=Depends(verify_admin)):
 @router.get("/model/{model_id:path}/metrics")
 async def get_model_metrics_api(model_id: str, _=Depends(verify_admin)):
     """问题22：返回该模型实测校准数据（吞吐 tok/s、平均输出 token、样本数），供前端 live 区展示。"""
-    from pool import ModelPool  # 复用运行中实例的 EMA（含未落盘的增量）
+    from app.gateway.pool import ModelPool  # 复用运行中实例的 EMA（含未落盘的增量）
     config = load_config()
     entry = next((m for m in config.get("models", []) if m.get("id") == model_id), None)
     if entry is None:
@@ -493,7 +484,7 @@ async def get_model_metrics_api(model_id: str, _=Depends(verify_admin)):
         agg = {"sample_count": 0, "throughput": None, "avg_completion": None}
     live = None
     try:
-        from main import pool as _pool
+        from app.main import pool as _pool
         e = _pool.registry.get(model_id)
         if e is not None:
             live = {"throughput": e.throughput_ema, "avg_completion": e.avg_completion_ema,
@@ -571,7 +562,7 @@ async def update_model(model_id: str, request: Request, _=Depends(verify_admin))
                   or models[idx].get("provider")) or "openai"
     _sp_new = ((body.get("summary_pool") if "summary_pool" in body else models[idx].get("summary_pool")) or "").strip()
     if _proto_new == "qianfan_web_search" and _sp_new:
-        from main import pool as _pool
+        from app.main import pool as _pool
         _why = search_summary.pool_ineligible_reason(_pool, _sp_new)
         if _why:
             raise HTTPException(status_code=400, detail=_why)
@@ -756,7 +747,7 @@ async def delete_provider(provider_id: str, _=Depends(verify_admin)):
 
 @router.get("/pools")
 async def get_pools(_=Depends(verify_admin)):
-    from main import pool
+    from app.main import pool
     # Return from in-memory pool.pools (includes auto-created 兜底池).
     # pool_order 保留 Python dict 的插入顺序：JS 的 Object.keys 会把纯数字池名
     # （如 "123"）按整数键规则提到最前，打破预期顺序，故显式下发有序数组。
@@ -918,7 +909,7 @@ async def update_pool(pool_name: str, request: Request, _=Depends(verify_admin))
     # v2.13.3 Switch 切换开关：先校验后改配置（本文件约定：被拒绝的改动不得残留共享缓存）。
     # 开启时按本次提交的 model_ids 校验池内两侧齐全：local=token_type 为 local 的本地模型，net=其余云端模型
     if "switch_enabled" in body and bool(body["switch_enabled"]) and not pools[pool_name].get("switch_enabled"):
-        from main import pool as _pool
+        from app.main import pool as _pool
         probe = {"pools": {**config.get("pools", {}), pool_name: {**pools[pool_name], "model_ids": model_ids}}}
         members, broken = _expand_pool_members(probe, pool_name)
         if broken:
@@ -1014,7 +1005,7 @@ async def set_single_override(pool_name: str, request: Request, _=Depends(verify
     if not model_id:
         raise HTTPException(status_code=400, detail="Missing model_id")
 
-    from main import pool
+    from app.main import pool
     if pool_name not in pool.pools:
         raise HTTPException(status_code=404, detail=f"Pool '{pool_name}' not found")
     if model_id not in pool.registry:
@@ -1032,7 +1023,7 @@ async def set_single_override(pool_name: str, request: Request, _=Depends(verify
 @router.delete("/pools/{pool_name}/single_override")
 async def clear_single_override(pool_name: str, _=Depends(verify_admin)):
     """Release single-model lock, return to normal pool behavior."""
-    from main import pool
+    from app.main import pool
     if pool_name not in pool.pools:
         raise HTTPException(status_code=404, detail=f"Pool '{pool_name}' not found")
 
@@ -1043,7 +1034,7 @@ async def clear_single_override(pool_name: str, _=Depends(verify_admin)):
 @router.get("/pools/{pool_name}/single_override")
 async def get_single_override(pool_name: str, _=Depends(verify_admin)):
     """Get current single-model override for a pool."""
-    from main import pool
+    from app.main import pool
     if pool_name not in pool.pools:
         raise HTTPException(status_code=404, detail=f"Pool '{pool_name}' not found")
 
@@ -1053,7 +1044,7 @@ async def get_single_override(pool_name: str, _=Depends(verify_admin)):
 
 @router.post("/reload")
 async def reload_pool(request: Request, _=Depends(verify_admin)):
-    from main import pool
+    from app.main import pool
     pool.reload()
     restart_scheduler()
     return {"ok": True}
@@ -1061,7 +1052,7 @@ async def reload_pool(request: Request, _=Depends(verify_admin)):
 
 @router.get("/decisions")
 async def get_decisions(pool: str | None = None, limit: int = 100, _=Depends(verify_admin)):
-    import database as db
+    from app.core import database as db
     rows = await db.get_decisions(pool_name=pool, limit=min(limit, 500))
     return {"decisions": rows}
 
@@ -1087,14 +1078,14 @@ async def test_model(request: Request, _=Depends(verify_admin)):
                                          variant=("web_search" if protocol == "qianfan_web_search" else "summary"))
     else:
         provider = OpenAIProvider(base_url, api_key)
-    import database as db
+    from app.core import database as db
     import time as _time
     try:
         # embedding 模型发 /embeddings 短文本测试（chat/completions 对嵌入模型必然 400）
         if modality == "embedding":
             if protocol != "openai":
                 raise HTTPException(400, "embedding 测试仅支持 openai 兼容协议")
-            from models import EmbeddingRequest
+            from app.core.models import EmbeddingRequest
             req = EmbeddingRequest(model=model_name, input="connectivity test")
             start = _time.perf_counter()
             try:
@@ -1110,7 +1101,7 @@ async def test_model(request: Request, _=Depends(verify_admin)):
             # rerank 模型发 /rerank 短文本测试（chat/completions 对重排模型必然 400）
             if protocol != "openai":
                 raise HTTPException(400, "rerank 测试仅支持 openai 兼容协议")
-            from models import RerankRequest
+            from app.core.models import RerankRequest
             req = RerankRequest(model=model_name, query="connectivity test",
                                 documents=["hello world", "gateway rerank test"])
             start = _time.perf_counter()
@@ -1286,8 +1277,8 @@ async def _fetch_clash_node(result: dict, _httpx, probe_host: str = ""):
 
 @router.get("/keys")
 async def list_keys(_=Depends(verify_admin)):
-    import database as db
-    import keyauth as ka
+    from app.core import database as db
+    from app.core import keyauth as ka
     keys = await db.list_api_keys()
     config = load_config()
     pools = config.get("pools", {})
@@ -1305,8 +1296,8 @@ async def list_keys(_=Depends(verify_admin)):
 
 @router.post("/keys")
 async def create_key(request: Request, _=Depends(verify_admin)):
-    import database as db
-    import keyauth as ka
+    from app.core import database as db
+    from app.core import keyauth as ka
     body = await request.json()
     name = (body.get("name") or "").strip()
     if not name:
@@ -1349,7 +1340,7 @@ async def create_key(request: Request, _=Depends(verify_admin)):
 
 @router.put("/keys/{key_id}")
 async def update_key(key_id: int, request: Request, _=Depends(verify_admin)):
-    import database as db
+    from app.core import database as db
     body = await request.json()
     rec0 = await db.get_api_key_by_id(key_id)
     if not rec0:
@@ -1413,7 +1404,7 @@ async def update_key(key_id: int, request: Request, _=Depends(verify_admin)):
 
 @router.delete("/keys/{key_id}")
 async def delete_key(key_id: int, _=Depends(verify_admin)):
-    import database as db
+    from app.core import database as db
     rec = await db.get_api_key_by_id(key_id)
     if not rec:
         raise HTTPException(status_code=404, detail=f"API Key #{key_id} 不存在")
@@ -1434,7 +1425,7 @@ async def delete_key(key_id: int, _=Depends(verify_admin)):
 
 @router.get("/keys/{key_id}/rotations")
 async def get_key_rotations(key_id: int, _=Depends(verify_admin)):
-    import database as db
+    from app.core import database as db
     rec = await db.get_api_key_by_id(key_id)
     if not rec:
         raise HTTPException(status_code=404, detail=f"API Key #{key_id} 不存在")
@@ -1453,7 +1444,7 @@ def _find_key_pool(config: dict, key_id: int) -> tuple[str, dict] | None:
 
 @router.get("/keys/{key_id}/pool")
 async def get_key_pool(key_id: int, _=Depends(verify_admin)):
-    import database as db
+    from app.core import database as db
     rec = await db.get_api_key_by_id(key_id)
     if not rec:
         raise HTTPException(status_code=404, detail=f"API Key #{key_id} 不存在")
@@ -1466,7 +1457,7 @@ async def get_key_pool(key_id: int, _=Depends(verify_admin)):
 
 @router.post("/keys/{key_id}/pool")
 async def create_key_pool(key_id: int, request: Request, _=Depends(verify_admin)):
-    import database as db
+    from app.core import database as db
     rec = await db.get_api_key_by_id(key_id)
     if not rec:
         raise HTTPException(status_code=404, detail=f"API Key #{key_id} 不存在")
@@ -1503,7 +1494,7 @@ async def create_key_pool(key_id: int, request: Request, _=Depends(verify_admin)
 
 @router.delete("/keys/{key_id}/pool")
 async def delete_key_pool(key_id: int, _=Depends(verify_admin)):
-    import database as db
+    from app.core import database as db
     config = load_config()
     found = _find_key_pool(config, key_id)
     if not found:
@@ -1527,7 +1518,7 @@ async def delete_key_pool(key_id: int, _=Depends(verify_admin)):
 @router.get("/keys/{key_id}/usage")
 async def key_usage_history(key_id: int, date: str = "", _=Depends(verify_admin)):
     """某 API Key 的用量历史：按 1h 粒度返回指定日期(YYYY-MM-DD，默认今天)的 24 小时用量。"""
-    import database as db
+    from app.core import database as db
     from datetime import datetime
     from zoneinfo import ZoneInfo
     rec = await db.get_api_key_by_id(key_id)
@@ -1543,7 +1534,7 @@ async def key_usage_history(key_id: int, date: str = "", _=Depends(verify_admin)
 @router.get("/keys/{key_id}/calls")
 async def key_recent_calls(key_id: int, limit: int = 50, _=Depends(verify_admin)):
     """某 API Key 最近调用记录（v2.12.6：decision_log 按 caller=Key 名过滤，供用量历史面板展示）。"""
-    import database as db
+    from app.core import database as db
     rec = await db.get_api_key_by_id(key_id)
     if not rec:
         raise HTTPException(status_code=404, detail=f"API Key #{key_id} 不存在")
@@ -1553,93 +1544,41 @@ async def key_recent_calls(key_id: int, limit: int = 50, _=Depends(verify_admin)
 
 @router.get("/headroom")
 async def headroom_get(_=Depends(verify_admin)):
-    """Headroom 选配插件当前设置（设置页读取）。available=当前解释器是否装有 headroom-ai
-    （find_spec 探测不导入；False 时开关打开也不产生压缩，自动旁路）。"""
-    return _headroom_payload()
-
-
-def _headroom_payload() -> dict:
-    import headroom_plugin
-    h = load_config().get("headroom")
-    h = h if isinstance(h, dict) else {}
-    return {"enabled": bool(h.get("enabled", False)), "mode": h.get("mode", "live"),
-            "min_tokens_to_compress": int(h.get("min_tokens_to_compress", 500)),
-            "protect_recent": int(h.get("protect_recent", 4)),
-            "timeout_seconds": int(h.get("timeout_seconds", 10)),
-            "kompress_model": str(h.get("kompress_model", "disabled")),
-            "kompress_enabled": str(h.get("kompress_model", "disabled")) != "disabled",
-            "ml_available": headroom_plugin.ml_text_available(),
-            "available": headroom_plugin.lib_available()}
+    """兼容别名：Headroom 已插件化，正式端点为 GET /admin/plugins/headroom（响应结构不变）。"""
+    from app.plugins.installed.headroom import plugin as _hp
+    return _hp.settings_payload()
 
 
 @router.post("/headroom")
 async def headroom_set(request: Request, _=Depends(verify_admin)):
-    """Headroom 插件设置保存：写 config.json headroom 节点并落盘。
-    热生效（插件每请求经 load_config 读取，save_config 已刷新缓存），无需 /admin/reload。
-    先校验后改：任一字段非法即整体拒绝，不产生半写。"""
-    body = await request.json()
-    config = load_config()
-    h = config.get("headroom")
-    h = h if isinstance(h, dict) else {}
-
-    mode = str(body.get("mode", h.get("mode", "live"))).strip().lower()
-    if mode not in ("live", "dry_run"):
-        raise HTTPException(status_code=400, detail="mode 仅支持 live / dry_run")
-
-    def _int_field(key: str, default: int, lo: int, hi: int) -> int:
-        v = body.get(key, h.get(key, default))
-        try:
-            v = int(v)
-        except (TypeError, ValueError):
-            raise HTTPException(status_code=400, detail=f"{key} 必须为整数")
-        return max(lo, min(hi, v))
-
-    h["enabled"] = bool(body.get("enabled", h.get("enabled", False)))
-    h["mode"] = mode
-    h["min_tokens_to_compress"] = _int_field("min_tokens_to_compress", 500, 0, 1_000_000)
-    h["protect_recent"] = _int_field("protect_recent", 4, 0, 10_000)
-    h["timeout_seconds"] = _int_field("timeout_seconds", 10, 1, 600)
-    # v2.13.3 纯文本压缩开关：开启=ML 模型压自然语言（已有自定义模型 id 则保留），关闭=纯规则压缩
-    import headroom_plugin
-    kompress_enabled = bool(body.get("kompress_enabled", h.get("kompress_model", "disabled") != "disabled"))
-    if kompress_enabled:
-        cur = str(h.get("kompress_model", "disabled"))
-        h["kompress_model"] = cur if cur != "disabled" else headroom_plugin.KOMPRESS_DEFAULT_MODEL
-    else:
-        h["kompress_model"] = "disabled"
-    config["headroom"] = h
-    save_config(config)
-    if kompress_enabled:
-        headroom_plugin.warm_kompress_if_enabled()   # 后台触发权重下载，不阻塞保存请求
-    return _headroom_payload()
+    """兼容别名：Headroom 已插件化，正式端点为 POST /admin/plugins/headroom（请求结构不变）。"""
+    from app.plugins.installed.headroom import plugin as _hp
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+    return _hp.save_settings(body)
 
 
 @router.get("/headroom/stats")
 async def headroom_stats_view(days: int = 7, _=Depends(verify_admin)):
-    """Headroom 选配插件节省统计（非必装）：近 N 天节省汇总/今日（北京时间）/按模型分布/最近 50 条明细，
-    顺带回传总开关状态供面板显示。dry_run 与 live 的记录都在（mode 字段区分，灰度决策数据源）。"""
-    import database as db
-    from pool import load_config
-    data = await db.get_headroom_summary(days=max(1, min(int(days or 7), 90)))
-    h = load_config().get("headroom")
-    h = h if isinstance(h, dict) else {}
-    data["enabled"] = bool(h.get("enabled", False))
-    data["mode"] = h.get("mode", "live")
-    return data
+    """兼容别名：Headroom 已插件化，正式端点为 GET /admin/plugins/headroom/stats。"""
+    from app.plugins.installed.headroom import plugin as _hp
+    return await _hp.stats_view(days)
 
 
 # ── 用户（预留：未来普通用户账号体系）──────────────────────────────────
 
 @router.get("/users")
 async def list_users(_=Depends(verify_admin)):
-    import database as db
+    from app.core import database as db
     return {"users": await db.list_users()}
 
 
 @router.post("/users")
 async def create_user(request: Request, _=Depends(verify_admin)):
     """预留接口：创建用户（当前仅管理员账号，普通用户体系待后续启用）"""
-    import database as db
+    from app.core import database as db
     body = await request.json()
     username = (body.get("username") or "").strip()
     password = str(body.get("password") or "")
@@ -1656,6 +1595,6 @@ async def create_user(request: Request, _=Depends(verify_admin)):
 
 @router.delete("/users/{user_id}")
 async def delete_user(user_id: int, _=Depends(verify_admin)):
-    import database as db
+    from app.core import database as db
     await db.delete_user(user_id)
     return {"ok": True}

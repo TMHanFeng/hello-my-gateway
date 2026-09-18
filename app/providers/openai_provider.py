@@ -5,8 +5,8 @@ import time
 import uuid
 import asyncio
 from typing import AsyncGenerator
-from models import ChatCompletionRequest, ChatCompletionResponse, UsageInfo, Choice, ChoiceMessage
-import reasoning
+from app.core.models import ChatCompletionRequest, ChatCompletionResponse, UsageInfo, Choice, ChoiceMessage
+from app.core import reasoning
 
 
 class RateLimitError(Exception):
