@@ -362,6 +362,11 @@ class HeadroomPlugin(GatewayPlugin):
         # manager 只在 is_enabled 时询问；返回自身表示可提供 compress_entry hook
         return self
 
+    async def compress_entry(self, entry, req, pool_name: str, caller: str, cache: dict):
+        # pool.py 在 active_compressor() 的返回值上调用本 hook；实现委托给模块级同名函数
+        # （无库旁路/dry_run/live 分支都在那里，类方法只做转发）
+        return await compress_entry(entry, req, pool_name, caller, cache)
+
     def get_config(self) -> dict:
         return settings_payload()
 

@@ -22,7 +22,8 @@ import httpx
 
 BASE = "http://127.0.0.1:8651"
 MOCK_PORT = 8125
-REPO = os.path.dirname(os.path.abspath(__file__))
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # 本文件在 tests/ 下，REPO 取仓库根
+sys.path.insert(0, REPO)  # 使测试进程可直接 import app.*（脚本方式运行时 sys.path[0] 是 tests/）
 USAGE = {"prompt_tokens": 100, "completion_tokens": 33, "total_tokens": 133}
 REFS = [{"title": "参考1", "url": "https://example.com/a"}, {"title": "参考2", "url": "https://example.com/b"}]
 
@@ -729,7 +730,7 @@ def main():
                   for s in steps15), [s.get("reason") for s in steps15])
 
         # ===== T16（问题31）连接池幽灵租约自愈：连续3次 PoolTimeout 重建 client =====
-        import pool as _poolmod
+        from app.gateway import pool as _poolmod  # v2.14.0 起 pool.py 归 app/gateway/
         _mp = _poolmod.ModelPool.__new__(_poolmod.ModelPool)  # 跳过 __init__，仅测自愈逻辑
         _mp.providers_cache = {}
         _e = _poolmod.ModelEntry(id="zzbt/echo-token", name="m", provider="openai",
@@ -924,7 +925,7 @@ def main():
 
         # 收尾：清理探测缓存中的 mock 条目（避免污染断点续跑缓存；zzbt 模型由 deep_clean 清理）
         try:
-            _cp = os.path.join(REPO, "reasoning_probe_cache.json")
+            _cp = os.path.join(REPO, "data", "reasoning_probe_cache.json")  # v2.14.0 起缓存归 data/
             _cache = json.load(open(_cp, encoding="utf-8"))
             for _k in [k for k in _cache if "mock-echo-probe" in _k]:
                 _cache.pop(_k, None)

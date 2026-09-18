@@ -148,7 +148,7 @@ data/ 运行时数据（gateway.db、探测缓存、dev pid），与代码隔离
 pip install -r requirements.txt
 
 # 2. 启动
-python main.py
+python -m app.main
 
 # 3. 访问
 # 管理后台:  http://127.0.0.1:8650/admin/
@@ -164,15 +164,15 @@ python main.py
 
 > 💡 **外部访问**：将 `config.json` 的 `server.host` 改为 `0.0.0.0`。Windows 防火墙会首次弹窗询问是否放行，需同意。
 >
-> 💡 **Ubuntu / Linux**：`python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt && python3 main.py`
+> 💡 **Ubuntu / Linux**：`python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt && python3 -m app.main`
 >
-> 🧪 **改动计费相关代码后**：`python test_billing_regression.py` 运行 33 断言计费回归套件（自动在 8651 起隔离实例 + mock 上游，不触碰生产端口），全绿再上线。
+> 🧪 **改动计费相关代码后**：`python tests/test_billing_regression.py` 运行 162 断言计费回归套件（自动在 8651 起隔离实例 + mock 上游，不触碰生产端口），全绿再上线。
 
 ---
 
 ### 🔁 开机自启（Windows）
 
-已内置启动器脚本：`start_gateway.ps1`（开窗显示启动进度 → 健康检查通过后自动关窗，主程序隐藏窗口后台静默运行；失败则窗口停留提示日志）与 `stop_gateway.ps1`（按 8650 端口停止）。脚本幂等：网关已在运行时直接退出，不会重复拉起。
+根目录两个直达入口：`start_gateway.cmd`（双击即启，自动选择 .venv-headroom/miniconda 解释器，已在运行则直接退出）与 `stop_gateway.cmd`（停止本仓库网关，带身份核验防止误停其他环境的 8650 实例）。静默启动逻辑在 `scripts/start_gateway.ps1`（健康检查通过后主程序隐藏窗口后台运行）与 `scripts/stop_gateway.ps1`。
 
 **方式一（推荐，当前使用）**：启动文件夹放置静默启动器（当前用户登录时自动拉起一次；只自启、不守护不保活）：
 
@@ -189,37 +189,38 @@ CreateObject("Wscript.Shell").Run "powershell.exe -NoProfile -WindowStyle Hidden
 reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v ModelGateway /t REG_SZ /d "powershell.exe -NoProfile -ExecutionPolicy Bypass -File D:\AIcoding\hello-my-gateway\scripts\start_gateway.ps1" /f
 ```
 
-手动重启：先运行 `stop_gateway.ps1`（或 taskkill 旧进程），再双击/运行 `start_gateway.ps1` 即可。
+手动重启：先双击 `stop_gateway.cmd`（或运行 scripts 下的 stop_gateway.ps1），再双击 `start_gateway.cmd` 即可。
 
 ## 📂 项目结构
 
 ```
 hello-my-gateway/
-├── main.py                   # FastAPI 入口，对外 API 路由
-├── admin.py                  # 管理后台 API（模型/供应商/池/密钥 CRUD + 拖拽 reorder + 决策查询）
-├── pool.py                   # 核心：模型池、可用性判定、择优、切换、计费
-├── models.py                 # 请求/响应 Pydantic 模型
-├── database.py               # SQLite 持久化（用量/决策/校准样本/密钥），WAL 单连接 + bulk 事务 + 统计快照
-├── keyauth.py                # 用户 API 密钥鉴权、限额、计费与轮换
-├── scheduler.py              # 每模型独立定时刷新 + DB 维护（批量裁剪 / WAL checkpoint）
-├── format_adapter.py         # Anthropic ↔ OpenAI 格式双向转换
-├── reasoning.py              # reasoning_effort 归一化与 reasoning_map 档位回落
-├── probe_reasoning.py        # 思考档位探测：实测各上游思考参数写法并缓存映射（--apply 写入配置）
-├── updater.py                # 更新服务：GitHub/Gitee 拉取更新、停旧起新、存活监控自动重启（含守护面板）
-├── logging_config.py         # 统一日志（时间戳 + 控制台 + 文件）
-├── test_billing_regression.py # 计费回归套件（50 断言，隔离实例 + mock 上游，python 直接运行）
-├── 优化改造计划.md            # 性能改造的问题清单 / 分批方案 / 验证标准（v2.11.38~43 已实施）
-├── config.json               # 全部配置：服务、模型注册、池定义
-├── requirements.txt
-├── start_gateway.ps1         # Windows 启动器（后台静默运行 + 健康检查）
-├── stop_gateway.ps1          # 按端口停止
-├── providers/
-│   ├── openai_provider.py    # OpenAI 兼容适配器（含流式、测速）
-│   └── anthropic_provider.py # Anthropic 适配器（含格式转换、流式）
+├── app/                          # 全部源码（v2.14.0 起按功能分层）
+│   ├── main.py                   # FastAPI 入口，对外 API 路由
+│   ├── core/                     # 基础设施：config/database/keyauth/models/paths/reasoning/scheduler
+│   │   └── paths.py              # 路径常量中心（运行时产物归 data/，备份归 backup/）
+│   ├── gateway/                  # 核心：pool.py 模型池调度/计费，search_sse/search_summary/web_fetch
+│   ├── admin/                    # 管理后台 API（模型/供应商/池/密钥 CRUD + 决策查询）
+│   ├── providers/                # openai / anthropic / qianfan_search 上游适配器
+│   ├── tools/                    # probe_reasoning 等内部工具
+│   └── plugins/                  # 插件中心：base/manager/routes + installed/ 下可热插拔插件
+│       └── installed/
+│           ├── switch_pool/      # 🔀 Switch 切换池（POST /{池名}?switch=local|net）
+│           └── headroom/         # 🪴 Headroom 上下文压缩（非必装，无库自动旁路）
+├── scripts/                      # 启停与工具脚本（updater / dev8651 / 静默启停 ps1）
+├── docs/                         # 全部文档
 ├── static/
-│   ├── index.html            # 传统管理后台（/admin）
-│   └── hfadmin.html          # 科技感管理面板（/hfadmin）
-└── gateway.db                # 运行时自动生成（SQLite，WAL）
+│   ├── index.html                # 传统管理后台（/admin）
+│   └── hfadmin.html              # 科技感管理面板（/hfadmin）
+├── tests/
+│   └── test_billing_regression.py # 计费回归套件（162 断言，隔离实例 + mock 上游）
+├── start_gateway.cmd             # Windows 启动入口（自动选解释器，幂等）
+├── stop_gateway.cmd              # 停止入口（身份核验，只停本仓库网关）
+├── config.json                   # 全部配置：服务、模型注册、池定义（不入库，首次运行在根目录创建）
+├── data/                         # 运行时产物：gateway.db / 探测缓存 / pid（不入库）
+├── backup/                       # 配置/数据库/前端备份归档（不入库）
+├── logs/                         # 日志（不入库）
+└── requirements.txt
 ```
 
 ---
@@ -578,7 +579,7 @@ curl -X POST http://127.0.0.1:8650/v1/chat/completions \
 规则：片段原样 merge 进上游请求体（禁止覆盖 model/messages/tools/max_tokens 等核心字段）；请求档位未配置时回落到更低档位中最近的（无更低取最低配置档）；未配置 `reasoning_map` 的模型不注入任何参数。anthropic 协议上游注入 `thinking.budget_tokens` 时若大于 max_tokens 会自动抬高（+1024）。
 
 - **思考内容回传**：非流式 OpenAI 响应统一带 `reasoning_content` 字段（MiniMax 等 `<think>` 内联的模型自动提取）；Anthropic 客户端方向自动转换为 `thinking` 块 / 流式 `thinking_delta`。流式 OpenAI→OpenAI 原样透传。
-- **自动探测**：新增模型（非 embedding/rerank）保存时自动探测思考档位——缓存命中瞬间套用，新组合后台探测完成后自动写入并热重载；embedding/rerank 模态不参与思考控制（输入框隐藏、映射自动剥离）。存量模型/批量补测用 `python probe_reasoning.py`：实测每个上游模型支持的写法与档位（结果缓存于 `reasoning_probe_cache.json`，`--report` 可按需再生成报告）；`--apply` 写入 config.json；`--filter 关键字` / `--force` / `--report` 控制范围。
+- **自动探测**：新增模型（非 embedding/rerank）保存时自动探测思考档位——缓存命中瞬间套用，新组合后台探测完成后自动写入并热重载；embedding/rerank 模态不参与思考控制（输入框隐藏、映射自动剥离）。存量模型/批量补测用 `python -m app.tools.probe_reasoning`：实测每个上游模型支持的写法与档位（结果缓存于 `data/reasoning_probe_cache.json`，`--report` 可按需再生成报告）；`--apply` 写入 config.json；`--filter 关键字` / `--force` / `--report` 控制范围。
 
 ---
 

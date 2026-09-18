@@ -1,11 +1,11 @@
 """全池模型思考参数探测：摸清每个上游模型支持的思考开关/档位写法，生成 reasoning_map 建议。
 
 用法：
-  python probe_reasoning.py                     # 探测所有未缓存模型并生成报告
-  python probe_reasoning.py --force             # 忽略缓存重新探测
-  python probe_reasoning.py --filter minimax    # 只探测 id/上游名含关键字的模型（不区分大小写）
-  python probe_reasoning.py --report            # 只根据缓存重新生成报告
-  python probe_reasoning.py --apply             # 把建议映射写入 config.json（先备份，再尝试 /admin/reload）
+  python -m app.tools.probe_reasoning           # 探测所有未缓存模型并生成报告
+  python -m app.tools.probe_reasoning --force   # 忽略缓存重新探测
+  python -m app.tools.probe_reasoning --filter minimax    # 只探测 id/上游名含关键字的模型（不区分大小写）
+  python -m app.tools.probe_reasoning --report            # 只根据缓存重新生成报告
+  python -m app.tools.probe_reasoning --apply             # 把建议映射写入 config.json（先备份，再尝试 /admin/reload）
 
 说明：
 - 直接调用各 provider 的上游接口（不经过网关），小 prompt + max_tokens 限制，少量费用。
@@ -27,10 +27,13 @@ from pathlib import Path
 
 import httpx
 
-BASE_DIR = Path(__file__).parent
-CONFIG_PATH = BASE_DIR / "config.json"
-CACHE_PATH = BASE_DIR / "reasoning_probe_cache.json"
-REPORT_PATH = BASE_DIR / "思考参数探测报告.md"
+# v2.14.0 路径收敛：配置/缓存/报告一律取 app.core.paths 常量（缓存归 data/，绝不写在代码目录旁）。
+# sys.path 引导保证本文件也能脱离 -m 以脚本方式直跑。
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from app.core.paths import CONFIG_PATH, PROJECT_ROOT, REASONING_PROBE_CACHE
+
+CACHE_PATH = REASONING_PROBE_CACHE                      # data/reasoning_probe_cache.json
+REPORT_PATH = PROJECT_ROOT / "思考参数探测报告.md"
 
 PROBE_PROMPT = "一个房间里有3支蜡烛，吹灭了2支，最后房间里还剩下几支？请简要回答。"
 OPENAI_MAX_TOKENS = 1200
