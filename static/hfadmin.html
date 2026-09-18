@@ -1896,6 +1896,7 @@ async function editModel(id) {
   const _se = document.getElementById('f-smart-estimate'); if (_se) _se.checked = !!m.smart_estimate;
   const _nso = document.getElementById('f-nso'); if (_nso) _nso.checked = !!m.no_stream_options;
   const _hr = document.getElementById('f-headroom'); if (_hr) _hr.checked = !!m.headroom;
+  hrSavedValue = !!m.headroom;   // 记住原值（停用 Headroom 插件期间保存模型不抹除该标记）
   f.max_concurrency.value = m.max_concurrency ?? 10; f.refresh_time.value = m.refresh_time || '';
   f.gift_grant_cap.value = m.gift_grant_cap || 5000000;
   f.max_tokens.value = m.max_tokens || 0; f.ttl_seconds.value = m.ttl_seconds || 0;
@@ -1926,7 +1927,7 @@ async function submitModel(e) {
   body.json_output = document.getElementById('f-json-output') ? document.getElementById('f-json-output').checked : false;
   body.smart_estimate = document.getElementById('f-smart-estimate') ? document.getElementById('f-smart-estimate').checked : false;
   body.no_stream_options = document.getElementById('f-nso') ? document.getElementById('f-nso').checked : false;
-  body.headroom = document.getElementById('f-headroom') ? (document.getElementById('f-headroom').disabled ? false : document.getElementById('f-headroom').checked) : false;
+  body.headroom = hrMasterEnabled ? (document.getElementById('f-headroom') ? document.getElementById('f-headroom').checked : false) : hrSavedValue;   // 插件停用：保留原标记，不抹除
   // 自定义参数（extra_params）已废弃：显式提交空对象，避免 PUT 合并语义保留旧值
   body.extra_params = {};
   // 思考映射：始终显式提交（空对象 = 清除），避免 PUT 时未提交键被保留旧值
@@ -2142,10 +2143,12 @@ document.querySelectorAll('.threshold-ctl').forEach(ctl => {
             <input type="checkbox" ${pool.load_balance ? 'checked' : ''} onchange="toggleLoadBalance('${esc(name).replace(/'/g, "\\'")}', this.checked)">
             <span class="track"></span><span class="sw-label">负载均衡</span>
           </label>
+          ${PC_STATE.switch_pool === false ? '' : `
           <label class="switch lb-switch" title="Switch 切换：开启后客户端可 POST /池名 + switch=local|net 定向调用池内一侧（local=令牌类型为 local 的本地模型，net=其余云端模型）；要求池内两侧都有模型">
             <input type="checkbox" ${pool.switch_enabled ? 'checked' : ''} onchange="togglePoolSwitch('${esc(name).replace(/'/g, "\\'")}', this.checked)">
             <span class="track"></span><span class="sw-label">Switch 切换</span>
           </label>
+          `}
           <div class="threshold-ctl" title="自动择优模式下，超过此延迟(ms)的模型排到末尾；0=不限">
             <span class="th-label">⏱ 阈值</span>
             <div class="th-input-wrap">
@@ -2167,7 +2170,7 @@ document.querySelectorAll('.threshold-ctl').forEach(ctl => {
       </div>
       ${pool.auto_order ? '<div class="auto-note">⚡ 自动择优已开启：先排除不可用接口（用量用尽 / RPM·TPM 触顶），再在可用接口中按调用延迟从低到高优先调用。下方显示顺序保持不变，关闭后按设定顺序调用。</div>' : ''}
       ${pool.load_balance ? '<div class="lb-note">🔄 负载均衡已开启：每次请求按池内模型顺序轮流分配（第一个→第二个→…循环往复），请求均匀分摊到每个模型/子池，避免某一个模型负载过高。关闭后按设定顺序调用。</div>' : ''}
-      ${pool.switch_enabled ? '<div class="auto-note">🔀 Switch 切换已开启：客户端可 POST <b>/{池名}</b> 并带 <b>switch=local|net</b> 定向调用一侧——local=令牌类型为 local 的本地模型，net=其余云端模型。同侧全不可用时报 503，不会跨侧调用；每次路由在调用记录里显示为 switch:local / switch:net。</div>' : ''}
+      ${(PC_STATE.switch_pool !== false && pool.switch_enabled) ? '<div class="auto-note">🔀 Switch 切换已开启：客户端可 POST <b>/{池名}</b> 并带 <b>switch=local|net</b> 定向调用一侧——local=令牌类型为 local 的本地模型，net=其余云端模型。同侧全不可用时报 503，不会跨侧调用；每次路由在调用记录里显示为 switch:local / switch:net。</div>' : ''}
       <div class="pool-items" data-pool="${esc(name)}">
         ${ids.map((id, i) => poolItemHTML(name, id, i, animItem)).join('') || '<div class="hint">该池为空，从下方添加接口或子池。</div>'}
       </div>
@@ -3391,6 +3394,7 @@ async function showHeadroomStats() {
 }
 /* Headroom 门控：总开关关闭时模型编辑里的勾选框置灰不可勾（服务端每请求仍按总开关判定，双保险） */
 let hrMasterEnabled = false;
+let hrSavedValue = false;   // 插件停用期间的原勾选值：保存时原样回传，防止抹除已保存标记
 async function refreshHeadroomGate() {
   const d = await api('/admin/headroom');
   hrMasterEnabled = !!(d && d.enabled);
@@ -3399,13 +3403,10 @@ async function refreshHeadroomGate() {
 function applyHeadroomGate() {
   const cb = document.getElementById('f-headroom');
   if (!cb) return;
-  cb.disabled = !hrMasterEnabled;
-  if (cb.disabled) cb.checked = false;
   const lb = cb.closest('.opt');
-  if (lb) {
-    lb.style.opacity = hrMasterEnabled ? '' : '.55';
-    lb.title = hrMasterEnabled ? '' : '需先在「设置」页启用 Headroom 插件总开关';
-  }
+  // 插件停用 → 选项整体隐藏（v2.14.0 插件化语义）；配置数据保留在模型上，启用后原样恢复显示
+  if (lb) lb.style.display = hrMasterEnabled ? '' : 'none';
+  if (!hrMasterEnabled) cb.checked = false;
 }
 /* Headroom 设置页：读取/保存（保存即热生效，无需 /admin/reload） */
 async function loadHeadroomSettings() {
@@ -3600,11 +3601,28 @@ refreshHeadroomGate();
 <script>
 /* ═══════════ 插件中心（v2.14.0）═══════════ */
 let PC_CACHE = [];
+/* 插件可见性状态（v2.14.0 插件化语义）：停用的插件，其在各页面的功能入口隐藏；
+   配置数据保留在 config（模型 headroom 勾选 / 池 switch_enabled），重新启用后原样恢复显示 */
+let PC_STATE = {};
+function pcApplyState() {
+  if ('headroom' in PC_STATE) { hrMasterEnabled = !!PC_STATE.headroom; if (typeof applyHeadroomGate === 'function') applyHeadroomGate(); }
+  if ('switch_pool' in PC_STATE && document.querySelector('.tab.active')?.dataset.tab === 'pools'
+      && typeof loadPools === 'function') loadPools();   // 重渲染池卡片：Switch 开关随之隐藏/恢复（启停两个方向都要）
+}
+async function refreshPluginState() {
+  const d = await api('/admin/plugins');
+  if (!d) return;
+  PC_STATE = {};
+  (d.plugins || []).forEach(p => { PC_STATE[p.id] = !!p.enabled; });
+  pcApplyState();
+}
 function pcOpen(id) { document.getElementById(id).classList.add('show'); }
 async function loadPluginCenter() {
   const d = await api('/admin/plugins');
   if (!d) return;
   PC_CACHE = d.plugins || [];
+  PC_CACHE.forEach(p => { PC_STATE[p.id] = !!p.enabled; });
+  pcApplyState();
   document.getElementById('pc-grid').innerHTML = PC_CACHE.map(pcCard).join('')
     + '<div class="pc-card pc-add" onclick="pcOpen(\'overlay-pchowto\')">➕ 添加自定义插件…'
     + '<span style="font-size:11.5px;opacity:.65">manifest.json 丢进 app/plugins/installed/ 点「扫描」即接入</span></div>';
@@ -3626,8 +3644,9 @@ async function togglePlugin(id, on) {
   const d = await api('/admin/plugins/' + id + '/' + (on ? 'enable' : 'disable'), { method: 'POST' });
   if (!d) { loadPluginCenter(); return; }
   toast((on ? '✅ 已启用 ' : '⛔ 已停用 ') + id + '（热生效，无需重启）');
+  PC_STATE[id] = !!on;
   loadPluginCenter();
-  if (id === 'headroom' && typeof refreshHeadroomGate === 'function') refreshHeadroomGate();
+  pcApplyState();
 }
 async function scanPlugins() {
   toast('正在扫描插件目录…');
@@ -3694,6 +3713,7 @@ async function savePluginConfig() {
   const d = await api('/admin/plugins/' + id + '/config', { method: 'POST', body: JSON.stringify(body) });
   if (d) { toast('已保存并热生效'); closeModal('overlay-pcset'); loadPluginCenter(); }
 }
+refreshPluginState();
 </script>
 </body>
 </html>
