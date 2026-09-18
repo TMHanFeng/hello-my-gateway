@@ -43,7 +43,7 @@ data/ 运行时数据（gateway.db、探测缓存、dev pid），与代码隔离
 - **插件中心**：面板「🧩 插件中心」页管理插件（卡片/启停开关/每插件设置），启用/停用/改配置**即时热生效**；
   自定义插件 = 在 `app/plugins/installed/` 放一个含 `manifest.json` 的文件夹 + 点「扫描新插件」，零代码即接
   （开发规范见 `docs/插件中心开发指南.md`；API：`/admin/plugins/*`）。
-- **端口纪律**：生产 8650 仅由用户本人启动；开发/测试一律用根目录 `start_dev_8651.ps1`（强制 8651 + 仅监听 127.0.0.1）。
+- **端口纪律**：生产 8650 仅由用户本人启动；开发/测试一律用 `scripts/start_dev_8651.ps1`（强制 8651 + 仅监听 127.0.0.1）。
 
 ---
 
@@ -178,7 +178,7 @@ python main.py
 
 ```bat
 :: 文件：%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\model_gateway_autostart.vbs
-CreateObject("Wscript.Shell").Run "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File ""D:\AIcoding\hello-my-gateway\start_gateway.ps1""", 0, False
+CreateObject("Wscript.Shell").Run "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File ""D:\AIcoding\hello-my-gateway\scripts\start_gateway.ps1""", 0, False
 ```
 
 删除该 .vbs 即取消自启。
@@ -186,7 +186,7 @@ CreateObject("Wscript.Shell").Run "powershell.exe -NoProfile -WindowStyle Hidden
 **方式二**：注册表 Run 键（效果等同）：
 
 ```bat
-reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v ModelGateway /t REG_SZ /d "powershell.exe -NoProfile -ExecutionPolicy Bypass -File D:\AIcoding\hello-my-gateway\start_gateway.ps1" /f
+reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v ModelGateway /t REG_SZ /d "powershell.exe -NoProfile -ExecutionPolicy Bypass -File D:\AIcoding\hello-my-gateway\scripts\start_gateway.ps1" /f
 ```
 
 手动重启：先运行 `stop_gateway.ps1`（或 taskkill 旧进程），再双击/运行 `start_gateway.ps1` 即可。

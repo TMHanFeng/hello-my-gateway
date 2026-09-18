@@ -1,7 +1,7 @@
 @echo off
 title Model Gateway DEV - port 8651 ONLY
 rem 开发/测试专用：强制 8651 端口 + 仅监听 127.0.0.1，绝不触碰 8650 生产
-cd /d "%~dp0"
+cd /d "%~dp0.."
 set "MODEL_GATEWAY_PORT=8651"
 set "MODEL_GATEWAY_HOST=127.0.0.1"
 echo ==========================================================

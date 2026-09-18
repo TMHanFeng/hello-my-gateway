@@ -3048,7 +3048,7 @@ async function loadHeadroomSettings() {
   badge.className = 'badge ' + (d.enabled ? 'b-json' : 'b-ghost');
   const av = document.getElementById('hr-avail');
   av.textContent = d.available ? '✓ 已检测到 headroom-ai 库（.venv-headroom 环境），压缩可用'
-                               : '✗ 当前运行环境未安装 headroom-ai：开关可打开，但不会产生压缩（自动旁路）。需用 start_gateway_headroom.cmd 启动';
+                               : '✗ 当前运行环境未安装 headroom-ai：开关可打开，但不会产生压缩（自动旁路）。用 start_gateway.cmd 启动即可（自动选择 .venv-headroom 环境）';
   av.style.color = d.available ? 'var(--teal)' : '#f87171';
 }
 async function saveHeadroomSettings(ev) {

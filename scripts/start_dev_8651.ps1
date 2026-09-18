@@ -4,7 +4,7 @@
 #       健康检查通过后写 data\dev8651.pid；-Foreground 则前台运行便于看日志。
 param([switch]$Foreground)
 $ErrorActionPreference = 'Stop'
-$dir = $PSScriptRoot   # 脚本在仓库根
+$dir = if (Test-Path (Join-Path $PSScriptRoot 'app')) { $PSScriptRoot } else { Split-Path -Parent $PSScriptRoot }
 $py  = 'D:\miniconda\python.exe'
 $base = 'http://127.0.0.1:8651'
 
