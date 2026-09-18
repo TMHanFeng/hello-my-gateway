@@ -1,0 +1,2 @@
+# 行尾规范：shell 脚本永远 LF（Windows 检出也不转 CRLF，否则 bash 报 '\r' 错）
+*.sh text eol=lf

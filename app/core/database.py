@@ -113,6 +113,7 @@ async def bulk():
 async def _get_conn() -> aiosqlite.Connection:
     global _conn
     if _conn is None:
+        DB_PATH.parent.mkdir(parents=True, exist_ok=True)  # 全新环境 data/ 不存在则先建（测试/工具可能早于启动调用）
         _conn = await aiosqlite.connect(str(DB_PATH))
         _conn.row_factory = aiosqlite.Row
         await _conn.execute("PRAGMA journal_mode=WAL")

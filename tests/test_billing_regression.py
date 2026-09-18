@@ -121,6 +121,7 @@ threading.Thread(target=srv.serve_forever, daemon=True).start()
 
 cfg = json.load(open(os.path.join(REPO, "config.json"), encoding="utf-8"))
 ADMIN = {"Authorization": "Bearer " + cfg["server"]["api_key"], "Content-Type": "application/json"}
+os.makedirs(os.path.join(REPO, "data"), exist_ok=True)  # 全新克隆无 data/（网关未启动过），先建再连
 DB = sqlite3.connect(os.path.join(REPO, "data", "gateway.db"))
 DB.row_factory = sqlite3.Row
 # T23：生产 search_summary.caller_key 原值（用例内临时改写，结束时/deep_clean 必须原样还原）
@@ -238,13 +239,20 @@ def deep_clean():
                 balance INTEGER DEFAULT 0,
                 last_grant_date TEXT DEFAULT '')""")
     # v2.11.40 起 request_log 表退役（RPM/TPM 内存化），不再列入清理
+    # 全新环境库中业务表尚未由 init_db 创建（网关从未启动过）：只清理已存在的表，缺表即零数据无可清理
+    _tables = {r[0] for r in DB.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     for t in ["token_usage", "model_daily_stats", "call_metrics", "gift_state"]:
-        db_exec(f"DELETE FROM {t} WHERE {q}")
-    db_exec(f"DELETE FROM decision_log WHERE selected IN ({','.join(chr(39)+i+chr(39) for i in TEST_IDS)}) OR pool_name IN ('zzall','zzbad','zzlocal','zzswitch','zzsump','zzqfws2','zzsw','zzsw2')")
-    db_exec("DELETE FROM one_time_state WHERE model_name='zzbt/echo-once'")
-    db_exec("DELETE FROM api_keys WHERE name IN ('zzkey','zzkey2','zzkey3','zzkey4')")
-    db_exec("DELETE FROM api_key_usage WHERE key_id NOT IN (SELECT id FROM api_keys)")
-    db_exec("DELETE FROM api_key_hourly_usage WHERE key_id NOT IN (SELECT id FROM api_keys)")
+        if t in _tables:
+            db_exec(f"DELETE FROM {t} WHERE {q}")
+    if "decision_log" in _tables:
+        db_exec("DELETE FROM decision_log WHERE selected IN ({}) OR pool_name IN ('zzall','zzbad','zzlocal','zzswitch','zzsump','zzqfws2','zzsw','zzsw2')".format(
+            ",".join(chr(39) + i + chr(39) for i in TEST_IDS)))
+    if "one_time_state" in _tables:
+        db_exec("DELETE FROM one_time_state WHERE model_name='zzbt/echo-once'")
+    if "api_keys" in _tables:
+        db_exec("DELETE FROM api_keys WHERE name IN ('zzkey','zzkey2','zzkey3','zzkey4')")
+        db_exec("DELETE FROM api_key_usage WHERE key_id NOT IN (SELECT id FROM api_keys)")
+        db_exec("DELETE FROM api_key_hourly_usage WHERE key_id NOT IN (SELECT id FROM api_keys)")
 
 
 def chat(model, effort=None, stream=False, content="hi", max_tokens=2000, auth=None, timeout=60):
@@ -339,13 +347,21 @@ def main():
     # 启动隔离实例
     # 端口预清理：8651 若被遗留实例占用，新进程会绑定失败，测试将静默打到旧代码
     # （教训：v2.11.19 前 T11 曾因旧实例占口一直测到旧实现）
-    _ns = subprocess.run(["netstat", "-ano"], capture_output=True).stdout.decode("utf-8", "ignore")
-    for _ln in _ns.splitlines():
-        if ":8651" in _ln and "LISTENING" in _ln.upper():
-            _pid = _ln.split()[-1]
-            subprocess.run(["taskkill", "/PID", _pid, "/F"], capture_output=True)
+    try:
+        if os.name == "nt":
+            _ns = subprocess.run(["netstat", "-ano"], capture_output=True).stdout.decode("utf-8", "ignore")
+            for _ln in _ns.splitlines():
+                if ":8651" in _ln and "LISTENING" in _ln.upper():
+                    _pid = _ln.split()[-1]
+                    subprocess.run(["taskkill", "/PID", _pid, "/F"], capture_output=True)
+        else:
+            # Linux/macOS：fuser 按端口清理（psmisc；缺失则跳过——干净环境本就无占用）
+            subprocess.run(["fuser", "-k", "8651/tcp"], capture_output=True)
+    except FileNotFoundError:
+        pass                            # 清理工具缺失不阻塞套件：干净环境端口本就空闲
     time.sleep(1)
     env = dict(os.environ, MODEL_GATEWAY_PORT="8651")
+    os.makedirs(os.path.join(REPO, "logs"), exist_ok=True)  # 全新克隆无 logs/，子进程 stdout 落盘前先建
     proc = subprocess.Popen([sys.executable, "-m", "app.main"], cwd=REPO, env=env,
                             stdout=open(os.path.join(REPO, "logs", "regression_8651.log"), "ab"),
                             stderr=subprocess.STDOUT)
@@ -1132,8 +1148,13 @@ def main():
             _set_ck(None)  # 还原生产 caller_key；共享生产库 → baidusearch 真实存在，端到端验证归属
             r = chat("zzqfws2", content="news")
             row = DB.execute("SELECT caller FROM decision_log WHERE pool_name='zzsump' ORDER BY id DESC LIMIT 1").fetchone()
-            check("T23g 生产caller_key还原后记录挂baidusearch", r.status_code == 200 and row and row["caller"] == "baidusearch",
-                  (r.status_code, dict(row) if row else None))
+            # 期望值按环境确定：CK0 对应的 Key 在库中 → 归属该 Key 名（生产库=baidusearch）；
+            # 全新库（Linux 首跑/新克隆）无此 Key → 网关按语义回退原 caller，两种都算正确
+            _ck0_name = DB.execute("SELECT name FROM api_keys WHERE secret=?", (CK0,)).fetchone() if CK0 else None
+            _t23g_expect = _ck0_name["name"] if _ck0_name else "管理员"
+            check("T23g 生产caller_key还原后记录归属正确(库有该Key归其名下/全新库回退原caller)",
+                  r.status_code == 200 and row and row["caller"] == _t23g_expect,
+                  (r.status_code, dict(row) if row else None, _t23g_expect))
 
             _set_ck("mg-ffffffffffffffffffffffffffffffff")  # 不存在的 Key → 回退原 caller，总结绝不因记账失败而炸
             r = chat("zzqfws2", content="news")

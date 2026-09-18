@@ -37,3 +37,13 @@ SNAPSHOTS_DIR = BACKUP_DIR / "snapshots"                                    # �
 
 # 插件中心：app/plugins/installed/ 下每个子目录 = 一个插件（manifest.json + plugin.py）
 PLUGINS_DIR = Path(__file__).resolve().parents[1] / "plugins" / "installed"
+
+
+def ensure_runtime_dirs() -> None:
+    """确保运行时目录存在（data/、backup/ 及其子目录、logs/）。
+
+    全新克隆的仓库这些目录均不在版本库中（.gitignore 排除），不预建则
+    SQLite 建库 / 日志落盘 / 配置备份一律失败。启动时调用一次；数据库
+    首连等入口也会防御性调用，保证任何入口先到都不会踩空目录。"""
+    for d in (DATA_DIR, LOG_DIR, BACKUP_DIR, CONFIG_BAK_DIR, DB_BAK_DIR):
+        d.mkdir(parents=True, exist_ok=True)

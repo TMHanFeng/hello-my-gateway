@@ -13,7 +13,7 @@ from app.core import database as db
 from app.core import keyauth
 from app.core import reasoning
 from app.core.scheduler import start_scheduler, sync_all_refresh_times
-from app.core.paths import STATIC_DIR
+from app.core.paths import STATIC_DIR, ensure_runtime_dirs
 from app.admin.routes import router as admin_router, GATEWAY_VERSION, GATEWAY_COMMIT, get_gateway_version
 from app.plugins.manager import plugin_center
 from app.plugins.routes import router as plugins_router
@@ -39,6 +39,7 @@ def server_bind():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    ensure_runtime_dirs()  # 全新克隆 data/ logs/ backup/ 均不在版本库，先建齐（日志/建库/配置备份依赖）
     setup_logging()
     await init_db()
     await sync_all_refresh_times()

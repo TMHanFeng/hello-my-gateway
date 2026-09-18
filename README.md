@@ -164,7 +164,7 @@ python -m app.main
 
 > 💡 **外部访问**：将 `config.json` 的 `server.host` 改为 `0.0.0.0`。Windows 防火墙会首次弹窗询问是否放行，需同意。
 >
-> 💡 **Ubuntu / Linux**：`python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt && python3 -m app.main`
+> 💡 **Ubuntu / Linux**：`python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt && python3 -m app.main`，或直接 `./start_gateway.sh`（自动选 venv/系统解释器；停止 `./stop_gateway.sh`）。代码本身跨平台：运行时目录（data/ logs/ backup/）首次启动自动创建，路径处理与日志滚动均适配 POSIX 文件系统。回归套件同样可在 Linux 运行：`python tests/test_billing_regression.py`。
 >
 > 🧪 **改动计费相关代码后**：`python tests/test_billing_regression.py` 运行 162 断言计费回归套件（自动在 8651 起隔离实例 + mock 上游，不触碰生产端口），全绿再上线。
 
@@ -216,6 +216,8 @@ hello-my-gateway/
 │   └── test_billing_regression.py # 计费回归套件（162 断言，隔离实例 + mock 上游）
 ├── start_gateway.cmd             # Windows 启动入口（自动选解释器，幂等）
 ├── stop_gateway.cmd              # 停止入口（身份核验，只停本仓库网关）
+├── start_gateway.sh              # Linux/macOS 启动入口（语义同 .cmd：选解释器 + 已运行自检）
+├── stop_gateway.sh               # Linux/macOS 停止入口（按端口定位 + cmdline 身份核验）
 ├── config.json                   # 全部配置：服务、模型注册、池定义（不入库，首次运行在根目录创建）
 ├── data/                         # 运行时产物：gateway.db / 探测缓存 / pid（不入库）
 ├── backup/                       # 配置/数据库/前端备份归档（不入库）
