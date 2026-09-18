@@ -2,7 +2,7 @@
 # 行为：开窗显示启动进度 -> 健康检查通过后本窗口自动关闭，主程序转入后台静默运行
 #       60 秒未通过健康检查则窗口停留并提示日志位置，按回车才关闭
 $ErrorActionPreference = 'Stop'
-$dir  = Split-Path -Parent $PSScriptRoot   # 仓库根（脚本相对，随仓库位置自适应）
+$dir  = $PSScriptRoot   # 脚本在仓库根，根即工作目录
 $py   = 'D:\miniconda\python.exe'
 $base = 'http://127.0.0.1:8650'
 
@@ -20,6 +20,7 @@ if (Test-Health) {
     exit 0
 }
 
+New-Item -ItemType Directory -Force -Path (Join-Path $dir 'logs') | Out-Null
 Write-Host '[Model Gateway] 正在启动...'
 $out = Join-Path $dir 'logs\gateway_stdout.log'
 $err = Join-Path $dir 'logs\gateway_stderr.log'

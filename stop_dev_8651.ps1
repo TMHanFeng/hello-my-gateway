@@ -1,6 +1,6 @@
-# 停止 8651 开发实例：只读 data\dev8651.pid 精确停止本实例，绝不触碰 8650 生产端口/进程
+﻿# 停止 8651 开发实例：只读 data\dev8651.pid 精确停止本实例，绝不触碰 8650 生产端口/进程
 $ErrorActionPreference = 'Stop'
-$dir = Split-Path -Parent $PSScriptRoot
+$dir = $PSScriptRoot
 $pidFile = Join-Path $dir 'data\dev8651.pid'
 if (-not (Test-Path $pidFile)) { Write-Host '[dev8651] 无 data\dev8651.pid，本实例未在运行'; exit 0 }
 $target = Get-Content $pidFile

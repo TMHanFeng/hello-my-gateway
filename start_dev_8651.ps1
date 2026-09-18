@@ -1,10 +1,10 @@
-# Model Gateway 开发/测试实例启动器（仅 8651 端口，绝不触碰 8650 生产）
+﻿# Model Gateway 开发/测试实例启动器（仅 8651 端口，绝不触碰 8650 生产）
 # 用法：右键"使用 PowerShell 运行"，或 .\start_dev_8651.ps1 [-Foreground]
 # 行为：强制 MODEL_GATEWAY_PORT=8651 / MODEL_GATEWAY_HOST=127.0.0.1 后台启动，
 #       健康检查通过后写 data\dev8651.pid；-Foreground 则前台运行便于看日志。
 param([switch]$Foreground)
 $ErrorActionPreference = 'Stop'
-$dir = Split-Path -Parent $PSScriptRoot   # scripts/ 的上一级 = 仓库根
+$dir = $PSScriptRoot   # 脚本在仓库根
 $py  = 'D:\miniconda\python.exe'
 $base = 'http://127.0.0.1:8651'
 
@@ -44,7 +44,7 @@ for ($i = 1; $i -le 45; $i++) {
         New-Item -ItemType Directory -Force -Path (Join-Path $dir 'data') | Out-Null
         Set-Content -Path (Join-Path $dir 'data\dev8651.pid') -Value $proc.Id
         Write-Host "[dev8651] 启动成功（PID $($proc.Id)）：$base/admin/  $base/hfadmin"
-        Write-Host '[dev8651] 停止：运行 scripts\stop_dev_8651.ps1（只停本实例，不碰 8650）'
+        Write-Host '[dev8651] 停止：运行根目录 stop_dev_8651.ps1（只停本实例，不碰 8650）'
         exit 0
     }
     Start-Sleep -Seconds 1

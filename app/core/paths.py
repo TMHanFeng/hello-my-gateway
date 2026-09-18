@@ -25,7 +25,7 @@ FRONTEND_PATH = STATIC_DIR / "index.html"       # /admin 面板（FRONTEND_ADMIN
 FRONTEND_ADMIN = FRONTEND_PATH
 FRONTEND_HFADMIN = STATIC_DIR / "hfadmin.html"  # /hfadmin 面板
 REASONING_PROBE_CACHE = DATA_DIR / "reasoning_probe_cache.json"
-DEV_PID_PATH = DATA_DIR / "dev8651.pid"         # 8651 开发实例 pid（scripts/start|stop_dev_8651.ps1）
+DEV_PID_PATH = DATA_DIR / "dev8651.pid"         # 8651 开发实例 pid（根目录 start|stop_dev_8651.ps1）
 
 # 备份统一归档（仓库根 backup/）：按类型分目录，代码写入备份一律经这里的常量
 BACKUP_DIR = PROJECT_ROOT / "backup"
