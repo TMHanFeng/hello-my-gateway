@@ -203,7 +203,8 @@ def deep_clean():
     c.get("pools", {}).pop("zzall", None)
     c.get("pools", {}).pop("zzdef", None)  # v2.11.19 曾漏清该测试池残留至生产配置
     for pn in ("zzreq", "zzonce", "zzsmart", "zznso", "zzgift", "zzrpm", "zzvalve", "zzvnl", "zzqfp", "zzqfp2",
-               "zzqfws2", "zzsump", "zzbad", "zzlocal", "zzswitch", "zzhr", "zzhrctl", "zzsw", "zzsw2"):
+               "zzqfws2", "zzsump", "zzbad", "zzlocal", "zzswitch", "zzhr", "zzhrctl", "zzsw", "zzsw2",
+               "zzswsubl", "zzswsubn", "zzswnest", "zzswnestn"):
         c.get("pools", {}).pop(pn, None)
     # T23：还原 search_summary 专门 Key 与抓取开关为生产原值（用例中途崩溃时兜底）
     ss = c.get("search_summary")
@@ -245,7 +246,7 @@ def deep_clean():
         if t in _tables:
             db_exec(f"DELETE FROM {t} WHERE {q}")
     if "decision_log" in _tables:
-        db_exec("DELETE FROM decision_log WHERE selected IN ({}) OR pool_name IN ('zzall','zzbad','zzlocal','zzswitch','zzsump','zzqfws2','zzsw','zzsw2')".format(
+        db_exec("DELETE FROM decision_log WHERE selected IN ({}) OR pool_name IN ('zzall','zzbad','zzlocal','zzswitch','zzsump','zzqfws2','zzsw','zzsw2','zzswsubl','zzswsubn','zzswnest','zzswnestn')".format(
             ",".join(chr(39) + i + chr(39) for i in TEST_IDS)))
     if "one_time_state" in _tables:
         db_exec("DELETE FROM one_time_state WHERE model_name='zzbt/echo-once'")
@@ -340,6 +341,11 @@ def main():
     # T24 Switch 切换池：switch_enabled 直接写 config（管理端校验在 l 组单独验证）
     c["pools"]["zzsw"] = {"model_ids": ["zzbt/sw-local", "zzbt/sw-net"], "strategy": "sequential", "switch_enabled": True}
     c["pools"]["zzsw2"] = {"model_ids": ["zzbt/sw-local2", "zzbt/sw-net"], "strategy": "sequential", "switch_enabled": True}
+    # T24n 子池穿透：default 拓扑——池内只有 pool: 子池引用（一侧纯本地、一侧纯云端），switch 跨子池选侧
+    c["pools"]["zzswsubl"] = {"model_ids": ["zzbt/sw-local"], "strategy": "sequential"}
+    c["pools"]["zzswsubn"] = {"model_ids": ["zzbt/sw-net"], "strategy": "sequential"}
+    c["pools"]["zzswnest"] = {"model_ids": ["pool:zzswsubl", "pool:zzswsubn"], "strategy": "sequential", "switch_enabled": True}
+    c["pools"]["zzswnestn"] = {"model_ids": ["pool:zzswsubn"], "strategy": "sequential", "switch_enabled": True}
     c["pools"]["zzhr"] = {"model_ids": ["zzbt/echo-hr"], "strategy": "sequential"}
     c["pools"]["zzhrctl"] = {"model_ids": ["zzbt/echo-token"], "strategy": "sequential"}  # T22 未勾选对照
     json.dump(c, open(os.path.join(REPO, "config.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=2)
@@ -1251,6 +1257,33 @@ def main():
         pa = open(os.path.join(REPO, "static", "index.html"), encoding="utf-8").read()
         check("T24m 双面板Switch控件在位", all(k in ph for k in ("togglePoolSwitch", "switch_enabled"))
               and all(k in pa for k in ("togglePoolSwitch", "switch_enabled")), None)
+        # n) v2.14.1 子池穿透：池内只有 pool: 子池引用（default 拓扑）时 switch 跨子池按侧选择，
+        #    且决策步骤不再误报 switch_no_match（旧实现只数直挂模型，纯子池池每次都误记一条）
+        n_loc4, n_net4 = up_count("mock-sw-local"), up_count("mock-sw-net")
+        r = sw_chat("zzswnest", switch="local")
+        check("T24n1 子池穿透local命中本地子池", r.status_code == 200
+              and up_count("mock-sw-local") == n_loc4 + 1 and up_count("mock-sw-net") == n_net4,
+              (r.status_code, r.text[:120]))
+        r = sw_chat("zzswnest", switch="net", via="body")
+        check("T24n2 子池穿透net跳过本地子池", r.status_code == 200
+              and up_count("mock-sw-net") == n_net4 + 1 and up_count("mock-sw-local") == n_loc4 + 1,
+              (r.status_code, r.text[:120]))
+        rn = httpx.get(f"{BASE}/admin/decisions", params={"pool": "zzswnest", "limit": 10}, headers=ADMIN, timeout=15)
+        nest_dec = rn.json().get("decisions", [])
+        nest_steps = [s for d in nest_dec for s in (d.get("steps") or [])]
+        check("T24n3 成功调用无误报switch_no_match",
+              rn.status_code == 200 and len(nest_dec) >= 2
+              and all(s.get("reason") != "switch_no_match" for s in nest_steps),
+              [s.get("reason") for s in nest_steps])
+        r = sw_chat("zzswnestn", switch="local")
+        check("T24n4 整树无该侧仍明确报无候选", r.status_code == 503 and "Switch 切换无候选" in r.text,
+              (r.status_code, r.text[:150]))
+        r = httpx.post(f"{BASE}/zzswnest?switch=local", headers=ADMIN,
+                       json={"response_format": {"type": "json_object"},
+                             "messages": [{"role": "user", "content": "hi"}]}, timeout=60)
+        check("T24n5 该侧存在但不可用不误报无候选",
+              r.status_code == 503 and "JSON" in r.text and "Switch 切换无候选" not in r.text,
+              (r.status_code, r.text[:200]))
 
     finally:
         try:

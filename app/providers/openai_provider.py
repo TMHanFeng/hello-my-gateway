@@ -24,6 +24,10 @@ class OpenAIProvider:
             # keepalive_expiry：httpx 默认 5s 即关空闲连接，低频调用每次重新 TCP+TLS 握手；
             # 放宽到 300s 复用长连接
             limits=httpx.Limits(max_connections=100, max_keepalive_connections=20, keepalive_expiry=300),
+            # v2.14.1 禁用环境代理拾取：trust_env 默认 True 时 httpx 经 urllib.getproxies() 在
+            # Windows 上连注册表系统代理都会捡起，且不理会 ProxyOverride 绕过名单（只认 NO_PROXY
+            # 环境变量）——本机 Clash 开关即可静默劫持/断连全部上游。代理只认显式 proxy_url
+            trust_env=False,
         )
         if proxy_url:
             kwargs["proxy"] = proxy_url

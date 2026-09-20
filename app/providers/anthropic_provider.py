@@ -19,6 +19,8 @@ class AnthropicProvider:
             # keepalive_expiry：httpx 默认 5s 即关空闲连接，低频调用每次重新 TCP+TLS 握手；
             # 放宽到 300s 复用长连接
             limits=httpx.Limits(max_connections=100, max_keepalive_connections=20, keepalive_expiry=300),
+            # v2.14.1 与 OpenAIProvider 同理：禁用环境/注册表代理拾取，只认显式 proxy_url
+            trust_env=False,
         )
         if proxy_url:
             kwargs["proxy"] = proxy_url

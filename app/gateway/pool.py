@@ -770,7 +770,8 @@ class ModelPool:
     async def _select_from_pool(self, pool_name: str, estimated_tokens: int = 0, exclude: set | None = None,
                                 has_images: bool = False, visiting: set | None = None,
                                 required_modality: str | None = None, required_json_output: bool = False,
-                                est_input: int = 0, switch_role: str = ""):
+                                est_input: int = 0, switch_role: str = "",
+                                switch_seen: set | None = None):
         exclude = exclude or set()
         visiting = visiting or set()
         if pool_name in visiting:
@@ -803,6 +804,13 @@ class ModelPool:
         units = []
         broken_refs = []
         switch_matched = 0
+        # v2.14.1 Switch 子池穿透：switch_seen 在整棵选择树中共享（根池创建、递归下传），
+        # 凡通过侧别过滤的模型（含 pool: 子池内的）都计入；「整树无该侧候选」只能在遍历
+        # 结束后由根池汇总判定——此前只数根池直挂模型，纯子池结构的池（如 default 挂
+        # 两个子池）每次切换调用都会误记 switch_no_match（成功也记，失败还盖掉真实原因）
+        switch_root = bool(switch_role) and switch_seen is None
+        if switch_root:
+            switch_seen = set()
         for raw in meta.get("model_ids", []):
             if raw.startswith("pool:"):
                 if raw[5:] in self.pools:
@@ -816,6 +824,8 @@ class ModelPool:
                 if switch_role and (entry.token_type == "local") != (switch_role == "local"):
                     continue
                 switch_matched += 1
+                if switch_seen is not None:
+                    switch_seen.add(entry.id)
                 units.append(("model", entry))
             else:
                 broken_refs.append(raw)
@@ -831,10 +841,6 @@ class ModelPool:
                 self.round_robin[pool_name] = (idx + 1) % len(units)
 
         steps = []
-        # v2.13.3 Switch：该池没有对应侧的候选时显式记录（failure_detail 据此给出明确指引而非笼统不可用）
-        if switch_role and switch_matched == 0:
-            steps.append({"model": f"switch:{switch_role}", "reason": "switch_no_match",
-                          "detail": {"hint": "池内没有该侧模型（local=token_type 为 local 的本地模型，net=其余云端模型）"}})
         # 引用失效显式记录：不再静默跳过（此前断裂引用会让 json 判定/选模无声失败）
         for ref in broken_refs:
             steps.append({"model": ref, "reason": "ref_not_found",
@@ -862,12 +868,18 @@ class ModelPool:
                 sub_entry, sub_steps = await self._select_from_pool(
                     val, estimated_tokens, exclude, has_images, visiting,
                     required_modality=required_modality, required_json_output=required_json_output,
-                    est_input=est_input, switch_role=switch_role,
+                    est_input=est_input, switch_role=switch_role, switch_seen=switch_seen,
                 )
                 steps.extend(sub_steps)
                 if sub_entry is not None:
                     return sub_entry, steps
                 steps.append({"model": f"pool:{val}", "reason": "pool_exhausted"})
+        # v2.14.1 Switch：遍历结束后由根池汇总判定——整棵子树（含 pool: 子池递归）都不存在该侧
+        # 候选时才记 switch_no_match（failure_detail 据此给出明确指引）；子树里该侧只是暂时
+        # 不可用（冷却/限流/模态不符等）时不记，503 归因走通用「所有候选均不可用」而非误导性补齐指引
+        if switch_root and switch_matched == 0 and not switch_seen:
+            steps.append({"model": f"switch:{switch_role}", "reason": "switch_no_match",
+                          "detail": {"hint": "池内没有该侧模型（local=token_type 为 local 的本地模型，net=其余云端模型）"}})
         return None, steps
 
     async def select_model(self, pool_name: str, requested_model: str | None = None, estimated_tokens: int = 0,
@@ -1089,6 +1101,10 @@ class ModelPool:
         usage_detail = {"prompt_tokens": None, "completion_tokens": None}
         billed = False          # 问题24：防重复计费——usage 到达即记一次；finally 仅补记未计过的流
         estimated = 0           # 校准样本的 est_effective，兼作告警上下文，不参与计费口径
+        # v2.14.1 流以异常收场（上游 5xx/网络/客户端中断）的标记：finally 的「缺失usage 补记 0 tok +
+        # 决策日志」不再执行——异常 unwind 会先跑 finally，原实现把失败尝试记成 ✓ 0 tok 假成功，
+        # 且给死模型虚增调用次数；失败请求的 ✕ 记录由 fallback 层（selected=None）统一写入
+        stream_failed = False
         try:
             try:
                 estimated = self._estimate_effective(entry, req) if req is not None else 0
@@ -1123,6 +1139,9 @@ class ModelPool:
                         except Exception:
                             pass
                 yield chunk
+        except BaseException:
+            stream_failed = True
+            raise
         finally:
             self._record_latency(entry, (time.perf_counter() - t0) * 1000)
             latency_ms = round((time.perf_counter() - t0) * 1000, 1)
@@ -1140,7 +1159,7 @@ class ModelPool:
                             f"(模型={entry.id}, tokens={captured})"
                         )
                         raise  # 异常传出 with 触发整组回滚（与原行为一致：后续写一并跳过）
-                elif captured == 0:
+                elif captured == 0 and not stream_failed:
                     # 问题24：上游全程未返回 usage——绝不静默丢，至少记调用次数并告警
                     logger.warning(f"[流式缺失usage] 流式请求未返回 usage，未计 token，需核查 (模型={entry.id}, 估算={estimated}tok)")
                     try:
@@ -1158,7 +1177,7 @@ class ModelPool:
                         self._update_metrics_ema(entry, captured, latency_ms, usage_detail.get("completion_tokens"))
                     except Exception:
                         logger.debug(f"[call_metrics] 流式样本写入失败 model={entry.id}", exc_info=True)
-                if decision_ctx:
+                if decision_ctx and not stream_failed:
                     # v2.10.8 决策日志后置：流结束时一次性写入（含 final actual_tokens），计费不依赖本记录
                     try:
                         await db.log_decision(decision_ctx["pool"], decision_ctx["requested"], entry.id,
