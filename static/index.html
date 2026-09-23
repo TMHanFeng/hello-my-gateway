@@ -771,8 +771,8 @@ body {
     <h3 id="modal-title">添加模型</h3>
     <form id="mform" onsubmit="submitModel(event)">
       <div class="f2">
-        <div class="fg"><label>模型 ID（唯一标识，<span style="color:var(--amber)">编辑时不可修改</span>）</label><input name="id" id="f-model-id" required placeholder="openai/gpt-4o"></div>
-        <div class="fg"><label>模型名称</label><input name="name" id="f-model-name" required placeholder="gpt-4o"></div>
+        <div class="fg"><label>模型 ID（网关唯一标识符，<span style="color:var(--amber)">编辑时不可修改</span>）</label><input name="id" id="f-model-id" required placeholder="openai/gpt-4o"></div>
+        <div class="fg"><label>模型实际调用名称</label><input name="name" id="f-model-name" required placeholder="gpt-4o"></div>
       </div>
       <div class="fg"><label>所属供应商（共享其 Base URL 与 API Key）</label>
         <select name="provider_id" id="f-provider-id" onchange="onProviderSelect()">
@@ -2732,7 +2732,8 @@ async function testConnectivity() {
     if (!result) return;
     const r = result.result;
     if (r.status === 'ok') {
-      toast(`✓ 连通 延迟 ${r.latency_ms}ms · ${r.tps}t/s · ${r.tokens}tokens`);
+      // tps/tokens 守卫：部分模态/上游可能不回报（如 embeddings 无 usage 时后端给 0，历史版本缺字段为 undefined）
+      toast(`✓ 连通 延迟 ${r.latency_ms}ms${r.tps != null ? ` · ${r.tps}t/s` : ''}${r.tokens != null ? ` · ${r.tokens} tokens` : ''}`);
     } else if (r.status === 'rate_limited') {
       toast(`⚠ 连通但被限流 延迟 ${r.latency_ms}ms`, true);
     } else {

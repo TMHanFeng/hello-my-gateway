@@ -322,6 +322,19 @@ async def init_db():
                 PRIMARY KEY (model_name, date)
             )
         """)
+        # 缓存计费统计（模型勾选 cost_enabled 才写）：按小时桶聚合缓存命中/未命中/输出 token。
+        # 小时粒度是高峰期分段计价的最小单位——价格改动后可对历史桶任意窗口重算，不在写入时冻结价格。
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS model_cache_stats (
+                model_name TEXT NOT NULL,
+                hour_key TEXT NOT NULL,
+                calls INTEGER DEFAULT 0,
+                hit_tokens INTEGER DEFAULT 0,
+                miss_tokens INTEGER DEFAULT 0,
+                out_tokens INTEGER DEFAULT 0,
+                PRIMARY KEY (model_name, hour_key)
+            )
+        """)
         await db.commit()
 
 
@@ -729,6 +742,58 @@ async def get_model_daily_stats(model_name: str, date_str: str | None = None) ->
     if not row:
         return {"request_count": 0, "total_tokens": 0}
     return {"request_count": row[0], "total_tokens": row[1]}
+
+
+# ── 缓存计费统计（model_cache_stats，模型勾选 cost_enabled 才写）────────────
+
+def _bj_hour_key() -> str:
+    """当前小时桶 'YYYY-MM-DD HH'（北京时间），与 _bj_today 同口径。"""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    return datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m-%d %H")
+
+
+async def add_cache_usage(model_name: str, hit_tokens: int, miss_tokens: int, out_tokens: int):
+    """记一次调用的缓存命中/未命中/输出 token 到当前小时桶（UPSERT 累加）。"""
+    async with _maybe_lock():
+        db = await _get_conn()
+        await db.execute(
+            """INSERT INTO model_cache_stats (model_name, hour_key, calls, hit_tokens, miss_tokens, out_tokens)
+               VALUES (?, ?, 1, ?, ?, ?)
+               ON CONFLICT(model_name, hour_key) DO UPDATE SET
+                   calls = calls + 1,
+                   hit_tokens = hit_tokens + excluded.hit_tokens,
+                   miss_tokens = miss_tokens + excluded.miss_tokens,
+                   out_tokens = out_tokens + excluded.out_tokens""",
+            (model_name, _bj_hour_key(), int(hit_tokens), int(miss_tokens), int(out_tokens)),
+        )
+        await _commit(db)
+
+
+async def get_cache_stats(model_name: str, hours: int = 24 * 30) -> list[dict]:
+    """取该模型最近 hours 小时的小时桶聚合（升序），供费用预估按任意高峰窗口分段计算。"""
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+    cutoff = (datetime.now(ZoneInfo("Asia/Shanghai")) - timedelta(hours=hours)).strftime("%Y-%m-%d %H")
+    async with _maybe_lock():
+        db = await _get_conn()
+        rows = await (await db.execute(
+            "SELECT hour_key, calls, hit_tokens, miss_tokens, out_tokens FROM model_cache_stats "
+            "WHERE model_name = ? AND hour_key >= ? ORDER BY hour_key",
+            (model_name, cutoff),
+        )).fetchall()
+    return [{"hour_key": r[0], "calls": r[1], "hit_tokens": r[2], "miss_tokens": r[3], "out_tokens": r[4]} for r in rows]
+
+
+async def trim_cache_stats(keep_days: int = 365):
+    """裁剪缓存计费统计至最近 keep_days 天（db_maintenance 低频调用；量级 24 行/天/模型，兜底有界性）。"""
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+    cutoff = (datetime.now(ZoneInfo("Asia/Shanghai")) - timedelta(days=keep_days)).strftime("%Y-%m-%d %H")
+    async with _maybe_lock():
+        db = await _get_conn()
+        await db.execute("DELETE FROM model_cache_stats WHERE hour_key < ?", (cutoff,))
+        await _commit(db)
 
 
 async def init_one_time(model_name: str):

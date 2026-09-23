@@ -237,6 +237,8 @@ main { max-width: 1240px; margin: 0 auto; padding: 40px 24px 90px; }
 .b-embedding { background: rgba(175, 82, 222, 0.12); color: #7d26a8; }
 .b-rerank { background: rgba(255, 55, 95, 0.1); color: #c81e58; }
 .b-json { background: rgba(88, 86, 214, 0.12); color: #4646c6; }
+.b-cost { background: rgba(255, 176, 32, 0.16); color: #9a6700; border: none; cursor: pointer; font-family: inherit; }
+.b-cost:hover { background: rgba(255, 176, 32, 0.3); }
 
 /* 开关（iOS 拨动） */
 .switch { display: inline-flex; align-items: center; gap: 7px; cursor: pointer; font-size: 12.5px; color: var(--muted); user-select: none; }
@@ -989,9 +991,9 @@ select { max-width: 100%; }
   <div class="modal">
     <h3 id="model-modal-title">添加模型</h3>
     <form id="mform" onsubmit="submitModel(event)">
-      <div class="fg"><label>模型 ID（唯一标识，编辑时不可修改）</label><input name="id" id="f-model-id" required placeholder="openai/gpt-4o"></div>
+      <div class="fg"><label>模型 ID（网关唯一标识符，编辑时不可修改）</label><input name="id" id="f-model-id" required placeholder="openai/gpt-4o"></div>
       <div class="f2">
-        <div class="fg"><label>模型名称</label><input name="name" id="f-model-name" required placeholder="gpt-4o"></div>
+        <div class="fg"><label>模型实际调用名称</label><input name="name" id="f-model-name" required placeholder="gpt-4o"></div>
         <div class="fg"><label>所属供应商（选此项则继承连接信息）</label><select name="provider_id" id="f-provider-id" onchange="onProviderSelect()"><option value="">— 独立模型（内联填写）—</option></select></div>
       </div>
       <div id="inline-conn">
@@ -1060,6 +1062,7 @@ select { max-width: 100%; }
         <label class="opt"><input type="checkbox" name="smart_estimate" id="f-smart-estimate" onchange="onSmartToggle()"><span><b>智能估算超时</b>按 token 量动态计算总超时，忽略手动秒数</span></label>
         <label class="opt"><input type="checkbox" name="no_stream_options" id="f-nso"><span><b>不发 stream_options</b>本地 vllm 等不认时勾选，该流将无 usage 统计</span></label>
         <label class="opt"><input type="checkbox" name="headroom" id="f-headroom"><span><b>Headroom 上下文压缩</b>实验性选配：该模型接单时自动压缩出站大块工具输出省 token（服务端需装 headroom-ai，未装自动旁路）</span></label>
+        <label class="opt"><input type="checkbox" name="cost_enabled" id="f-cost-enabled"><span><b>缓存 Token 计费统计</b>记录该模型调用的缓存命中 / 未命中 / 输出 token，用量统计卡片出现「预估费用」入口，可自定义三者价格与高峰期时段</span></label>
       </div>
       <div id="smart-live" class="hidden" style="font-size:12px;color:var(--muted);margin-bottom:13px;line-height:1.6"></div>
       <div class="fg" id="reasoning-map-fg"><label>思考映射 reasoning_map（JSON，可选）：统一档位 off/minimal/low/medium/high/max → 透传上游的请求体片段；留空 = 不注入（embedding/rerank 模型不适用）</label><textarea name="reasoning_map" rows="5" placeholder='{"off": {"thinking": {"type": "disabled"}}, "medium": {"thinking": {"type": "enabled"}}, "max": {"thinking": {"type": "enabled"}}}'></textarea><div id="reasoning-probe-strip" style="margin-top:6px"></div></div>
@@ -1212,6 +1215,40 @@ select { max-width: 100%; }
     <div id="hr-recent"></div>
     <div class="modal-actions">
       <button type="button" class="btn btn-ghost" onclick="closeModal('overlay-hrstats')">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- ════════ 模态：缓存计费预估（cost_enabled 模型） ════════ -->
+<div class="overlay" id="overlay-cost">
+  <div class="modal" style="width:min(760px,100%)">
+    <h3>💰 缓存计费预估 <span class="badge b-cost" id="cost-model-badge" style="max-width:340px;overflow:hidden;text-overflow:ellipsis"></span></h3>
+    <div class="hint" style="margin-bottom:10px">该模型按小时桶统计的<b>缓存命中 / 未命中 / 输出</b> token（在模型编辑勾选「缓存 Token 计费统计」后开始记录）。价格单位 ¥/百万 token，改动即时对所选时段重算；上游未回报缓存命中时按命中 0 计。</div>
+    <div class="seg" id="cost-range-seg">
+      <button class="active" data-r="1" onclick="setCostRange(1, this)">今日</button>
+      <button data-r="7" onclick="setCostRange(7, this)">近 7 天</button>
+      <button data-r="30" onclick="setCostRange(30, this)">近 30 天</button>
+    </div>
+    <div id="cost-summary" style="margin:12px 0 4px"></div>
+    <div class="form-sec">价格（¥ / 百万 token）</div>
+    <div class="f3">
+      <div class="fg"><label>缓存命中 单价</label><input type="number" id="cost-p-hit" step="0.01" min="0" oninput="recalcCost()"></div>
+      <div class="fg"><label>缓存未命中 单价</label><input type="number" id="cost-p-miss" step="0.01" min="0" oninput="recalcCost()"></div>
+      <div class="fg"><label>输出 单价</label><input type="number" id="cost-p-out" step="0.01" min="0" oninput="recalcCost()"></div>
+    </div>
+    <label class="opt" style="margin:4px 0 10px"><input type="checkbox" id="cost-peak-on" onchange="togglePeakFields();recalcCost()"><span><b>高峰期分段计价</b>勾选后高峰时段内的用量按高峰单价计算（按小时桶归属；支持多段与跨零点）</span></label>
+    <div id="cost-peak-fields" class="hidden">
+      <div class="fg"><label>高峰时段（多段用分号分隔，北京时间）</label><input id="cost-peak-windows" placeholder="如 9:00-12:00;14:00-18:00（段内起≥止视为跨零点，如 21:00-6:00）" oninput="recalcCost()"><div class="hint">自适应解析：段间 <b>; ； , ，</b> 均可；区间符 <b>- — ~ ～ 至 到</b> 均可；时间 <b>9:00 / 09:00 / 9:30</b> 均可；无法解析的段自动忽略</div></div>
+      <div class="f3">
+        <div class="fg"><label>高峰·缓存命中 单价</label><input type="number" id="cost-peak-hit" step="0.01" min="0" oninput="recalcCost()"></div>
+        <div class="fg"><label>高峰·缓存未命中 单价</label><input type="number" id="cost-peak-miss" step="0.01" min="0" oninput="recalcCost()"></div>
+        <div class="fg"><label>高峰·输出 单价</label><input type="number" id="cost-peak-out" step="0.01" min="0" oninput="recalcCost()"></div>
+      </div>
+    </div>
+    <div id="cost-breakdown"></div>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-ghost" onclick="closeModal('overlay-cost')">关闭</button>
+      <button type="button" class="btn btn-amber" onclick="saveCostPrices()">保存价格</button>
     </div>
   </div>
 </div>
@@ -1537,7 +1574,8 @@ async function testConnectivity() {
     if (!result) return;
     const r = result.result;
     if (r.status === 'ok') {
-      toast(`✓ 连通 延迟 ${r.latency_ms}ms · ${r.tps}t/s · ${r.tokens}tokens`);
+      // tps/tokens 守卫：部分模态/上游可能不回报（如 embeddings 无 usage 时后端给 0，历史版本缺字段为 undefined）
+      toast(`✓ 连通 延迟 ${r.latency_ms}ms${r.tps != null ? ` · ${r.tps}t/s` : ''}${r.tokens != null ? ` · ${r.tokens} tokens` : ''}`);
     } else if (r.status === 'rate_limited') {
       toast(`⚠ 连通但被限流 延迟 ${r.latency_ms}ms`, true);
     } else {
@@ -1896,6 +1934,7 @@ async function editModel(id) {
   const _se = document.getElementById('f-smart-estimate'); if (_se) _se.checked = !!m.smart_estimate;
   const _nso = document.getElementById('f-nso'); if (_nso) _nso.checked = !!m.no_stream_options;
   const _hr = document.getElementById('f-headroom'); if (_hr) _hr.checked = !!m.headroom;
+  const _ce = document.getElementById('f-cost-enabled'); if (_ce) _ce.checked = !!m.cost_enabled;
   hrSavedValue = !!m.headroom;   // 记住原值（停用 Headroom 插件期间保存模型不抹除该标记）
   f.max_concurrency.value = m.max_concurrency ?? 10; f.refresh_time.value = m.refresh_time || '';
   f.gift_grant_cap.value = m.gift_grant_cap || 5000000;
@@ -1927,6 +1966,7 @@ async function submitModel(e) {
   body.json_output = document.getElementById('f-json-output') ? document.getElementById('f-json-output').checked : false;
   body.smart_estimate = document.getElementById('f-smart-estimate') ? document.getElementById('f-smart-estimate').checked : false;
   body.no_stream_options = document.getElementById('f-nso') ? document.getElementById('f-nso').checked : false;
+  body.cost_enabled = document.getElementById('f-cost-enabled') ? document.getElementById('f-cost-enabled').checked : false;
   body.headroom = hrMasterEnabled ? (document.getElementById('f-headroom') ? document.getElementById('f-headroom').checked : false) : hrSavedValue;   // 插件停用：保留原标记，不抹除
   // 自定义参数（extra_params）已废弃：显式提交空对象，避免 PUT 合并语义保留旧值
   body.extra_params = {};
@@ -2667,6 +2707,10 @@ async function loadStats() {
       : windowModel ? `<span class="badge b-5h" title="每日 ${m.refresh_time} 刷新窗口">${m.refresh_time}窗口</span>`
       : '<span class="badge b-ghost">每日</span>';
     const freeBadge = m.is_free ? '<span class="badge b-free">免费</span>' : '<span class="badge b-paid">付费</span>';
+    // 缓存计费预估入口：仅勾选了 cost_enabled 的模型显示（点击打开费用弹窗，价格/高峰期在其内配置）
+    const costBtn = m.cost_enabled
+      ? '<button type="button" class="badge b-cost" data-mid="' + esc(m.id) + '" onclick="showCostEst(this.dataset.mid)" title="缓存命中/未命中/输出 token 明细与费用预估">💰 预估费用</button>'
+      : '';
     let refresh = m.token_type === 'one_time' ? '不刷新'
       : m.token_type === 'rolling_5h' ? '5h窗口 · 剩 ' + fmtDur(m.window_remaining_sec)
       : isGift ? (giftPosted
@@ -2678,7 +2722,7 @@ async function loadStats() {
     if (windowModel && !isGift && isBilling && (m.today_tokens || 0) > 0) {
       refresh += ` · 自然日 ${(m.today_tokens || 0).toLocaleString()} tok`;
     }
-    return { m, used, limit, unit, numsTitle, limitText, pct, cls, pctText, billing, typeBadge, freeBadge, refresh, _used: used, _limit: limit, _wused: wUsed, _valve: valve, mark, limitNote, loadText };
+    return { m, used, limit, unit, numsTitle, limitText, pct, cls, pctText, billing, typeBadge, freeBadge, costBtn, refresh, _used: used, _limit: limit, _wused: wUsed, _valve: valve, mark, limitNote, loadText };
   }).sort((a, b) => {
     // 剩余百分比越少越靠前（按有效上限 k×limit 口径，安全阀收得越紧越靠前）；
     // 不限量（未设限额）固定在最后；k=0（停用）剩余为 0 排最前
@@ -2706,7 +2750,7 @@ function statCardHTML(x, i) {
           <div class="stat-id">${esc(x.m.id)}</div>
           <div class="stat-name">${esc(x.m.name)} · ${x.billing}</div>
         </div>
-        <div class="stat-badges">${x.freeBadge}${x.typeBadge}</div>
+        <div class="stat-badges">${x.freeBadge}${x.typeBadge}${x.costBtn}</div>
       </div>
       <div class="stat-nums" title="${x.numsTitle}">
         <span class="stat-used">${x.used.toLocaleString()}</span>
@@ -2752,7 +2796,7 @@ function statRender(grid, items) {
       setStatTxt(el, '.stat-id', x.m.id);
       setStatTxt(el, '.stat-name', x.m.name + ' · ' + x.billing);
       const bd = el.querySelector('.stat-badges');
-      if (bd && bd.innerHTML !== x.freeBadge + x.typeBadge) bd.innerHTML = x.freeBadge + x.typeBadge;
+      if (bd && bd.innerHTML !== x.freeBadge + x.typeBadge + x.costBtn) bd.innerHTML = x.freeBadge + x.typeBadge + x.costBtn;
       setStatTxt(el, '.stat-used', x.used.toLocaleString());
       setStatTxt(el, '.stat-limit', x.limitText);
       setStatTxt(el, '.stat-unit', x.unit);
@@ -3391,6 +3435,143 @@ async function showHeadroomStats() {
     }).join('') +
     '</tbody></table></div>' : '';
   document.getElementById('overlay-hrstats').classList.add('show');
+}
+/* ═══════════ 缓存计费预估（模型勾选「缓存 Token 计费统计」后启用） ═══════════ */
+let costEstId = null;      // 当前弹窗的模型 ID
+let costHours = [];        // /admin/model/{id}/cost 返回的小时桶（最多近 30 天）
+let costRange = 1;         // 汇总窗口：1/7/30 天（前端本地过滤，不重复拉取）
+function _bjDateStr(offsetDays = 0) {
+  // 北京时间 YYYY-MM-DD（sv-SE locale 恰好输出 ISO 日期格式）
+  const d = new Date(Date.now() + offsetDays * 86400000);
+  return new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai' }).format(d);
+}
+function _costNum(id) { const v = parseFloat(document.getElementById(id).value); return Number.isFinite(v) ? Math.max(0, v) : 0; }
+function _hhmm(v, fallback) { const s = (v || '').trim(); return /^\d{1,2}:\d{2}$/.test(s) ? s.padStart(5, '0') : fallback; }
+/* 高峰时段自适应解析：段间 ; ； , ， 换行；区间符 - — － ~ ～ → 至 到；时间 9:00/09:00/9:30。
+   返回 [[起分钟, 止分钟], ...]（起≥止 = 跨零点段）；无法解析的段忽略 */
+function _parsePeakWindows(str) {
+  const out = [];
+  String(str || '').split(/[;；,，\n]+/).forEach(seg => {
+    const m = seg.trim().match(/^(\d{1,2})(?::(\d{1,2}))?\s*(?:-|—|－|~|～|→|至|到)\s*(\d{1,2})(?::(\d{1,2}))?$/);
+    if (!m) return;
+    const h1 = +m[1], mi1 = +(m[2] || 0), h2 = +m[3], mi2 = +(m[4] || 0);
+    if (h1 > 23 || h2 > 23 || mi1 > 59 || mi2 > 59) return;
+    const a = h1 * 60 + mi1, b = h2 * 60 + mi2;
+    if (a === b) return;   // 空段忽略
+    out.push([a, b]);
+  });
+  return out;
+}
+function _fmtMin(v) { return String(Math.floor(v / 60)).padStart(2, '0') + ':' + String(v % 60).padStart(2, '0'); }
+function _peakLabel(wins) { return wins.map(w => _fmtMin(w[0]) + '-' + _fmtMin(w[1])).join(';'); }
+/* 分钟数是否落在任一高峰段内（跨零点段 a>=b 按 a..24:00∪0:00..b 判定） */
+function _inPeakWins(minute, wins) {
+  return wins.some(([a, b]) => a < b ? (minute >= a && minute < b) : (minute >= a || minute < b));
+}
+function setCostRange(r, btn) {
+  costRange = r;
+  document.querySelectorAll('#cost-range-seg button').forEach(b => b.classList.toggle('active', +b.dataset.r === r));
+  recalcCost();
+}
+function togglePeakFields() {
+  document.getElementById('cost-peak-fields').classList.toggle('hidden', !document.getElementById('cost-peak-on').checked);
+}
+async function showCostEst(modelId) {
+  const d = await api('/admin/model/' + pathEnc(modelId) + '/cost?hours=' + 24 * 30);
+  if (!d) return;
+  costEstId = modelId;
+  costHours = d.hours || [];
+  document.getElementById('cost-model-badge').textContent = modelId;
+  const p = d.prices || {}, pk = d.peak || {};
+  document.getElementById('cost-p-hit').value = p.hit ?? 0;
+  document.getElementById('cost-p-miss').value = p.miss ?? 0;
+  document.getElementById('cost-p-out').value = p.out ?? 0;
+  document.getElementById('cost-peak-on').checked = !!pk.enabled;
+  // windows = 多段高峰串；兼容旧版 start/end 单段配置（拼接为一段）
+  document.getElementById('cost-peak-windows').value =
+    pk.windows || (pk.start && pk.end ? _hhmm(pk.start, '09:00') + '-' + _hhmm(pk.end, '21:00') : '09:00-21:00');
+  document.getElementById('cost-peak-hit').value = pk.hit ?? p.hit ?? 0;
+  document.getElementById('cost-peak-miss').value = pk.miss ?? p.miss ?? 0;
+  document.getElementById('cost-peak-out').value = pk.out ?? p.out ?? 0;
+  togglePeakFields();
+  recalcCost();
+  document.getElementById('overlay-cost').classList.add('show');
+}
+/* 汇总所选时段的小时桶，并按当前价格（含高峰分段）实时算费用 */
+function recalcCost() {
+  const el = document.getElementById('cost-summary'), bd = document.getElementById('cost-breakdown');
+  if (!el || !costEstId) return;
+  const days = new Set(Array.from({ length: costRange }, (_, i) => _bjDateStr(-i)));
+  const rows = costHours.filter(h => days.has(String(h.hour_key).slice(0, 10)));
+  const t = { calls: 0, hit: 0, miss: 0, out: 0 }, pkT = { calls: 0, hit: 0, miss: 0, out: 0 };
+  const peakOn = document.getElementById('cost-peak-on').checked;
+  const wins = _parsePeakWindows(document.getElementById('cost-peak-windows').value);
+  for (const h of rows) {
+    const isPeak = peakOn && wins.length && _inPeakWins(parseInt(String(h.hour_key).slice(11, 13), 10) * 60, wins);
+    const dst = isPeak ? pkT : null;
+    t.calls += h.calls || 0; t.hit += h.hit_tokens || 0; t.miss += h.miss_tokens || 0; t.out += h.out_tokens || 0;
+    if (dst) { dst.calls += h.calls || 0; dst.hit += h.hit_tokens || 0; dst.miss += h.miss_tokens || 0; dst.out += h.out_tokens || 0; }
+  }
+  const p = { hit: _costNum('cost-p-hit'), miss: _costNum('cost-p-miss'), out: _costNum('cost-p-out') };
+  const pk = peakOn ? { hit: _costNum('cost-peak-hit'), miss: _costNum('cost-peak-miss'), out: _costNum('cost-peak-out') } : p;
+  const offT = { calls: t.calls - pkT.calls, hit: t.hit - pkT.hit, miss: t.miss - pkT.miss, out: t.out - pkT.out };
+  const _c = (tok, price) => tok / 1e6 * price;
+  const _row = (name, tok, price, color) =>
+    '<tr><td style="padding:5px 8px">' + name + '</td>' +
+    '<td style="padding:5px 8px;text-align:right" class="mono">' + tok.toLocaleString() + ' tok</td>' +
+    '<td style="padding:5px 8px;text-align:right" class="mono">¥' + price.toFixed(2) + ' /M</td>' +
+    '<td style="padding:5px 8px;text-align:right;color:' + color + '" class="mono">¥' + _c(tok, price).toFixed(4) + '</td></tr>';
+  const _sumRow = (name, calls, cost, color) =>
+    '<tr><td style="padding:5px 8px">' + name + '</td>' +
+    '<td style="padding:5px 8px;text-align:right" class="mono">' + calls.toLocaleString() + ' 次</td>' +
+    '<td style="padding:5px 8px;text-align:right" class="mono">—</td>' +
+    '<td style="padding:5px 8px;text-align:right;color:' + color + '" class="mono">¥' + cost.toFixed(4) + '</td></tr>';
+  const fmt = n => n.toLocaleString();
+  el.innerHTML = rows.length || costRange === 1
+    ? '<div style="font-size:13px;line-height:2">所选时段：<b>' + fmt(t.calls) + '</b> 次调用 · 缓存命中 <b style="color:var(--teal)">' + fmt(t.hit) + '</b> tok · 未命中 <b style="color:#a04a00">' + fmt(t.miss) + '</b> tok · 输出 <b style="color:#4646c6">' + fmt(t.out) + '</b> tok</div>'
+    : '<div class="hint">近 ' + costRange + ' 天暂无统计（需在模型编辑勾选「缓存 Token 计费统计」并产生调用）</div>';
+  let total = _c(t.hit, p.hit) + _c(t.miss, p.miss) + _c(t.out, p.out);
+  let html = '<div style="font-size:12.5px;color:#888;margin:10px 0 6px">费用明细（当前输入框价格实时计算）</div>' +
+    '<div style="border:1px solid var(--panel-2);border-radius:6px;overflow:hidden"><table style="width:100%;border-collapse:collapse;font-size:12px">' +
+    '<thead><tr><th style="text-align:left;padding:5px 8px;color:#888">项目</th><th style="text-align:right;padding:5px 8px;color:#888">token</th><th style="text-align:right;padding:5px 8px;color:#888">单价</th><th style="text-align:right;padding:5px 8px;color:#888">费用</th></tr></thead><tbody>' +
+    _row('缓存命中', t.hit, p.hit, 'var(--teal)') + _row('缓存未命中', t.miss, p.miss, '#a04a00') + _row('输出', t.out, p.out, '#4646c6');
+  if (peakOn) {
+    const pkCost = _c(pkT.hit, pk.hit) + _c(pkT.miss, pk.miss) + _c(pkT.out, pk.out);
+    const offCost = _c(offT.hit, p.hit) + _c(offT.miss, p.miss) + _c(offT.out, p.out);
+    total = pkCost + offCost;
+    html += '<tr><td colspan="4" style="padding:2px 8px"></td></tr>' +
+      (wins.length
+        ? _sumRow('高峰小计（' + _peakLabel(wins) + '）', pkT.calls, pkCost, '#d70015') +
+          _sumRow('平峰小计', offT.calls, offCost, 'var(--muted)')
+        : '<tr><td colspan="4" style="padding:5px 8px;color:#f87171">⚠ 高峰时段无法解析出有效时段段（已按全平峰计算）——请按「9:00-12:00;14:00-18:00」格式填写</td></tr>' +
+          _sumRow('全平峰小计（时段未生效）', t.calls, total, '#f87171'));
+  }
+  html += '</tbody></table></div>' +
+    '<div style="font-size:14px;margin-top:10px">预估总费用：<b style="color:#d70015;font-size:17px">¥' + total.toFixed(4) + '</b>' + (peakOn ? '（高峰分段计价）' : '') + '</div>';
+  bd.innerHTML = html;
+}
+/* 保存三单价与高峰期配置到模型配置（cost_prices / cost_peak，PUT 合并语义不改其他字段） */
+async function saveCostPrices() {
+  if (!costEstId) return;
+  const peakOn = document.getElementById('cost-peak-on').checked;
+  const winsRaw = (document.getElementById('cost-peak-windows').value || '').trim();
+  const wins = _parsePeakWindows(winsRaw);
+  if (peakOn && !wins.length) {
+    toast('高峰时段无法解析出有效时段段，请按「9:00-12:00;14:00-18:00」格式填写', true);
+    return;
+  }
+  const body = {
+    cost_prices: { hit: _costNum('cost-p-hit'), miss: _costNum('cost-p-miss'), out: _costNum('cost-p-out') },
+    cost_peak: {
+      enabled: peakOn,
+      windows: peakOn ? _peakLabel(wins) : winsRaw,   // 勾选时保存规范化串；未勾选保留原文（便于下次编辑）
+      hit: _costNum('cost-peak-hit'), miss: _costNum('cost-peak-miss'), out: _costNum('cost-peak-out'),
+    },
+  };
+  const ok = await api('/admin/models/' + pathEnc(costEstId), { method: 'PUT', body: JSON.stringify(body) });
+  if (!ok) return;
+  await api('/admin/reload', { method: 'POST' });
+  toast('价格已保存（模型：' + costEstId + '）');
 }
 /* Headroom 门控：总开关关闭时模型编辑里的勾选框置灰不可勾（服务端每请求仍按总开关判定，双保险） */
 let hrMasterEnabled = false;

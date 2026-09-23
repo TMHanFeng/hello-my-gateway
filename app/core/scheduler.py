@@ -18,6 +18,7 @@ async def db_maintenance():
     try:
         await db.trim_decision_log()
         await db.trim_call_metrics()
+        await db.trim_cache_stats()
         db.sweep_req_windows()
     except Exception:
         logger.exception("[DB维护] 裁剪/清扫失败")

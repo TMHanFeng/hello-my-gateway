@@ -28,7 +28,14 @@ USAGE = {"prompt_tokens": 100, "completion_tokens": 33, "total_tokens": 133}
 REFS = [{"title": "参考1", "url": "https://example.com/a"}, {"title": "参考2", "url": "https://example.com/b"}]
 
 captured_bodies = []      # mock 收到的请求体(供思考映射断言)
-mock_mode = {"usage": True, "think": False}
+mock_mode = {"usage": True, "think": False, "cached": False}
+
+
+def cur_usage():
+    """T26 缓存计费：cached 开关打开时上游按 OpenAI 风格回报缓存命中（40/100 命中）"""
+    if mock_mode["cached"]:
+        return {**USAGE, "prompt_tokens_details": {"cached_tokens": 40}}
+    return USAGE
 
 
 class MockHandler(BaseHTTPRequestHandler):
@@ -61,6 +68,26 @@ class MockHandler(BaseHTTPRequestHandler):
             self.wfile.write(out_b)
             return
         # T18（v2.12.3 结构统一）：千帆搜索两协议按真实上游形状返回
+        if self.path == "/v1/embeddings":
+            # T27 模态测速：embedding 卡片「⚡测速」走 /embeddings（chat/completions 对嵌入模型必然 400）
+            out_b = json.dumps({"data": [{"embedding": [0.1, 0.2], "index": 0}],
+                                "usage": {"total_tokens": 5}}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(out_b)))
+            self.end_headers()
+            self.wfile.write(out_b)
+            return
+        if self.path == "/v1/rerank":
+            # T27 模态测速：rerank 卡片「⚡测速」走 /rerank
+            out_b = json.dumps({"results": [{"index": 0, "relevance_score": 0.9}],
+                                "usage": {"total_tokens": 7}}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(out_b)))
+            self.end_headers()
+            self.wfile.write(out_b)
+            return
         if self.path == "/v2/ai_search/web_search":
             # qianfan_web_search 真实形状：裸结果 {request_id, references}，无 choices/usage（上游不支持流式）
             out_b = json.dumps({"request_id": "mock-qfws-req-1", "references": REFS}, ensure_ascii=False).encode()
@@ -97,14 +124,14 @@ class MockHandler(BaseHTTPRequestHandler):
             self.wfile.write(sse({"id": "m", "choices": [{"index": 0, "delta": {"content": content, "role": "assistant"}}]}))
             self.wfile.flush()
             if mock_mode["usage"] and "nousage" not in json.dumps(body, ensure_ascii=False):
-                self.wfile.write(sse({"id": "m", "choices": [], "usage": USAGE, "references": REFS}))
+                self.wfile.write(sse({"id": "m", "choices": [], "usage": cur_usage(), "references": REFS}))
                 self.wfile.flush()
             self.wfile.write(b"data: [DONE]\n\n")
             self.wfile.flush()
         else:
             out = {"id": "m", "object": "chat.completion", "choices": [
                 {"index": 0, "message": {"role": "assistant", "content": content}, "finish_reason": "stop"}],
-                "usage": USAGE, "references": REFS}
+                "usage": cur_usage(), "references": REFS}
             out_b = json.dumps(out, ensure_ascii=False).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -186,6 +213,14 @@ TEST_MODELS = [
      "is_free": True, "token_type": "local", "rpm_limit": 1},
     {"id": "zzbt/sw-net", "name": "mock-sw-net", "provider_id": "zzmock", "modality": "text",
      "is_free": True, "daily_token_limit": 1000000000},
+    # T26（缓存计费统计）：勾选 cost_enabled 的模型记录缓存命中/未命中/输出 token
+    {"id": "zzbt/echo-cost", "name": "mock-echo-cost", "provider_id": "zzmock", "modality": "text",
+     "is_free": True, "daily_token_limit": 1000000000, "cost_enabled": True},
+    # T27（模态测速）：embedding/rerank 卡片「⚡测速」按模态分流（chat/completions 对其必然 400）
+    {"id": "zzbt/echo-emb", "name": "mock-echo-emb", "provider_id": "zzmock", "modality": "embedding",
+     "is_free": True},
+    {"id": "zzbt/echo-rer", "name": "mock-echo-rer", "provider_id": "zzmock", "modality": "rerank",
+     "is_free": True},
 ]
 TEST_IDS = [m["id"] for m in TEST_MODELS]
 
@@ -204,7 +239,7 @@ def deep_clean():
     c.get("pools", {}).pop("zzdef", None)  # v2.11.19 曾漏清该测试池残留至生产配置
     for pn in ("zzreq", "zzonce", "zzsmart", "zznso", "zzgift", "zzrpm", "zzvalve", "zzvnl", "zzqfp", "zzqfp2",
                "zzqfws2", "zzsump", "zzbad", "zzlocal", "zzswitch", "zzhr", "zzhrctl", "zzsw", "zzsw2",
-               "zzswsubl", "zzswsubn", "zzswnest", "zzswnestn"):
+               "zzswsubl", "zzswsubn", "zzswnest", "zzswnestn", "zzcost"):
         c.get("pools", {}).pop(pn, None)
     # T23：还原 search_summary 专门 Key 与抓取开关为生产原值（用例中途崩溃时兜底）
     ss = c.get("search_summary")
@@ -242,7 +277,7 @@ def deep_clean():
     # v2.11.40 起 request_log 表退役（RPM/TPM 内存化），不再列入清理
     # 全新环境库中业务表尚未由 init_db 创建（网关从未启动过）：只清理已存在的表，缺表即零数据无可清理
     _tables = {r[0] for r in DB.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-    for t in ["token_usage", "model_daily_stats", "call_metrics", "gift_state"]:
+    for t in ["token_usage", "model_daily_stats", "call_metrics", "gift_state", "model_cache_stats"]:
         if t in _tables:
             db_exec(f"DELETE FROM {t} WHERE {q}")
     if "decision_log" in _tables:
@@ -348,6 +383,7 @@ def main():
     c["pools"]["zzswnestn"] = {"model_ids": ["pool:zzswsubn"], "strategy": "sequential", "switch_enabled": True}
     c["pools"]["zzhr"] = {"model_ids": ["zzbt/echo-hr"], "strategy": "sequential"}
     c["pools"]["zzhrctl"] = {"model_ids": ["zzbt/echo-token"], "strategy": "sequential"}  # T22 未勾选对照
+    c["pools"]["zzcost"] = {"model_ids": ["zzbt/echo-cost"], "strategy": "sequential"}  # T26 缓存计费
     json.dump(c, open(os.path.join(REPO, "config.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=2)
 
     # 启动隔离实例
@@ -1284,6 +1320,73 @@ def main():
         check("T24n5 该侧存在但不可用不误报无候选",
               r.status_code == 503 and "JSON" in r.text and "Switch 切换无候选" not in r.text,
               (r.status_code, r.text[:200]))
+
+        # T26（缓存计费统计）：勾选 cost_enabled 的模型按小时桶记录 缓存命中/未命中/输出 token；
+        # 未勾选模型零写入；价格/高峰期经 PUT 保存、/admin/model/{id}/cost 读出
+        mock_mode["cached"] = True
+        r = chat("zzcost", stream=True)
+        row = DB.execute("SELECT calls, hit_tokens, miss_tokens, out_tokens FROM model_cache_stats "
+                         "WHERE model_name='zzbt/echo-cost'").fetchone()
+        check("T26a 流式记录命中40/未命中60/输出33",
+              r.status_code == 200 and row and (row["calls"], row["hit_tokens"], row["miss_tokens"], row["out_tokens"]) == (1, 40, 60, 33),
+              dict(row) if row else None)
+        r = chat("zzcost")
+        row = DB.execute("SELECT calls, hit_tokens, miss_tokens, out_tokens FROM model_cache_stats "
+                         "WHERE model_name='zzbt/echo-cost'").fetchone()
+        check("T26b 非流式累计命中80/未命中120/输出66",
+              r.status_code == 200 and row and (row["calls"], row["hit_tokens"], row["miss_tokens"], row["out_tokens"]) == (2, 80, 120, 66),
+              dict(row) if row else None)
+        mock_mode["cached"] = False
+        r = chat("zzcost")
+        row = DB.execute("SELECT calls, hit_tokens, miss_tokens, out_tokens FROM model_cache_stats "
+                         "WHERE model_name='zzbt/echo-cost'").fetchone()
+        check("T26c 上游未回报缓存按命中0记(未命中+100)",
+              r.status_code == 200 and row and (row["calls"], row["hit_tokens"], row["miss_tokens"], row["out_tokens"]) == (3, 80, 220, 99),
+              dict(row) if row else None)
+        check("T26d 未勾选模型零写入",
+              DB.execute("SELECT count(*) c FROM model_cache_stats WHERE model_name='zzbt/echo-token'").fetchone()["c"] == 0, "")
+        st = httpx.get(f"{BASE}/stats", headers=ADMIN, timeout=15).json().get("models", [])
+        check("T26e stats透出cost_enabled标记",
+              any(m.get("id") == "zzbt/echo-cost" and m.get("cost_enabled") for m in st)
+              and any(m.get("id") == "zzbt/echo-token" and not m.get("cost_enabled") for m in st), "")
+        r = httpx.get(f"{BASE}/admin/model/zzbt/echo-cost/cost", headers=ADMIN, timeout=15)
+        d = r.json()
+        agg = {k: sum(h.get(k, 0) for h in d.get("hours", [])) for k in ("calls", "hit_tokens", "miss_tokens", "out_tokens")}
+        check("T26f cost端点返回小时桶聚合与默认价格",
+              r.status_code == 200 and d.get("enabled") is True
+              and agg == {"calls": 3, "hit_tokens": 80, "miss_tokens": 220, "out_tokens": 99}
+              and d.get("prices") == {"hit": 0, "miss": 0, "out": 0}, (agg, d.get("prices")))
+        r = httpx.put(f"{BASE}/admin/models/zzbt/echo-cost", headers=ADMIN, timeout=15, json={
+            "cost_prices": {"hit": 1, "miss": 2, "out": 4},
+            "cost_peak": {"enabled": True, "windows": "9:00-12:00;14:00-18:00;21:00-6:00", "hit": 2, "miss": 4, "out": 8}})
+        d = httpx.get(f"{BASE}/admin/model/zzbt/echo-cost/cost", headers=ADMIN, timeout=15).json()
+        check("T26g 价格与多段高峰期配置持久化",
+              r.status_code == 200 and d.get("prices", {}).get("hit") == 1
+              and d.get("peak", {}).get("enabled") is True
+              and d.get("peak", {}).get("windows") == "9:00-12:00;14:00-18:00;21:00-6:00", d)
+
+        # T27（模态测速）：卡片「⚡测速」(/speedtest→pool.speedtest) 按模型模态分流——
+        # 原实现一律发 chat/completions，embedding/rerank 必然 400（编辑界面 test_model 早已分流，两处口径对齐）
+        r = httpx.post(f"{BASE}/speedtest", headers=ADMIN, json={"model_ids": ["zzbt/echo-emb"]}, timeout=30)
+        re_ = (r.json().get("results") or [{}])[0]
+        check("T27a embedding卡片测速ok(走/embeddings)",
+              r.status_code == 200 and re_.get("status") == "ok" and re_.get("tokens") == 5, re_)
+        check("T27a2 embedding测速usage计量入账", re_.get("usage_recorded") == 5, re_)
+        r = httpx.post(f"{BASE}/speedtest", headers=ADMIN, json={"model_ids": ["zzbt/echo-rer"]}, timeout=30)
+        rr = (r.json().get("results") or [{}])[0]
+        check("T27b rerank卡片测速ok(走/rerank)",
+              r.status_code == 200 and rr.get("status") == "ok" and rr.get("tokens") == 7, rr)
+        r = httpx.post(f"{BASE}/speedtest", headers=ADMIN, json={"model_ids": ["zzbt/echo-sum"]}, timeout=30)
+        rc = (r.json().get("results") or [{}])[0]
+        check("T27c chat模型测速不受影响",
+              r.status_code == 200 and rc.get("status") == "ok" and rc.get("tokens") == 133, rc)
+        r = httpx.post(f"{BASE}/admin/test_model", headers=ADMIN, timeout=15, json={
+            "base_url": f"http://127.0.0.1:{MOCK_PORT}/v1", "api_key": "x", "protocol": "openai",
+            "model_name": "mock-echo-emb", "modality": "embedding"})
+        rt = (r.json().get("result") or {})
+        check("T27d 编辑界面embedding测试连接带tokens/tps(不再undefined)",
+              r.status_code == 200 and rt.get("status") == "ok"
+              and rt.get("tokens") == 5 and rt.get("tps") is not None, rt)
 
     finally:
         try:

@@ -5,7 +5,7 @@ import time
 import uuid
 import asyncio
 from typing import AsyncGenerator
-from app.core.models import ChatCompletionRequest, ChatCompletionResponse, UsageInfo, Choice, ChoiceMessage
+from app.core.models import ChatCompletionRequest, ChatCompletionResponse, UsageInfo, Choice, ChoiceMessage, cached_tokens_of
 from app.core import reasoning
 
 
@@ -220,6 +220,8 @@ class OpenAIProvider:
                 prompt_tokens=usage.get("prompt_tokens", 0),
                 completion_tokens=usage.get("completion_tokens", 0),
                 total_tokens=usage.get("total_tokens", 0),
+                # 缓存命中归一：OpenAI prompt_tokens_details.cached_tokens / DeepSeek prompt_cache_hit_tokens 等各家写法
+                cached_tokens=cached_tokens_of(usage),
             ),
         )
 

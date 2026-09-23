@@ -1,5 +1,5 @@
 @echo off
-title Model Gateway v2.14.1 - port 8650
+title Model Gateway v2.14.2 - port 8650
 cd /d "%~dp0"
 rem ==== auto pick interpreter: prefer .venv-headroom (Headroom compression ready), fallback miniconda ====
 set "PY=D:\miniconda\python.exe"
@@ -12,7 +12,7 @@ if %errorlevel%==0 (
   exit /b 0
 )
 echo ==========================================================
-echo  Model Gateway v2.14.1  ^|  port 8650
+echo  Model Gateway v2.14.2  ^|  port 8650
 echo  python : %PY%
 echo  logs   : logs\gateway.log
 echo ==========================================================

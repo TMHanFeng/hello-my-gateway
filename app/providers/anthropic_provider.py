@@ -281,6 +281,8 @@ class AnthropicProvider:
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
                 total_tokens=prompt_tokens + completion_tokens,
+                # Anthropic 缓存命中：cache_read_input_tokens（cache_creation 部分计费口径属未命中侧，不并入）
+                cached_tokens=(usage.get("cache_read_input_tokens") or None),
             ),
         )
 
@@ -303,6 +305,7 @@ class AnthropicProvider:
             resp.raise_for_status()
             in_tokens = 0
             out_tokens = 0
+            cached_tokens = None
             stop_reason = "end_turn"
             async for line in resp.aiter_lines():
                 if not line.startswith("data: "):
@@ -317,7 +320,9 @@ class AnthropicProvider:
 
                 event_type = event.get("type", "")
                 if event_type == "message_start":
-                    in_tokens = event.get("message", {}).get("usage", {}).get("input_tokens", in_tokens)
+                    _mu = event.get("message", {}).get("usage", {})
+                    in_tokens = _mu.get("input_tokens", in_tokens)
+                    cached_tokens = _mu.get("cache_read_input_tokens") or cached_tokens
                 elif event_type == "content_block_start":
                     block = event.get("content_block", {}) or {}
                     if block.get("type") == "tool_use":
@@ -418,6 +423,7 @@ class AnthropicProvider:
                             "prompt_tokens": in_tokens,
                             "completion_tokens": out_tokens,
                             "total_tokens": in_tokens + out_tokens,
+                            "cached_tokens": cached_tokens,
                         },
                     }
                     yield f"data: {json.dumps(usage_chunk)}\n\n"

@@ -13,6 +13,7 @@ from app.providers.anthropic_provider import AnthropicProvider
 from app.providers.qianfan_search import QianfanSearchProvider
 from app.gateway import search_summary
 from app.core import reasoning
+from app.core.models import cached_tokens_of, EmbeddingRequest, RerankRequest
 from app.core.config import load_config, save_config  # re-export：旧调用方兼容
 from app.core.paths import CONFIG_PATH  # 统一路径常量（项目根 config.json）
 from app.core import database as db
@@ -49,6 +50,9 @@ class ModelEntry:
     reasoning_map: dict = field(default_factory=dict)  # 统一思考档位 -> 上游请求体片段（reasoning.py 解析）
     smart_estimate: bool = False  # 问题22：智能估算超时（true=按 token 量动态计算超时，忽略手动秒数）
     no_stream_options: bool = False  # 问题21-B：本地 vllm 等不认 stream_options 时关闭注入（该流将无 usage 统计）
+    # 缓存计费统计：勾选后该模型每次成功调用按小时桶记录 缓存命中/未命中/输出 token
+    # （model_cache_stats），用量统计卡片出现「预估费用」入口；未勾选模型零额外写入
+    cost_enabled: bool = False
     # Headroom 选配插件（非必装）：勾选模型在接单时压缩出站 messages 省 token；判定在回退循环内，
     # 未勾选候选收原文——同池勾选/不勾选并存即天然 A/B。库未安装/总开关关闭时自动旁路（headroom_plugin.py）
     headroom: bool = False
@@ -219,6 +223,7 @@ class ModelPool:
                 reasoning_map=(m.get("reasoning_map") or {}),
                 smart_estimate=bool(m.get("smart_estimate", False)),
                 no_stream_options=bool(m.get("no_stream_options", False)),
+                cost_enabled=bool(m.get("cost_enabled", False)),
                 headroom=bool(m.get("headroom", False)),
                 valve_pct=valve_pct,
                 summary_pool=(m.get("summary_pool") or "").strip(),
@@ -988,6 +993,19 @@ class ModelPool:
         except (TypeError, ValueError, ZeroDivisionError):
             pass
 
+    @staticmethod
+    async def _record_cache_usage(entry: ModelEntry, prompt_tokens, completion_tokens, cached_tokens):
+        """缓存计费统计：hit=上游回报的缓存命中，miss=prompt-命中（含缓存写入侧），out=输出。
+        失败只记日志不抛错（统计旁路，绝不影响计费主流程）。"""
+        try:
+            p = int(prompt_tokens or 0)
+            hit = int(cached_tokens or 0)
+            hit = max(0, min(hit, p)) if p > 0 else 0
+            await db.add_cache_usage(entry.id, hit, max(0, p - hit), int(completion_tokens or 0))
+        except Exception:
+            logger.debug(f"[cache_stats] 写入失败 model={entry.id}", exc_info=True)
+
+
     async def _hydrate_metrics(self, entry: ModelEntry):
         """问题22：运行时首次用到该模型时，用 call_metrics 历史聚合预热 EMA（_load 是同步的，查不了库）。"""
         if getattr(entry, "_metrics_hydrated", False):
@@ -1053,6 +1071,11 @@ class ModelPool:
                 )
             except Exception:
                 logger.debug(f"[call_metrics] 非流式样本写入失败 model={entry.id}", exc_info=True)
+            if entry.cost_enabled:
+                # 缓存计费统计：usage 里带缓存命中（openai cached_tokens / anthropic cache_read 已归一）
+                await self._record_cache_usage(entry, getattr(response.usage, "prompt_tokens", None),
+                                               getattr(response.usage, "completion_tokens", None),
+                                               getattr(response.usage, "cached_tokens", None))
             if entry.token_type == "gift":
                 charge = 1 if entry.billing_mode == "request" else tokens_used
                 await db.add_gift_usage(entry.id, charge)
@@ -1098,7 +1121,7 @@ class ModelPool:
 
     async def _wrap_stream_body(self, entry: ModelEntry, raw, t0: float, req=None, decision_ctx: dict | None = None):
         captured = 0
-        usage_detail = {"prompt_tokens": None, "completion_tokens": None}
+        usage_detail = {"prompt_tokens": None, "completion_tokens": None, "cached_tokens": None}
         billed = False          # 问题24：防重复计费——usage 到达即记一次；finally 仅补记未计过的流
         estimated = 0           # 校准样本的 est_effective，兼作告警上下文，不参与计费口径
         # v2.14.1 流以异常收场（上游 5xx/网络/客户端中断）的标记：finally 的「缺失usage 补记 0 tok +
@@ -1123,6 +1146,7 @@ class ModelPool:
                                 usage_detail = {
                                     "prompt_tokens": usage.get("prompt_tokens"),
                                     "completion_tokens": usage.get("completion_tokens"),
+                                    "cached_tokens": cached_tokens_of(usage),
                                 }
                                 if not billed:  # 问题24：同一请求只计费一次
                                     try:
@@ -1177,6 +1201,11 @@ class ModelPool:
                         self._update_metrics_ema(entry, captured, latency_ms, usage_detail.get("completion_tokens"))
                     except Exception:
                         logger.debug(f"[call_metrics] 流式样本写入失败 model={entry.id}", exc_info=True)
+                    if entry.cost_enabled:
+                        # 缓存计费统计（成功流）：与非流式 execute() 同口径
+                        await self._record_cache_usage(entry, usage_detail.get("prompt_tokens"),
+                                                       usage_detail.get("completion_tokens"),
+                                                       usage_detail.get("cached_tokens"))
                 if decision_ctx and not stream_failed:
                     # v2.10.8 决策日志后置：流结束时一次性写入（含 final actual_tokens），计费不依赖本记录
                     try:
@@ -1887,6 +1916,40 @@ class ModelPool:
         await db.log_decision(pool_name, _req_log, None, estimated, actual_calls, caller)
         return None, None, actual_calls
 
+    @staticmethod
+    async def _speedtest_embedding(provider, entry: ModelEntry) -> dict:
+        """嵌入模型测速：/embeddings 短文本（chat/completions 对嵌入模型必然 400，
+        与编辑界面 /admin/test_model 的 embedding 分支同口径）。"""
+        start = time.perf_counter()
+        try:
+            data = await provider.embeddings(
+                EmbeddingRequest(model=entry.name, input="speed test"), entry.name, {})
+            elapsed = time.perf_counter() - start
+            tokens = int((data.get("usage") or {}).get("total_tokens") or 0)
+            return {"status": "ok", "latency_ms": round(elapsed * 1000), "tokens": tokens,
+                    "tps": round(tokens / elapsed, 1) if elapsed > 0 and tokens else 0}
+        except RateLimitError:
+            return {"status": "rate_limited", "latency_ms": round((time.perf_counter() - start) * 1000)}
+        except Exception as e:
+            return {"status": "error", "error": str(e), "latency_ms": round((time.perf_counter() - start) * 1000)}
+
+    @staticmethod
+    async def _speedtest_rerank(provider, entry: ModelEntry) -> dict:
+        """重排模型测速：/rerank 短文本（chat/completions 对重排模型必然 400）。"""
+        start = time.perf_counter()
+        try:
+            data = await provider.rerank(
+                RerankRequest(model=entry.name, query="speed test",
+                              documents=["hello world", "gateway rerank test"]), entry.name, {})
+            elapsed = time.perf_counter() - start
+            tokens = int((data.get("usage") or {}).get("total_tokens") or 0)
+            return {"status": "ok", "latency_ms": round(elapsed * 1000), "tokens": tokens,
+                    "tps": round(tokens / elapsed, 1) if elapsed > 0 and tokens else 0}
+        except RateLimitError:
+            return {"status": "rate_limited", "latency_ms": round((time.perf_counter() - start) * 1000)}
+        except Exception as e:
+            return {"status": "error", "error": str(e), "latency_ms": round((time.perf_counter() - start) * 1000)}
+
     async def speedtest(self, model_ids: list[str] | None = None) -> list[dict]:
         if model_ids is None:
             targets = list(self.registry.keys())
@@ -1899,7 +1962,13 @@ class ModelPool:
             if not entry:
                 return {"model_id": mid, "status": "not_found"}
             provider = self._get_provider(entry)
-            r = await provider.speedtest(entry.name)
+            # embedding/rerank 按模态走对应协议短测（provider 无该方法时回退 chat 测速）
+            if entry.modality == "embedding" and hasattr(provider, "embeddings"):
+                r = await self._speedtest_embedding(provider, entry)
+            elif entry.modality == "rerank" and hasattr(provider, "rerank"):
+                r = await self._speedtest_rerank(provider, entry)
+            else:
+                r = await provider.speedtest(entry.name)
             r["model_id"] = mid
             r["model_name"] = entry.name
             r["provider"] = entry.provider
@@ -1955,6 +2024,7 @@ class ModelPool:
                 "current_rpm": db.get_rpm(entry.id),
                 "current_tpm": db.get_tpm(entry.id),
                 "latency_ms": entry.latency_ms,
+                "cost_enabled": entry.cost_enabled,
             }
             td = snap["stats"].get(entry.id, {}).get(today, {"request_count": 0, "total_tokens": 0})
             s["today_requests"] = td["request_count"]

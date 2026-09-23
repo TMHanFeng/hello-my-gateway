@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, Union, Any
 
 
@@ -53,6 +53,28 @@ class UsageInfo(BaseModel):
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
+    # 缓存命中 token（上游回报的 prompt 侧缓存命中量）：OpenAI 风格 prompt_tokens_details.cached_tokens /
+    # DeepSeek 风格 prompt_cache_hit_tokens / Anthropic 风格 cache_read_input_tokens 归一到这里；
+    # None = 上游未回报（缓存计费统计按命中 0 处理）。exclude：网关内部统计字段，不进客户端响应形状
+    cached_tokens: Optional[int] = Field(None, exclude=True)
+
+
+def cached_tokens_of(usage) -> Optional[int]:
+    """从 OpenAI 风格 usage dict 里归一提取缓存命中 token。
+    兼容各家写法：cached_tokens（本网关流式归一后）/ prompt_tokens_details.cached_tokens（OpenAI）/
+    prompt_cache_hit_tokens（DeepSeek）/ cache_hit_tokens（零一 etc.）；未回报返回 None。"""
+    if not isinstance(usage, dict):
+        return None
+    for k in ("cached_tokens", "prompt_cache_hit_tokens", "cache_hit_tokens"):
+        v = usage.get(k)
+        if isinstance(v, (int, float)) and v > 0:
+            return int(v)
+    ptd = usage.get("prompt_tokens_details")
+    if isinstance(ptd, dict):
+        v = ptd.get("cached_tokens")
+        if isinstance(v, (int, float)) and v > 0:
+            return int(v)
+    return None
 
 
 class ChoiceMessage(BaseModel):

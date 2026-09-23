@@ -379,6 +379,8 @@ async def add_model(request: Request, _=Depends(verify_admin)):
         "reasoning_map": body.get("reasoning_map") or {},
         "smart_estimate": bool(body.get("smart_estimate", False)),
         "no_stream_options": bool(body.get("no_stream_options", False)),
+        # 缓存计费统计：勾选后按小时桶记录缓存命中/未命中/输出 token（价格在用量统计「预估费用」弹窗配置）
+        "cost_enabled": bool(body.get("cost_enabled", False)),
         # v2.13.0 Headroom 选配插件：勾选模型接单时压缩出站 messages（默认 False=不参与）
         "headroom": bool(body.get("headroom", False)),
         # v2.12.3 搜索 AI 总结（仅 qianfan_web_search 协议在面板有 UI 入口）
@@ -499,6 +501,29 @@ async def get_model_metrics_api(model_id: str, _=Depends(verify_admin)):
     }
 
 
+@router.get("/model/{model_id:path}/cost")
+async def get_model_cost(model_id: str, hours: int = 24 * 30, _=Depends(verify_admin)):
+    """缓存计费预估：返回该模型的小时桶聚合（缓存命中/未命中/输出 token）+ 已配置价格。
+    费用分段（高峰/平峰）由前端按小时桶与当前价格实时计算——价格改动即可对历史重算。"""
+    config = load_config()
+    entry = next((m for m in config.get("models", []) if m.get("id") == model_id), None)
+    if entry is None:
+        raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found")
+    try:
+        hours = max(1, min(24 * 366, int(hours)))
+    except (TypeError, ValueError):
+        hours = 24 * 30
+    rows = await db.get_cache_stats(model_id, hours)
+    return {
+        "enabled": bool(entry.get("cost_enabled", False)),
+        # 价格结构（¥/百万 token）：{hit, miss, out}；peak 为 {enabled, windows, hit, miss, out}，
+        # windows = 自适应解析的多段高峰时段串（分号分隔，如 "9:00-12:00;14:00-18:00"，段内支持跨零点）
+        "prices": entry.get("cost_prices") or {"hit": 0, "miss": 0, "out": 0},
+        "peak": entry.get("cost_peak") or {"enabled": False, "windows": "09:00-21:00", "hit": 0, "miss": 0, "out": 0},
+        "hours": rows,
+    }
+
+
 @router.put("/models/reorder")
 async def reorder_models(request: Request, _=Depends(verify_admin)):
     """Reorder models. Body: {model_ids: [...]} must contain exactly all existing model IDs."""
@@ -577,6 +602,8 @@ async def update_model(model_id: str, request: Request, _=Depends(verify_admin))
         if key == "smart_estimate":
             value = bool(value)
         if key == "no_stream_options":
+            value = bool(value)
+        if key == "cost_enabled":
             value = bool(value)
         if key == "headroom":
             value = bool(value)
@@ -1089,9 +1116,13 @@ async def test_model(request: Request, _=Depends(verify_admin)):
             req = EmbeddingRequest(model=model_name, input="connectivity test")
             start = _time.perf_counter()
             try:
-                await provider.embeddings(req, model_name, {})
+                data = await provider.embeddings(req, model_name, {})
                 elapsed = _time.perf_counter() - start
+                # tokens/tps 与 chat 测速同字段（上游无 usage 时为 0），避免前端显示 undefined
+                tokens = int((data.get("usage") or {}).get("total_tokens") or 0)
                 return {"ok": True, "result": {"status": "ok", "latency_ms": round(elapsed * 1000),
+                                               "tokens": tokens,
+                                               "tps": round(tokens / elapsed, 1) if elapsed > 0 and tokens else 0,
                                                "model_id": model_name, "type": "embedding"}}
             except Exception as e:
                 elapsed = _time.perf_counter() - start
@@ -1106,9 +1137,12 @@ async def test_model(request: Request, _=Depends(verify_admin)):
                                 documents=["hello world", "gateway rerank test"])
             start = _time.perf_counter()
             try:
-                await provider.rerank(req, model_name, {})
+                data = await provider.rerank(req, model_name, {})
                 elapsed = _time.perf_counter() - start
+                tokens = int((data.get("usage") or {}).get("total_tokens") or 0)
                 return {"ok": True, "result": {"status": "ok", "latency_ms": round(elapsed * 1000),
+                                               "tokens": tokens,
+                                               "tps": round(tokens / elapsed, 1) if elapsed > 0 and tokens else 0,
                                                "model_id": model_name, "type": "rerank"}}
             except Exception as e:
                 elapsed = _time.perf_counter() - start
