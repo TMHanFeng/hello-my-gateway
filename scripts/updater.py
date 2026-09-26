@@ -343,8 +343,8 @@ async function fetchStatus(){
     else{list.innerHTML='<div class="no-err">暂无异常记录</div>'}
     var ge=document.getElementById('gitee-ver'),gh=document.getElementById('github-ver');
     if(d.git){
-      if(ge&&/加载中/.test(ge.textContent)&&d.git.gitee_version&&d.git.gitee_version!=='获取中…')ge.textContent=d.git.gitee_version;
-      if(gh&&/加载中/.test(gh.textContent)&&d.git.github_version&&d.git.github_version!=='获取中…')gh.textContent=d.git.github_version;
+      if(ge&&d.git.gitee_version&&d.git.gitee_version!=='获取中…'&&d.git.gitee_version!=='—'&&d.git.gitee_version!=='unknown')ge.textContent=d.git.gitee_version;
+      if(gh&&d.git.github_version&&d.git.github_version!=='获取中…'&&d.git.github_version!=='—'&&d.git.github_version!=='unknown')gh.textContent=d.git.github_version;
       /* latest/has_update 由服务器后台定时刷新进缓存，这里只读展示 */
       document.getElementById('lat-ver').textContent=d.git.latest||'—';
       document.getElementById('upd-text').textContent=d.git.has_update?'有可用更新':'已是最新';
