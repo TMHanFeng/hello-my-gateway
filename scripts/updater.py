@@ -337,7 +337,7 @@ async function fetchStatus(){
     var sd=d.service_detail||'';var sdBlk=document.getElementById('svc-detail-block');
     if(sd){sdBlk.style.display='block';document.getElementById('svc-detail').textContent=sd}else{sdBlk.style.display='none'}
     var jt=d.journal_tail||[];var jBlk=document.getElementById('journal-block');
-    if(jt.length){jBlk.style.display='block';document.getElementById('journal').textContent=jt.join('\n')}else{jBlk.style.display='none'}
+    if(jt.length){jBlk.style.display='block';document.getElementById('journal').textContent=jt.join('\\n')}else{jBlk.style.display='none'}
     var errs=d.recent_errors||[];var list=document.getElementById('err-list');
     if(errs.length){list.innerHTML=errs.slice().reverse().map(function(e){return '<div class="err-item"><span class="t">'+esc(e.time)+'</span><span class="s">['+esc(e.source)+']</span>'+esc(e.message)+'</div>'}).join('')}
     else{list.innerHTML='<div class="no-err">暂无异常记录</div>'}
@@ -395,7 +395,7 @@ async function doAction(action){
   }catch(e){toast('❌ 请求失败: '+e,true);hideProgress();setBusy(false)}
 }
 async function killPort(){
-  var pwd=prompt('💀 强制释放端口将立即杀死占用 8650 端口的进程，可能导致服务中断！\n请输入操作密码以继续：');
+  var pwd=prompt('💀 强制释放端口将立即杀死占用 8650 端口的进程，可能导致服务中断！\\n请输入操作密码以继续：');
   if(pwd===null)return;
   pwd=(pwd||'').trim();
   if(!pwd){toast('❌ 未输入操作密码，已取消',true);return}
