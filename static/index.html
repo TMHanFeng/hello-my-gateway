@@ -2125,10 +2125,12 @@ async function loadDecisions() {
   });
   Object.values(prev).forEach(n => n.remove());
   if (fresh.length) {
-    const frag = document.createDocumentFragment();
-    fresh.forEach(c => frag.appendChild(c));
-    const first = el.querySelector('.log-card');
-    if (first) el.insertBefore(frag, first); else el.appendChild(frag);
+    // #40：新进入列表的卡片未必比 DOM 既有卡片新（池筛选切换后，先前被滤掉的老记录首次
+    // 回到列表）——整块盲插顶部会造成"时间倒挂"；改为插到第一张 id 更小的卡片前，列表恒按记录时间倒序
+    fresh.forEach(c => {
+      const after = [...el.querySelectorAll('.log-card')].find(n => Number(n.dataset.decisionId || 0) < Number(c.dataset.decisionId));
+      el.insertBefore(c, after || null);
+    });
   }
 }
 
