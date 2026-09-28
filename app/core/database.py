@@ -1082,6 +1082,24 @@ async def get_decisions(pool_name: str | None = None, limit: int = 100, caller: 
         return out
 
 
+async def get_usage_grouped(dim: str, since: float) -> list[dict]:
+    """问题39：调用记录按维度聚合（供应商/模型/模型池/用户 Key）。
+
+    数据源 decision_log（含失败请求；tokens 用 actual_tokens，失败为 0）。
+    dim 决定分组列：model→selected、pool→pool_name、key→caller；
+    provider 由调用方用 config 的模型→provider_id 映射换算（独立模型归"独立模型"）。
+    since 为自然日边界时间戳（今日=当日 00:00；近 N 天=N-1 天前当日 00:00）。"""
+    col = {"model": "selected", "pool": "pool_name", "key": "caller"}[dim]
+    async with _maybe_lock():
+        db = await _get_conn()
+        cursor = await db.execute(
+            f"SELECT {col} AS name, COUNT(*) AS calls, SUM(COALESCE(actual_tokens, 0)) AS tokens "
+            f"FROM decision_log WHERE ts >= ? AND {col} != '' GROUP BY {col} ORDER BY tokens DESC, calls DESC",
+            (since,),
+        )
+        return [dict(r) for r in await cursor.fetchall()]
+
+
 # ── API Key 管理 ──────────────────────────────────────────────────────
 
 async def create_api_key(name: str, secret: str, ktype: str, allowed_pools: list,

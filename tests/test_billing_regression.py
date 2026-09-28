@@ -1388,6 +1388,26 @@ def main():
               r.status_code == 200 and rt.get("status") == "ok"
               and rt.get("tokens") == 5 and rt.get("tps") is not None, rt)
 
+        # ── T28 用量分组查看（#39）：GET /admin/stats/grouped 四维度聚合 ──
+        # 先发一笔确定性调用（zzsump 池 → zzbt/echo-sum，mock 回 usage=133），断言不依赖先前用例
+        r0 = httpx.post(f"{BASE}/v1/chat/completions", headers=ADMIN,
+                        json={"model": "zzsump", "messages": [{"role": "user", "content": "hi"}]}, timeout=30)
+        r = httpx.get(f"{BASE}/admin/stats/grouped?dim=model&days=1", headers=ADMIN, timeout=15)
+        mrow = next((x for x in r.json().get("rows", []) if x["name"] == "zzbt/echo-sum"), None)
+        check("T28a 模型维度聚合(133tok入行)", r0.status_code == 200 and r.status_code == 200
+              and mrow and mrow["calls"] >= 1 and mrow["tokens"] >= 133, (r0.status_code, mrow))
+        r = httpx.get(f"{BASE}/admin/stats/grouped?dim=provider&days=1", headers=ADMIN, timeout=15)
+        prow = next((x for x in r.json().get("rows", []) if x["name"] == "zzmock"), None)
+        check("T28b 供应商维度经模型映射", r.status_code == 200 and prow and prow["calls"] >= 1, prow)
+        r = httpx.get(f"{BASE}/admin/stats/grouped?dim=pool&days=1", headers=ADMIN, timeout=15)
+        plrow = next((x for x in r.json().get("rows", []) if x["name"] == "zzsump"), None)
+        check("T28c 池维度按命中池聚合", r.status_code == 200 and plrow and plrow["calls"] >= 1, plrow)
+        r = httpx.get(f"{BASE}/admin/stats/grouped?dim=key&days=1", headers=ADMIN, timeout=15)
+        krow = next((x for x in r.json().get("rows", []) if x["name"] == "管理员"), None)
+        check("T28d Key维度含管理员调用", r.status_code == 200 and krow and krow["calls"] >= 1, krow)
+        r = httpx.get(f"{BASE}/admin/stats/grouped?dim=bogus&days=1", headers=ADMIN, timeout=15)
+        check("T28e 非法维度返回400", r.status_code == 400, r.status_code)
+
     finally:
         try:
             deep_clean()

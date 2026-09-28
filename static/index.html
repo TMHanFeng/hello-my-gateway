@@ -81,6 +81,46 @@ body {
 }
 @keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 .card:hover { transform: translateY(-2px); border-left-color: var(--amber); box-shadow: 0 8px 24px rgba(0,0,0,.35); }
+
+/* ═══════════ 分组收纳（#38）+ 用量分组查看（#39） ═══════════ */
+.grp-fab { width:32px; height:32px; border-radius:50%; border:1px solid var(--line); background:rgba(255,255,255,.05); color:var(--text); cursor:pointer; font-size:15px; line-height:1; display:inline-flex; align-items:center; justify-content:center; transition:transform .18s ease, border-color .18s; }
+.grp-fab:hover { transform:rotate(45deg); border-color:var(--teal); }
+.grp-section { border:1px solid var(--line); border-radius:10px; margin-bottom:12px; background:rgba(255,255,255,.02); }
+.grp-head { display:flex; align-items:center; gap:8px; padding:9px 14px; cursor:pointer; user-select:none; border-radius:10px; }
+.grp-head:hover { background:rgba(255,255,255,.05); }
+.grp-caret { font-size:10px; color:var(--muted); transition:transform .18s ease; width:12px; flex:none; }
+.grp-section.collapsed .grp-caret { transform:rotate(-90deg); }
+.grp-section.collapsed .grp-body { display:none; }
+.grp-name { font-size:13.5px; font-weight:600; }
+.grp-count { font-size:11.5px; font-family:var(--mono); color:var(--teal); background:var(--teal-dim); padding:1px 8px; border-radius:999px; flex:none; }
+.grp-x { margin-left:auto; border:none; background:none; color:var(--muted); cursor:pointer; font-size:12px; padding:2px 7px; border-radius:6px; flex:none; }
+.grp-x:hover { color:var(--red); background:var(--red-dim); }
+.grp-body { padding:2px 12px 12px; }
+.grp-body .card { margin-bottom:10px; }
+.grp-empty { font-size:12.5px; color:var(--muted); padding:8px 4px; }
+.grp-pop { position:fixed; z-index:1000; display:none; min-width:216px; max-width:280px; padding:10px 12px; border-radius:10px; background:var(--panel); border:1px solid var(--line); box-shadow:0 12px 32px rgba(0,0,0,.5); font-size:12.5px; }
+.grp-pop-title { font-size:11px; color:var(--muted); margin-bottom:4px; font-weight:600; }
+.grp-pop-item { display:flex; align-items:center; gap:8px; padding:5px 2px; cursor:pointer; }
+.grp-pop-new { display:flex; gap:6px; margin-top:8px; padding-top:8px; border-top:1px solid var(--line); }
+.grp-pop-new input { flex:1; min-width:0; }
+.grp-modal-mask { position:fixed; inset:0; z-index:1001; background:rgba(0,0,0,.55); display:flex; align-items:center; justify-content:center; }
+.grp-modal { width:min(560px, 92vw); max-height:82vh; overflow:auto; background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:20px 22px; box-shadow:0 24px 60px rgba(0,0,0,.6); }
+.grp-modal-title { font-size:16px; font-weight:700; margin-bottom:12px; }
+.grp-set-row { display:flex; align-items:flex-start; gap:10px; padding:10px 12px; border:1px solid var(--line); border-radius:8px; margin-bottom:8px; cursor:pointer; }
+.grp-set-row input { margin-top:3px; }
+.grp-set-hint { display:block; font-size:12px; color:var(--muted); margin-top:2px; }
+.grp-note { font-size:12px; color:var(--muted); margin:10px 0 14px; line-height:1.7; }
+.gs-seg-row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:10px; font-size:12.5px; }
+.gs-seg-label { color:var(--muted); font-size:12px; min-width:40px; flex:none; }
+.gs-seg { display:inline-flex; gap:4px; flex-wrap:wrap; }
+.gs-seg button { padding:5px 12px; font-size:12px; border-radius:8px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer; }
+.gs-seg button.active { background:var(--teal); border-color:var(--teal); color:var(--bg); font-weight:600; }
+.gs-row { display:flex; align-items:center; gap:10px; padding:7px 4px; border-bottom:1px solid var(--line); font-size:13px; }
+.gs-rank { width:26px; color:var(--muted); font-family:var(--mono); text-align:right; flex:none; }
+.gs-name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-family:var(--mono); }
+.gs-val { font-family:var(--mono); font-variant-numeric:tabular-nums; flex:none; }
+.gs-bar-wrap { flex:none; width:120px; height:6px; border-radius:3px; background:rgba(255,255,255,.12); overflow:hidden; }
+.gs-bar { height:100%; background:var(--teal); border-radius:3px; }
 .card-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; gap: 10px; flex-wrap: wrap; }
 .card-title { font-family: var(--mono); font-weight: 600; font-size: 15px; color: var(--text); }
 .card-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
@@ -472,6 +512,7 @@ body {
       <span class="gw-version" id="gw-version" title="网关版本">__GATEWAY_VERSION__</span>
     </div>
     <div class="status"><span class="dot"></span>运行中 · <span id="clock">--:--:--</span>
+      <button class="grp-fab" style="margin-left:14px" onclick="grpOpenSettings()" title="分组收纳设置（模型管理 / 模型池）">⚙️</button>
       <label class="theme-switch" title="白天模式 = hfadmin 面板">
         <span class="ts-opt ts-on">夜间</span>
         <span class="ts-track" onclick="location.href='/hfadmin/'"><span class="ts-thumb"></span></span>
@@ -519,6 +560,7 @@ body {
         <button class="btn btn-sm btn-amber" id="stat-dim-billing" onclick="setStatDim('billing')">计费量</button>
         <button class="btn btn-sm" id="stat-dim-requests" onclick="setStatDim('requests')">调用次数</button>
         <button class="btn btn-sm" id="stat-dim-tokens" onclick="setStatDim('tokens')">Token 用量</button>
+        <button class="btn btn-ghost btn-sm" onclick="grpStatsOpen()">📊 分组查看</button>
       </div>
         <button class="btn btn-ghost btn-sm" onclick="showHeadroomStats()">🪴 节省统计</button>
         <button class="btn btn-ghost btn-sm" onclick="loadStats()">手动刷新</button>
@@ -975,10 +1017,12 @@ async function loadModels() {
   document.getElementById('cnt-models').textContent = models.length;
 
   let html = '';
-  providers.forEach((p, i) => {
+  const grpOn = grpSettings().models;  // #38 分组收纳开关
+  const provCards = providers.map((p, i) => {
     const pmodels = models.filter(m => m.provider_id === p.id);
-    html += providerCardHTML(p, pmodels, i);
+    return { id: p.id, html: providerCardHTML(p, pmodels, i) };
   });
+  html += grpOn ? grpWrapHtml('providerGroups', provCards) : provCards.map(c => c.html).join('');
   const standalone = models.filter(m => !m.provider_id);
   if (standalone.length) {
     html += '<div class="section-title">独立模型（内联连接，未归属供应商）</div>';
@@ -1056,6 +1100,7 @@ function providerCardHTML(p, pmodels, i) {
         <div class="btn-row">
           ${provBadge(p.protocol)}
           <span class="badge b-openai">${pmodels.length} 个模型</span>
+          ${grpSettings().models ? `<button class="btn btn-ghost btn-sm" title="分组收纳" onclick="grpAssignMenu(event,'providerGroups','${jsq(p.id)}')">📂</button>` : ''}
           <button class="btn btn-ghost btn-sm" onclick="editProvider('${p.id}')">编辑</button>
           <button class="btn btn-red btn-sm" onclick="delProvider('${p.id}')">删除</button>
         </div>
@@ -1165,7 +1210,8 @@ document.querySelectorAll('.threshold-ctl').forEach(ctl => {
   const name = hint.dataset.thHint;
   if (input && name) updateThHint(name, input.value);
 });
-  const poolHtml = entries.map(([name, pool]) => {
+  const grpOnP = grpSettings().pools;  // #38 分组收纳开关（模型池）
+  const poolItems = entries.map(([name, pool]) => {
     const ids = pool.model_ids || [];
     const availModels = mdata.models.filter(m => !ids.includes(m.id));
     const availPools = Object.keys(pdata.pools).filter(p => p !== name && p !== '兜底池' && !ids.includes('pool:' + p));
@@ -1189,7 +1235,7 @@ document.querySelectorAll('.threshold-ctl').forEach(ctl => {
     const isDedicated = !!pool.owner_key_id;
     const isDraggable = !isAuto; // auto is fixed at top
     const dedicatedTag = isDedicated ? `<span class="badge b-5h">👤 专属池 · Key#${esc(pool.owner_key_id)}</span>` : '';
-    return `
+    const _cardHtml = `
     <div class="card" data-pool-card="${name}" ${isDraggable ? 'draggable="true"' : ''}>
       <div class="card-head">
         <div>
@@ -1222,6 +1268,7 @@ document.querySelectorAll('.threshold-ctl').forEach(ctl => {
             </div>
             <span class="th-hint" data-th-hint="${name}"></span>
           </div>
+          ${(!isAuto && !isFallback && grpOnP) ? `<button class="btn btn-ghost btn-sm" title="分组收纳" onclick="grpAssignMenu(event,'poolGroups','${jsq(name)}')">📂</button>` : ''}
           <button class="btn btn-ghost btn-sm" onclick="speedPool('${name}')">⚡ 测速本池</button>
           ${isAuto ? `<button class="btn btn-amber btn-sm" onclick="toggleSingleMode('${name}')" id="single-btn-${name}" title="开启后，auto池只使用选定的单个模型；关闭后恢复正常。池内布局不变。">🎯 一键单模型</button><span class="badge b-openai">内置</span>` : (isFallback ? `<button class="btn btn-ghost btn-sm" onclick="openFallbackTargets()">🛟 选择兜底对象</button>` : (isDedicated ? '' : `<button class="btn btn-ghost btn-sm" onclick="renamePool('${name}')">✏️ 重命名</button><button class="btn btn-red btn-sm" onclick="delPool('${name}')">删除池</button>`))}
         </div>
@@ -1262,7 +1309,18 @@ document.querySelectorAll('.threshold-ctl').forEach(ctl => {
         <button class="btn btn-ghost btn-sm" onclick="addToPool('${name}')">＋ 加入</button>
       </div>
     </div>`;
-  }).join('') || '<div class="hint">暂无模型池，点击右上角新增。</div>';
+    return { id: name, html: _cardHtml };
+  });
+  // #38 分组收纳：auto 池固定分组区之外最顶、兜底池固定最底（沿用既有规则），中间池按自定义分组折叠展示
+  let poolHtml;
+  if (grpOnP && poolItems.length) {
+    const autoIt = poolItems.find(x => x.id === 'auto');
+    const fbIt = poolItems.find(x => x.id === '兜底池');
+    const mid = poolItems.filter(x => x.id !== 'auto' && x.id !== '兜底池');
+    poolHtml = (autoIt ? autoIt.html : '') + grpWrapHtml('poolGroups', mid) + (fbIt ? fbIt.html : '');
+  } else {
+    poolHtml = poolItems.map(i => i.html).join('') || '<div class="hint">暂无模型池，点击右上角新增。</div>';
+  }
   setInnerIfChanged(document.getElementById('pool-list'), poolHtml);
 
   bindDrag();
@@ -1418,6 +1476,8 @@ let poolDragSrc = null;
 
 async function savePoolCardOrder(list) {
   // 完整收集所有池：可见的按新顺序在前，被模式隐藏的按原顺序补尾（防误删）
+  // #38 分组收纳：以拖放后的 DOM 位置回写池分组归属，再按扁平顺序提交
+  grpSyncFromDOM('poolGroups', list, '[data-pool-card]', 'poolCard');
   const domNames = [...list.querySelectorAll('[data-pool-card]')].map(el => el.dataset.poolCard);
   const allOthers = Object.keys(poolLookup || {}).filter(n => n !== 'auto' && n !== '兜底池');
   const names = domNames.concat(allOthers.filter(n => !domNames.includes(n)));
@@ -1447,14 +1507,24 @@ function bindPoolDrag() {
   list.addEventListener('dragover', e => {
     e.preventDefault();
     if (!poolDragSrc) return;  // 池条目拖拽时不上卡片层（防 insertBefore(null) 报错）
+    if (e.target.closest('.pool-item')) return;  // #38：池条目有自己的拖拽层，卡片层不响应
     const card = e.target.closest('[data-pool-card]');
-    if (!card || card === poolDragSrc) return;
-    const rect = card.getBoundingClientRect();
-    const before = e.clientY < rect.top + rect.height / 2;
-    // 只禁止『插到 auto 正前方』与『插到兜底池正后方』
-    if (before && card.dataset.poolCard === 'auto') return;
-    if (!before && card.dataset.poolCard === '兜底池') return;
-    list.insertBefore(poolDragSrc, before ? card : card.nextSibling);
+    if (card && card !== poolDragSrc) {
+      const rect = card.getBoundingClientRect();
+      const before = e.clientY < rect.top + rect.height / 2;
+      // 只禁止『插到 auto 正前方』与『插到兜底池正后方』
+      if (before && card.dataset.poolCard === 'auto') return;
+      if (!before && card.dataset.poolCard === '兜底池') return;
+      // #38 分组收纳：卡片可能嵌在 .grp-body 内，须在其父节点上插入（关闭分组时父节点即列表本身）
+      card.parentNode.insertBefore(poolDragSrc, before ? card : card.nextSibling);
+      return;
+    }
+    // #38 分组收纳：悬停组头/组内空白 → 移到该组末尾（auto/兜底池在分组区外，不受影响）
+    const sec = e.target.closest('.grp-section');
+    if (sec) {
+      const body = sec.querySelector('.grp-body');
+      if (body && body !== poolDragSrc.parentNode) body.appendChild(poolDragSrc);
+    }
   });
   list.addEventListener('drop', e => {
     e.preventDefault();
@@ -1480,6 +1550,20 @@ function bindPoolDrag() {
 let provDragSrc = null;
 
 function bindProviderDrag() {
+  // #38 分组收纳：组头/组内空白也可作为放置目标（悬停追加到该组末尾），列表级监听只绑一次
+  const _list = document.getElementById('model-list');
+  if (_list && !_list.dataset.dragBoundProvGrp) {
+    _list.dataset.dragBoundProvGrp = '1';
+    _list.addEventListener('dragover', e => {
+      if (!provDragSrc) return;
+      if (e.target.closest('.provider-card') || e.target.closest('.model-row')) return;  // 卡片自有处理器
+      const sec = e.target.closest('.grp-section');
+      if (sec) {
+        const body = sec.querySelector('.grp-body');
+        if (body && body !== provDragSrc.parentNode) body.appendChild(provDragSrc);
+      }
+    });
+  }
   document.querySelectorAll('.provider-card[draggable]').forEach(el => {
     if (el.dataset.dragBoundProv) return;  // 防监听器累积
     el.dataset.dragBoundProv = '1';
@@ -1503,17 +1587,242 @@ function bindProviderDrag() {
         const box = child.getBoundingClientRect();
         return e.clientY < box.top + box.height / 2;
       });
-      if (next) container.insertBefore(provDragSrc, next);
-      else container.appendChild(provDragSrc);
+      // #38 分组收纳：卡片可能嵌在 .grp-body 内，必须在其父节点上插入（关闭分组时父节点即列表本身）
+      if (next) next.parentNode.insertBefore(provDragSrc, next);
+      else {
+        const lastBody = container.querySelector('.grp-section:last-child .grp-body');
+        (lastBody || container).appendChild(provDragSrc);
+      }
     });
     el.addEventListener('drop', async e => {
       e.preventDefault();
       if (!provDragSrc) return;
+      // #38 分组收纳：以拖放后的 DOM 实际位置回写分组归属，再按扁平顺序提交
+      grpSyncFromDOM('providerGroups', document.getElementById('model-list'), '.provider-card[draggable]', 'provId');
       const ids = [...document.querySelectorAll('.provider-card[draggable]')].map(n => n.dataset.provId);
       const ok = await api('/admin/providers/reorder', { method: 'PUT', body: JSON.stringify({ provider_ids: ids }) });
       if (ok) { toast('供应商顺序已更新'); loadModels(); }
     });
   });
+}
+
+/* ═══════════ 分组收纳（#38）+ 用量分组查看（#39）═══════════ */
+const GRP_KEY = 'gw_groups';
+function grpData() { try { return JSON.parse(localStorage.getItem(GRP_KEY)) || {}; } catch (e) { return {}; } }
+function grpSave(d) { localStorage.setItem(GRP_KEY, JSON.stringify(d)); }
+function grpSettings() { return Object.assign({ models: false, pools: false }, grpData().settings || {}); }
+function grpList(kind) {
+  const d = grpData();
+  if (!Array.isArray(d[kind])) { d[kind] = []; grpSave(d); }
+  return d[kind];
+}
+function jsq(s) { return esc(String(s)).replace(/'/g, "\\'"); }  // onclick 参数安全化：HTML 转义 + 引号转义
+
+/* 分组渲染：items=[{id,html}] 按全局顺序；开启时输出「分组区段+未分组区段」，关闭时调用方自行平铺 */
+function grpWrapHtml(kind, items) {
+  const d = grpData();
+  if (!Array.isArray(d[kind])) d[kind] = [];
+  const groups = d[kind];
+  const ids = new Set(items.map(i => i.id));
+  let dirty = false;
+  groups.forEach(g => {
+    if (!Array.isArray(g.members)) { g.members = []; dirty = true; }
+    const kept = g.members.filter(m => ids.has(m));   // 清理已删除的供应商/池
+    if (kept.length !== g.members.length) { g.members = kept; dirty = true; }
+  });
+  if (dirty) grpSave(d);
+  const inGroup = new Set();
+  groups.forEach(g => (g.members || []).forEach(m => inGroup.add(m)));
+  let out = '';
+  groups.forEach(g => {
+    const members = items.filter(i => (g.members || []).includes(i.id)).map(i => i.html).join('');
+    out += `
+    <div class="grp-section${g.collapsed ? ' collapsed' : ''}" data-grp="${esc(g.id)}">
+      <div class="grp-head" onclick="grpToggle('${kind}','${esc(g.id)}')" title="点击折叠 / 展开">
+        <span class="grp-caret">▼</span>
+        <span class="grp-name" ondblclick="event.stopPropagation();grpRename('${kind}','${esc(g.id)}')" title="双击重命名">📂 ${esc(g.name)}</span>
+        <span class="grp-count">${(g.members || []).length}</span>
+        <button class="grp-x" title="删除分组（成员回到未分组）" onclick="event.stopPropagation();grpDelGroup('${kind}','${esc(g.id)}')">✕</button>
+      </div>
+      <div class="grp-body">${members || '<div class="grp-empty">把卡片拖进来，或点卡片上的 📂 归组</div>'}</div>
+    </div>`;
+  });
+  const restItems = items.filter(i => !inGroup.has(i.id));
+  out += `
+    <div class="grp-section grp-ungrouped" data-grp="__ungrouped__">
+      <div class="grp-head" onclick="this.closest('.grp-section').classList.toggle('collapsed')" title="点击折叠 / 展开">
+        <span class="grp-caret">▼</span>
+        <span class="grp-name">未分组</span>
+        <span class="grp-count">${restItems.length}</span>
+      </div>
+      <div class="grp-body">${restItems.map(i => i.html).join('') || '<div class="grp-empty">全部已归组</div>'}</div>
+    </div>`;
+  return out;
+}
+
+/* 拖拽收尾：以拖放后的 DOM 实际位置回写分组归属（组内=成员；未分组区/区外=移出） */
+function grpSyncFromDOM(kind, listEl, cardSel, attr) {
+  const d = grpData();
+  if (!Array.isArray(d[kind])) return;
+  const byGroup = {};
+  listEl.querySelectorAll('.grp-section[data-grp]').forEach(sec => {
+    if (sec.dataset.grp === '__ungrouped__') return;
+    byGroup[sec.dataset.grp] = [...sec.querySelectorAll(cardSel)].map(c => c.dataset[attr]);
+  });
+  d[kind].forEach(g => { g.members = byGroup[g.id] || []; });
+  grpSave(d);
+}
+
+function grpToggle(kind, gid) {
+  const d = grpData(); const g = (d[kind] || []).find(x => x.id === gid);
+  if (!g) return;
+  g.collapsed = !g.collapsed; grpSave(d);
+  const el = document.querySelector(`.grp-section[data-grp="${CSS.escape(gid)}"]`);
+  if (el) el.classList.toggle('collapsed', g.collapsed);
+}
+function grpDelGroup(kind, gid) {
+  const d = grpData(); const g = (d[kind] || []).find(x => x.id === gid);
+  if (!g) return;
+  if (!confirm(`删除分组「${g.name}」？其成员将回到未分组（供应商/池本身不受影响）。`)) return;
+  d[kind] = (d[kind] || []).filter(x => x.id !== gid); grpSave(d);
+  loadModels(); loadPools();
+}
+function grpRename(kind, gid) {
+  const d = grpData(); const g = (d[kind] || []).find(x => x.id === gid);
+  if (!g) return;
+  const nn = prompt('新的分组名称：', g.name);
+  if (!nn || nn.trim() === g.name || !nn.trim()) return;
+  g.name = nn.trim(); grpSave(d); loadModels(); loadPools();
+}
+function grpToggleMember(kind, id, gid, checked) {
+  const d = grpData(); if (!Array.isArray(d[kind])) d[kind] = [];
+  const g = d[kind].find(x => x.id === gid);
+  if (!g) return;
+  g.members = g.members || [];
+  g.members = checked ? [...new Set([...g.members, id])] : g.members.filter(m => m !== id);
+  grpSave(d); loadModels(); loadPools();
+}
+function grpCreateAssign(kind, id) {
+  const inp = document.getElementById('grp-new-name');
+  const name = inp && inp.value.trim();
+  if (!name) { toast('请输入分组名称', true); return; }
+  const d = grpData(); if (!Array.isArray(d[kind])) d[kind] = [];
+  if (d[kind].some(g => g.name === name)) { toast('同名分组已存在', true); return; }
+  d[kind].push({ id: 'g' + Date.now().toString(36), name, collapsed: false, members: [id] });
+  grpSave(d); loadModels(); loadPools();
+}
+function grpAssignMenu(ev, kind, id) {
+  ev.stopPropagation(); ev.preventDefault();
+  let pop = document.getElementById('grp-assign-pop');
+  if (!pop) {
+    pop = document.createElement('div'); pop.id = 'grp-assign-pop'; pop.className = 'grp-pop';
+    document.body.appendChild(pop);
+    setTimeout(() => document.addEventListener('click', e => {
+      const p = document.getElementById('grp-assign-pop');
+      if (p && !p.contains(e.target)) p.style.display = 'none';
+    }), 0);
+  }
+  const groups = grpList(kind);
+  pop.innerHTML = `<div class="grp-pop-title">加入分组</div>` +
+    (groups.map(g => `<label class="grp-pop-item"><input type="checkbox" ${(g.members || []).includes(id) ? 'checked' : ''}
+      onchange="grpToggleMember('${kind}','${jsq(id)}','${esc(g.id)}',this.checked)"> ${esc(g.name)} <span style="color:var(--muted);font-size:11px">(${(g.members || []).length})</span></label>`).join('')
+      || '<div class="grp-pop-item" style="color:var(--muted)">还没有分组，先建一个：</div>') +
+    `<div class="grp-pop-new"><input id="grp-new-name" placeholder="新分组名称" maxlength="24" onkeydown="if(event.key==='Enter')grpCreateAssign('${kind}','${jsq(id)}')">
+     <button class="btn btn-ghost btn-sm" onclick="grpCreateAssign('${kind}','${jsq(id)}')">＋ 建组并加入</button></div>`;
+  const r = (ev.currentTarget || ev.target).getBoundingClientRect();
+  pop.style.display = 'block';
+  pop.style.left = Math.max(8, Math.min(r.left, innerWidth - pop.offsetWidth - 10)) + 'px';
+  pop.style.top = Math.max(8, Math.min(r.bottom + 6, innerHeight - pop.offsetHeight - 10)) + 'px';
+}
+
+function grpOpenSettings() {
+  let mask = document.getElementById('grp-settings-mask');
+  if (!mask) {
+    mask = document.createElement('div'); mask.id = 'grp-settings-mask'; mask.className = 'grp-modal-mask';
+    mask.innerHTML = `
+      <div class="grp-modal">
+        <div class="grp-modal-title">⚙️ 分组收纳设置</div>
+        <label class="grp-set-row"><input type="checkbox" id="grp-set-models">
+          <span>启用「模型管理」分组收纳<span class="grp-set-hint">供应商卡片按自定义分组折叠展示；跨组拖拽即改变归属，全局排序照常持久化</span></span></label>
+        <label class="grp-set-row"><input type="checkbox" id="grp-set-pools">
+          <span>启用「模型池」分组收纳<span class="grp-set-hint">池卡片按自定义分组折叠展示（auto 池与兜底池固定在分组区外首尾）；跨组拖拽即改变归属</span></span></label>
+        <div class="grp-note">分组数据保存在本浏览器（localStorage），不影响调用、配额与后端排序持久化。「📊 分组查看」在用量统计页随时可用。</div>
+        <div style="text-align:right"><button class="btn btn-ghost btn-sm" onclick="document.getElementById('grp-settings-mask').style.display='none'">关闭</button></div>
+      </div>`;
+    mask.addEventListener('click', e => { if (e.target === mask) mask.style.display = 'none'; });
+    document.body.appendChild(mask);
+    document.getElementById('grp-set-models').addEventListener('change', e => grpSetToggle('models', e.target.checked));
+    document.getElementById('grp-set-pools').addEventListener('change', e => grpSetToggle('pools', e.target.checked));
+  }
+  const s = grpSettings();
+  document.getElementById('grp-set-models').checked = s.models;
+  document.getElementById('grp-set-pools').checked = s.pools;
+  mask.style.display = 'flex';
+}
+function grpSetToggle(key, val) {
+  const d = grpData();
+  d.settings = Object.assign({ models: false, pools: false }, d.settings || {});
+  d.settings[key] = val; grpSave(d);
+  loadModels(); loadPools();
+}
+
+/* #39 用量分组查看：维度（供应商/模型/模型池/用户Key）× 口径（Token/次数）× 时间段（今日/近7天/近30天） */
+let GS = { dim: 'model', metric: 'tokens', days: 7 };
+async function grpStatsOpen() {
+  let mask = document.getElementById('grp-stats-mask');
+  if (!mask) {
+    mask = document.createElement('div'); mask.id = 'grp-stats-mask'; mask.className = 'grp-modal-mask';
+    mask.innerHTML = `
+      <div class="grp-modal">
+        <div class="grp-modal-title" style="display:flex;align-items:center;gap:8px">📊 用量分组查看
+          <button class="grp-x" style="margin-left:auto" onclick="document.getElementById('grp-stats-mask').style.display='none'">✕ 关闭</button></div>
+        <div class="gs-seg-row"><span class="gs-seg-label">维度</span>
+          <div class="gs-seg" id="gs-dim-seg">
+            <button data-v="provider" onclick="grpStatsSet('dim','provider')">供应商</button>
+            <button data-v="model" onclick="grpStatsSet('dim','model')">模型</button>
+            <button data-v="pool" onclick="grpStatsSet('dim','pool')">模型池</button>
+            <button data-v="key" onclick="grpStatsSet('dim','key')">用户 Key</button>
+          </div></div>
+        <div class="gs-seg-row"><span class="gs-seg-label">口径</span>
+          <div class="gs-seg" id="gs-metric-seg">
+            <button data-v="tokens" onclick="grpStatsSet('metric','tokens')">Token 用量</button>
+            <button data-v="calls" onclick="grpStatsSet('metric','calls')">请求次数</button>
+          </div></div>
+        <div class="gs-seg-row"><span class="gs-seg-label">时间</span>
+          <div class="gs-seg" id="gs-days-seg">
+            <button data-v="1" onclick="grpStatsSet('days','1')">今日</button>
+            <button data-v="7" onclick="grpStatsSet('days','7')">近 7 天</button>
+            <button data-v="30" onclick="grpStatsSet('days','30')">近 30 天</button>
+          </div></div>
+        <div id="gs-rows"><div class="spinner"></div></div>
+        <div class="grp-note">口径：调用记录账本（decision_log，含失败请求；Token 取实际回传用量，失败记 0）。模型池维度按请求实际命中的池聚合——父池调用计入父池，直接调子池单列。</div>
+      </div>`;
+    mask.addEventListener('click', e => { if (e.target === mask) mask.style.display = 'none'; });
+    document.body.appendChild(mask);
+  }
+  mask.style.display = 'flex';
+  grpStatsRefresh();
+}
+function grpStatsSet(k, v) {
+  GS[k] = (k === 'days') ? parseInt(v, 10) : v;
+  grpStatsRefresh();
+}
+async function grpStatsRefresh() {
+  ['dim', 'metric', 'days'].forEach(k => {
+    const seg = document.getElementById('gs-' + k + '-seg');
+    if (seg) [...seg.querySelectorAll('button')].forEach(b => b.classList.toggle('active', String(b.dataset.v) === String(GS[k])));
+  });
+  const el = document.getElementById('gs-rows');
+  el.innerHTML = '<div class="spinner"></div>';
+  const data = await api(`/admin/stats/grouped?dim=${GS.dim}&days=${GS.days}`);
+  if (!data) { el.innerHTML = '<div class="hint">加载失败，稍后重试</div>'; return; }
+  if (!data.rows.length) { el.innerHTML = '<div class="hint">该时间段暂无调用记录</div>'; return; }
+  const key = GS.metric === 'calls' ? 'calls' : 'tokens';
+  const max = Math.max(...data.rows.map(r => r[key]), 1);
+  el.innerHTML = data.rows.map((r, i) => `
+    <div class="gs-row"><span class="gs-rank">${i + 1}</span><span class="gs-name" title="${esc(r.name)}">${esc(r.name)}</span>
+      <span class="gs-val">${key === 'tokens' ? Number(r.tokens).toLocaleString() + ' tok' : Number(r.calls).toLocaleString() + ' 次'}</span>
+      <span class="gs-bar-wrap"><span class="gs-bar" style="width:${Math.max(2, Math.round(r[key] / max * 100))}%"></span></span></div>`).join('');
 }
 
 async function addToPool(name) {

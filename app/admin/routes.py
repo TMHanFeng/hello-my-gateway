@@ -1084,6 +1084,38 @@ async def get_decisions(pool: str | None = None, limit: int = 100, _=Depends(ver
     return {"decisions": rows}
 
 
+@router.get("/stats/grouped")
+async def stats_grouped(dim: str = "model", days: int = 1, _=Depends(verify_admin)):
+    """问题39：用量统计按维度聚合查看。dim ∈ provider|model|pool|key，days=1 今日（自然日）/7/30 近 N 天。
+
+    口径：数据源 decision_log（含失败请求），calls=请求次数、tokens=actual_tokens 求和（失败为 0）。
+    pool 维度按请求实际命中的池聚合（父池调用计入父池行，直接调子池单列）；provider 维度经
+    config 模型→provider_id 映射换算，独立模型归「独立模型」。"""
+    from datetime import datetime, timedelta
+    from app.core import database as db
+
+    if dim not in ("provider", "model", "pool", "key"):
+        raise HTTPException(status_code=400, detail="dim 必须是 provider/model/pool/key 之一")
+    days = 1 if days < 1 else (30 if days > 30 else days)
+    base = datetime.now() - timedelta(days=days - 1)
+    since = datetime(base.year, base.month, base.day).timestamp()
+
+    if dim == "provider":
+        rows = await db.get_usage_grouped("model", since)
+        prov_of, by_prov = {}, {}
+        for m in load_config().get("models", []):
+            prov_of[m["id"]] = m.get("provider_id") or ""
+        for r in rows:
+            pid = prov_of.get(r["name"]) or "独立模型"
+            agg = by_prov.setdefault(pid, {"name": pid, "calls": 0, "tokens": 0})
+            agg["calls"] += r["calls"]
+            agg["tokens"] += r["tokens"]
+        out = sorted(by_prov.values(), key=lambda x: (-x["tokens"], -x["calls"]))
+    else:
+        out = await db.get_usage_grouped(dim, since)
+    return {"dim": dim, "days": days, "since": since, "rows": out}
+
+
 @router.post("/test_model")
 async def test_model(request: Request, _=Depends(verify_admin)):
     """Lightweight connectivity test using the form's current values (not saved)."""
