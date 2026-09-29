@@ -1480,6 +1480,49 @@ def main():
         r = httpx.delete(f"{BASE}/admin/models/zzmock/paid-new", headers=ADMIN, timeout=15)
         check("T29g 测试新增模型清理", r.status_code == 200, r.status_code)
 
+        # ── T29h-k（v2.15.1）高峰三维：每日时段 × 每周高峰（1-7）− 特定谷峰日（MMDD）──
+        # 按运行当天北京日期动态构造，保证任何日期执行都确定
+        from datetime import datetime as _dt
+        from zoneinfo import ZoneInfo as _zi
+        _bj = _dt.now(_zi("Asia/Shanghai"))
+        _wd_today = str(_bj.isoweekday())                              # 1=周一…7=周日
+        _wd_others = "".join(d for d in "1234567" if d != _wd_today)
+        _md_today = f"{_bj.month:02d}{_bj.day:02d}"
+        _ALLDAY = "0:00-23:59;23:59-0:00"
+        def _set_peak(pk):
+            r_ = httpx.put(f"{BASE}/admin/models/zzbt/paid-idle-block", headers=ADMIN, timeout=15, json={"cost_peak": pk})
+            httpx.post(f"{BASE}/admin/reload", headers=ADMIN, timeout=15)
+            return r_
+        def _zzpaid_sel():
+            httpx.post(f"{BASE}/v1/chat/completions", headers=ADMIN,
+                       json={"model": "zzpaid", "messages": [{"role": "user", "content": "hi"}]}, timeout=30)
+            return DB.execute("SELECT steps, selected FROM decision_log WHERE pool_name='zzpaid' ORDER BY id DESC LIMIT 1").fetchone()
+        # T29h 每周高峰不含今天：即便全天时段也不拦（今天非高峰日）→ 队首 idle-block 直接接单
+        _set_peak({"enabled": False, "windows": _ALLDAY, "weekdays": _wd_others, "exdates": ""})
+        row = _zzpaid_sel()
+        check("T29h 每周高峰不含今天不拦", row["selected"] == "zzbt/paid-idle-block", row["selected"])
+        # T29i 每周高峰=今天：全天时段 + 命中周几 → 拦截，detail 带周几串
+        _set_peak({"enabled": False, "windows": _ALLDAY, "weekdays": _wd_today, "exdates": ""})
+        row = _zzpaid_sel()
+        steps = json.loads(row["steps"]) if row["steps"] else []
+        idle_steps = [s for s in steps if s.get("model") == "zzbt/paid-idle-block"]
+        check("T29i 每周高峰命中今天即拦(带周几)",
+              row["selected"] == "zzbt/paid-allday" and idle_steps
+              and idle_steps[0].get("reason") == "peak_blocked"
+              and (idle_steps[0].get("detail") or {}).get("peak_weekdays") == _wd_today,
+              (row["selected"], idle_steps[:1]))
+        # T29j 特定谷峰日=今天：即便周几命中 + 全天时段，谷峰日优先级最高 → 放行
+        _set_peak({"enabled": False, "windows": _ALLDAY, "weekdays": _wd_today, "exdates": _md_today})
+        row = _zzpaid_sel()
+        check("T29j 谷峰日优先级最高(全天闲时)", row["selected"] == "zzbt/paid-idle-block", row["selected"])
+        # T29k 三维落库与浅合并：只改 weekdays 时 windows/exdates 保留，cost 端点透出
+        _set_peak({"weekdays": "135"})
+        d = httpx.get(f"{BASE}/admin/model/zzbt/paid-idle-block/cost", headers=ADMIN, timeout=15).json()
+        check("T29k 三维同源落库+浅合并透出",
+              d.get("peak", {}).get("weekdays") == "135"
+              and d.get("peak", {}).get("windows") == _ALLDAY
+              and d.get("peak", {}).get("exdates") == _md_today, d.get("peak"))
+
     finally:
         try:
             deep_clean()

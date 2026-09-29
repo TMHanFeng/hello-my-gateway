@@ -845,9 +845,14 @@ body {
         <div class="fg"><label>收费标注</label><select name="is_free" onchange="onIsFreeChange()"><option value="true">免费模型（绿）</option><option value="false">付费模型（红）</option></select></div>
         <div class="fg"><label>模型模态</label><select name="modality" onchange="onModalityChange()"><option value="text">纯文本（不支持图片）</option><option value="vision">多模态（支持图片）</option><option value="embedding">embedding（嵌入模型）</option><option value="rerank">rerank（重排模型）</option></select></div>
       </div>
-      <!-- v2.15.0 付费模型·仅闲时可用：高峰时段（与「缓存 Token 计费统计」的 cost_peak.windows 同源互通，留空=全天闲时） -->
+      <!-- v2.15.0/1 付费模型高峰期：与「缓存 Token 计费统计」的 cost_peak 同源互通（存储一处，两处修改互通） -->
       <div id="peak-fields" style="display:none">
-        <div class="fg"><label>高峰时段（北京时间，留空=全天闲时）</label><input name="peak_windows" id="f-peak-windows" placeholder="如 9:00-12:00;14:00-18:00（段内起≥止视为跨零点，如 21:00-6:00）"><div class="hint">高峰时段内该模型不路由。段间 <b>; ； , ，</b> 均可；区间符 <b>- — ~ ～ 至 到</b> 均可；时间 <b>9:00 / 09:00 / 9:30</b> 均可；无法解析的段自动忽略。与缓存计费的高峰时段为同一份数据，两处修改互通。</div></div>
+        <div class="fg"><label>每日高峰时段（北京时间）</label><input name="peak_windows" id="f-peak-windows" placeholder="如 9:00-12:00;14:00-16:00（段内起≥止视为跨零点，如 21:00-6:00；留空=当天全天）"></div>
+        <div class="f2">
+          <div class="fg"><label>每周高峰（周几，1=周一 … 7=周日）</label><input name="peak_weekdays" id="f-peak-weekdays" placeholder="如 12345（周一至周五；留空=每天）"></div>
+          <div class="fg"><label>特定谷峰日（月日四位，每年循环）</label><input name="peak_exdates" id="f-peak-exdates" placeholder="如 1001;1002;0930（谷峰日全天视为闲时）"></div>
+        </div>
+        <div class="hint">与「缓存 Token 计费统计」的高峰期为同一份数据（存储一处，两处修改互通，不影响其单价配置）。高峰 = 每周高峰日 ∩ 每日高峰时段 − 特定谷峰日；「仅闲时可用」模型高峰内不路由，三者均留空 = 全天闲时。每日时段：段间 <b>; ，，</b>、区间符 <b>- — ~ 至 到</b> 均可；每周仅认 1-7 数字；谷峰日段间 <b>; ，，</b> 均可，非法段自动忽略。</div>
       </div>
       <div class="form-sec">配额与限流</div>
       <div class="f2">
@@ -2346,8 +2351,13 @@ function formatDetail(reason, d) {
       if (d.age_sec != null && d.ttl_sec != null) return tail(`已存活 ${d.age_sec}s / TTL ${d.ttl_sec}s`);
       if (d.expire_date) return tail(`到期 ${d.expire_date}`);
       return d.reason_detail ? tail(d.reason_detail) : '';
-    case 'peak_blocked':
-      return d.peak_windows ? tail(`仅闲时可用 · 高峰 ${d.peak_windows} 内不路由`) : '';
+    case 'peak_blocked': {
+      const bits = [];
+      if (d.peak_windows) bits.push('高峰 ' + d.peak_windows);
+      if (d.peak_weekdays) bits.push('周' + d.peak_weekdays);
+      if (d.peak_exdates) bits.push('谷峰 ' + d.peak_exdates);
+      return bits.length ? tail(`仅闲时可用 · ${bits.join(' · ')} 内不路由`) : '';
+    }
     case 'switch_429':
     case 'fallback_switch_429':
       if (d.latency_ms != null) return tail(`HTTP 429 · ${d.latency_ms}ms · 冷却 ${d.cooldown_sec}s`);
@@ -2532,7 +2542,7 @@ function onTokenTypeChange() {
   const _lcf = document.getElementById('local-fields');
   if (_lcf) _lcf.style.display = ttype === 'local' ? '' : 'none';  // 本地模型提示区
   const _pf = document.getElementById('peak-fields');
-  if (_pf) _pf.style.display = ttype === 'idle_only' ? '' : 'none';  // v2.15.0 高峰时段：仅闲时可用才显示
+  if (_pf) _pf.style.display = (ttype === 'all_day' || ttype === 'idle_only') ? '' : 'none';  // v2.15.1 高峰期（三维）：付费模型即显示
   const _vf = document.getElementById('valve-fields');
   if (_vf) _vf.style.display = ttype === 'local' ? 'none' : '';  // 本地模型 limit=0 安全阀不生效，隐藏滑块
   updateGiftHint();
@@ -2610,6 +2620,20 @@ function _parsePeakWindows(str) {
 }
 function _fmtMin(v) { return String(Math.floor(v / 60)).padStart(2, '0') + ':' + String(v % 60).padStart(2, '0'); }
 function _peakLabel(wins) { return wins.map(w => _fmtMin(w[0]) + '-' + _fmtMin(w[1])).join(';'); }
+/* v2.15.1 每周高峰/特定谷峰日规范化：每周仅保留 1-7 数字去重升序；谷峰仅保留合法 MMDD 四位（月1-12 日1-31）分号连接 */
+function _normPeakWeekdays(str) {
+  const seen = new Set();
+  String(str || '').split('').forEach(c => { const n = +c; if (c !== ' ' && n >= 1 && n <= 7) seen.add(n); });
+  return Array.from(seen).sort((a, b) => a - b).join('');
+}
+function _normPeakExdates(str) {
+  const seen = new Set();
+  String(str || '').split(/[;；,，\s]+/).forEach(x => {
+    x = x.trim();
+    if (/^\d{4}$/.test(x) && +x.slice(0, 2) >= 1 && +x.slice(0, 2) <= 12 && +x.slice(2) >= 1 && +x.slice(2) <= 31) seen.add(x);
+  });
+  return Array.from(seen).join(';');
+}
 function showGiftCalibrate() {
   if (!editingId) return;
   document.getElementById('giftcal-model').textContent = editingId;
@@ -2896,9 +2920,14 @@ async function editModel(id) {
   f.max_tokens.value = m.max_tokens || 0; f.ttl_seconds.value = m.ttl_seconds || 0;
   f.expire_date.value = m.expire_date || '';
   f.valve_pct.value = m.valve_pct ?? 100;  // 安全阀回填（缺省 100%，onTokenTypeChange→onValveInput 刷新预览）
-  // v2.15.0 高峰时段回填（cost_peak.windows 原文，保存时规范化；与缓存计费同源互通）
+  // v2.15.1 高峰期三维回填（cost_peak 原文，保存时规范化；与缓存计费同源互通）
+  const _pk = m.cost_peak || {};
   const _pkf = document.getElementById('f-peak-windows');
-  if (_pkf) _pkf.value = (m.cost_peak || {}).windows || '';
+  if (_pkf) _pkf.value = _pk.windows || '';
+  const _pkw = document.getElementById('f-peak-weekdays');
+  if (_pkw) _pkw.value = _pk.weekdays || '';
+  const _pke = document.getElementById('f-peak-exdates');
+  if (_pke) _pke.value = _pk.exdates || '';
   // v2.12.3 搜索 AI 总结回填（config 里没有该键的模型给默认 mm；显式 "" 表示用户选了"不总结"）
   if (f.summary_pool) f.summary_pool.value = (m.summary_pool === undefined || m.summary_pool === null) ? 'mm' : m.summary_pool;
   if (f.summary_length) f.summary_length.value = m.summary_length || '';
@@ -2944,19 +2973,17 @@ async function submitModel(e) {
     } catch (err) { toast('思考映射 JSON 格式错误：' + err.message, true); return; }
   }
   delete body.timezone;
-  // v2.15.0 仅闲时可用：提交高峰时段（cost_peak.windows，与缓存计费同源；PUT 端浅合并不动价格）。
-  // 非表单字段 peak_windows 不入库；all_day/免费类型不提交（保留现存配置）
-  delete body.peak_windows;
-  if (body.token_type === 'idle_only') {
-    const _pwRaw = (document.getElementById('f-peak-windows') || {}).value || '';
-    const _pwTrim = _pwRaw.trim();
-    if (_pwTrim) {
-      const _wins = _parsePeakWindows(_pwTrim);
-      if (!_wins.length) { toast('高峰时段无法解析出有效时段段，请按「9:00-12:00;14:00-18:00」格式填写', true); return; }
-      body.cost_peak = { windows: _peakLabel(_wins) };   // 规范化保存，另一处打开即所见
-    } else {
-      body.cost_peak = { windows: '' };   // 留空=全天闲时（清除共享时段，价格配置不动）
-    }
+  // v2.15.1 付费模型提交高峰期三维（cost_peak.windows/weekdays/exdates，与缓存计费同源；PUT 端浅合并不动价格）。
+  // 非表单字段不入库；免费类型不提交（保留现存配置）
+  delete body.peak_windows; delete body.peak_weekdays; delete body.peak_exdates;
+  if (body.token_type === 'all_day' || body.token_type === 'idle_only') {
+    const _pwRaw = ((document.getElementById('f-peak-windows') || {}).value || '').trim();
+    if (_pwRaw && !_parsePeakWindows(_pwRaw).length) { toast('每日高峰时段无法解析出有效时段段，请按「9:00-12:00;14:00-16:00」格式填写', true); return; }
+    body.cost_peak = {
+      windows: _pwRaw ? _peakLabel(_parsePeakWindows(_pwRaw)) : '',
+      weekdays: _normPeakWeekdays((document.getElementById('f-peak-weekdays') || {}).value),
+      exdates: _normPeakExdates((document.getElementById('f-peak-exdates') || {}).value),
+    };
   }
   // 一次性字段现已按 token_type 条件显隐（问题16），不再需要「填了就自动切 one_time」的兜底
   let ok;

@@ -56,7 +56,11 @@ class ModelEntry:
     cost_enabled: bool = False
     # v2.15.0 付费模型·仅闲时可用（token_type=idle_only）：高峰时段（cost_peak.windows，与
     # 缓存计费的高峰期同源共享）内不路由；构建时解析为 [(起分钟,止分钟),...]，空=全天闲时（不限制）
+    # v2.15.1 高峰三维：每日高峰 windows × 每周高峰 weekdays（1=周一…7=周日，空=不限星期）
+    # × 特定谷峰 exdates（MMDD 整型集合，谷峰日全天视为闲时，优先级最高）
     peak_windows: list = field(default_factory=list)
+    peak_weekdays: set = field(default_factory=set)
+    peak_exdates: set = field(default_factory=set)
     # Headroom 选配插件（非必装）：勾选模型在接单时压缩出站 messages 省 token；判定在回退循环内，
     # 未勾选候选收原文——同池勾选/不勾选并存即天然 A/B。库未安装/总开关关闭时自动旁路（headroom_plugin.py）
     headroom: bool = False
@@ -119,6 +123,23 @@ def _fmt_peak_windows(wins: list) -> str:
 def _in_peak_windows(minute: int, wins: list) -> bool:
     """分钟数是否落在任一高峰段内（跨零点段 a>=b 按 a..24:00∪0:00..b 判定）"""
     return any((a < b and a <= minute < b) or (a >= b and (minute >= a or minute < b)) for a, b in wins)
+
+
+def _parse_peak_weekdays(raw) -> set:
+    """每周高峰：从串中取 1-7 的数字（1=周一…7=周日），其余字符忽略；空集=不限星期"""
+    return {int(c) for c in str(raw or "") if c.isdigit() and 1 <= int(c) <= 7}
+
+
+def _parse_peak_exdates(raw) -> set:
+    """特定谷峰日：MMDD 四位（如 1001=10月1日），段间 ; ，，空白均可；月 1-12 日 1-31 校验，非法段忽略"""
+    out = set()
+    for seg in re.split(r"[;；,，\s]+", str(raw or "")):
+        seg = seg.strip()
+        if re.fullmatch(r"\d{4}", seg):
+            mm, dd = int(seg[:2]), int(seg[2:])
+            if 1 <= mm <= 12 and 1 <= dd <= 31:
+                out.add(mm * 100 + dd)
+    return out
 
 # 配额预检缓存秒数（问题19）：预检结果短缓存，避免每个候选模型每次选择都串行打 sqlite；
 # 该模型的每次调用计费后（log_request 处）立即失效，保证自身计数新鲜
@@ -258,6 +279,8 @@ class ModelPool:
                 no_stream_options=bool(m.get("no_stream_options", False)),
                 cost_enabled=bool(m.get("cost_enabled", False)),
                 peak_windows=_parse_peak_windows((m.get("cost_peak") or {}).get("windows", "")),
+                peak_weekdays=_parse_peak_weekdays((m.get("cost_peak") or {}).get("weekdays", "")),
+                peak_exdates=_parse_peak_exdates((m.get("cost_peak") or {}).get("exdates", "")),
                 headroom=bool(m.get("headroom", False)),
                 valve_pct=valve_pct,
                 summary_pool=(m.get("summary_pool") or "").strip(),
@@ -638,17 +661,31 @@ class ModelPool:
         now = time.time()
         detail = None
 
-        # v2.15.0 付费模型·仅闲时可用（token_type=idle_only）：高峰时段内不路由。
-        # 时段取自 cost_peak.windows（与缓存计费的高峰期同源，改一处两处生效）；
-        # 未配置时段=全天闲时，不限制。纯时钟计算，放在配额缓存之外逐请求判定。
-        if entry.token_type == "idle_only" and entry.peak_windows:
+        # v2.15.0/1 付费模型·仅闲时可用（token_type=idle_only）：高峰期内不路由。
+        # 高峰取自 cost_peak（与缓存计费同源共享）：高峰 = 每周高峰日（weekdays，空=每天）
+        # ∩ 每日高峰时段（windows，空=当天全天）− 特定谷峰日（exdates，谷峰日全天闲时、优先级最高）。
+        # 仅配置谷峰日不构成任何高峰。纯时钟计算，放在配额缓存之外逐请求判定。
+        if entry.token_type == "idle_only" and (entry.peak_windows or entry.peak_weekdays):
             bj = datetime.now(ZoneInfo("Asia/Shanghai"))
-            if _in_peak_windows(bj.hour * 60 + bj.minute, entry.peak_windows):
-                wins_label = _fmt_peak_windows(entry.peak_windows)
-                return False, "peak_blocked", {
-                    "peak_windows": wins_label,
-                    "reason_detail": f"高峰时段（{wins_label}，北京时间）内不路由，仅闲时可用",
-                }
+            if (bj.month * 100 + bj.day) not in entry.peak_exdates:
+                day_ok = (not entry.peak_weekdays) or (bj.isoweekday() in entry.peak_weekdays)
+                hour_ok = (not entry.peak_windows) or _in_peak_windows(bj.hour * 60 + bj.minute, entry.peak_windows)
+                if day_ok and hour_ok:
+                    wd_label = "".join(str(d) for d in sorted(entry.peak_weekdays))
+                    ex_label = ";".join(f"{d // 100:02d}{d % 100:02d}" for d in sorted(entry.peak_exdates))
+                    parts = []
+                    if entry.peak_windows:
+                        parts.append("每日 " + _fmt_peak_windows(entry.peak_windows))
+                    if wd_label:
+                        parts.append("周" + wd_label)
+                    if ex_label:
+                        parts.append("谷峰 " + ex_label)
+                    return False, "peak_blocked", {
+                        "peak_windows": _fmt_peak_windows(entry.peak_windows) if entry.peak_windows else "",
+                        "peak_weekdays": wd_label,
+                        "peak_exdates": ex_label,
+                        "reason_detail": "高峰时段（" + "；".join(parts) + "，北京时间）内不路由，仅闲时可用",
+                    }
 
         # 配额/限速预检（问题19）：这部分需读 sqlite（每候选 1-4 次串行查询），
         # 结果短缓存 QUOTA_CACHE_TTL 秒；该模型每次调用计费后立即失效，自身计数保持新鲜

@@ -1075,9 +1075,14 @@ select { max-width: 100%; }
         <div class="fg" id="limit-fields"><label id="limit-label">每日 Token 上限（0=不限）</label><input name="daily_token_limit" type="number" value="0"></div>
         <div class="fg"><label>上下文窗口（0=不校验）</label><input name="context_window" type="number" value="0"></div>
       </div>
-      <!-- v2.15.0 付费模型·仅闲时可用：高峰时段（与「缓存 Token 计费统计」的 cost_peak.windows 同源互通，留空=全天闲时） -->
+      <!-- v2.15.0/1 付费模型高峰期：与「缓存 Token 计费统计」的 cost_peak 同源互通（存储一处，两处修改互通） -->
       <div id="peak-fields" class="hidden">
-        <div class="fg"><label>高峰时段（北京时间，留空=全天闲时）</label><input name="peak_windows" id="f-peak-windows" placeholder="如 9:00-12:00;14:00-18:00（段内起≥止视为跨零点，如 21:00-6:00）"><div class="hint">高峰时段内该模型不路由。段间 <b>; ； , ，</b> 均可；区间符 <b>- — ~ ～ 至 到</b> 均可；时间 <b>9:00 / 09:00 / 9:30</b> 均可；无法解析的段自动忽略。与「缓存 Token 计费统计」的高峰时段为同一份数据，两处修改互通（不影响其单价配置）。</div></div>
+        <div class="fg"><label>每日高峰时段（北京时间）</label><input name="peak_windows" id="f-peak-windows" placeholder="如 9:00-12:00;14:00-16:00（段内起≥止视为跨零点，如 21:00-6:00；留空=当天全天）"></div>
+        <div class="f2">
+          <div class="fg"><label>每周高峰（周几，1=周一 … 7=周日）</label><input name="peak_weekdays" id="f-peak-weekdays" placeholder="如 12345（周一至周五；留空=每天）"></div>
+          <div class="fg"><label>特定谷峰日（月日四位，每年循环）</label><input name="peak_exdates" id="f-peak-exdates" placeholder="如 1001;1002;0930（谷峰日全天视为闲时）"></div>
+        </div>
+        <div class="hint">与「缓存 Token 计费统计」的高峰期为同一份数据（存储一处，两处修改互通，不影响其单价配置）。高峰 = 每周高峰日 ∩ 每日高峰时段 − 特定谷峰日；「仅闲时可用」模型高峰内不路由，三者均留空 = 全天闲时。每日时段：段间 <b>; ，，</b>、区间符 <b>- — ~ 至 到</b> 均可；每周仅认 1-7 数字；谷峰日段间 <b>; ，，</b> 均可，非法段自动忽略。</div>
       </div>
       <div id="local-fields" class="hidden">
         <div class="hint" style="color:#0f9d6e">本地模型：不计费、不限量，仅记录用量（usage 照常入统计）；安全阀不生效。</div>
@@ -1293,7 +1298,12 @@ select { max-width: 100%; }
     </div>
     <label class="opt" style="margin:4px 0 10px"><input type="checkbox" id="cost-peak-on" onchange="togglePeakFields();recalcCost()"><span><b>高峰期分段计价</b>勾选后高峰时段内的用量按高峰单价计算（按小时桶归属；支持多段与跨零点）</span></label>
     <div id="cost-peak-fields" class="hidden">
-      <div class="fg"><label>高峰时段（多段用分号分隔，北京时间）</label><input id="cost-peak-windows" placeholder="如 9:00-12:00;14:00-18:00（段内起≥止视为跨零点，如 21:00-6:00）" oninput="recalcCost()"><div class="hint">自适应解析：段间 <b>; ； , ，</b> 均可；区间符 <b>- — ~ ～ 至 到</b> 均可；时间 <b>9:00 / 09:00 / 9:30</b> 均可；无法解析的段自动忽略</div></div>
+      <div class="fg"><label>每日高峰时段（多段用分号分隔，北京时间）</label><input id="cost-peak-windows" placeholder="如 9:00-12:00;14:00-16:00（段内起≥止视为跨零点，如 21:00-6:00；留空=当天全天）" oninput="recalcCost()"><div class="hint">自适应解析：段间 <b>; ； , ，</b> 均可；区间符 <b>- — ~ ～ 至 到</b> 均可；时间 <b>9:00 / 09:00 / 9:30</b> 均可；无法解析的段自动忽略</div></div>
+      <div class="f2">
+        <div class="fg"><label>每周高峰（周几，1=周一 … 7=周日）</label><input id="cost-peak-weekdays" placeholder="如 12345（周一至周五；留空=每天）" oninput="recalcCost()"></div>
+        <div class="fg"><label>特定谷峰日（月日四位，每年循环）</label><input id="cost-peak-exdates" placeholder="如 1001;1002;0930（谷峰日全天按平峰计）" oninput="recalcCost()"></div>
+      </div>
+      <div class="hint" style="margin:2px 0 8px">与模型编辑（付费模型）的高峰期为同一份数据（存储一处，两处修改互通）。高峰 = 每周高峰日 ∩ 每日高峰时段 − 特定谷峰日；仅配置谷峰日不构成高峰。</div>
       <div class="f3">
         <div class="fg"><label>高峰·缓存命中 单价</label><input type="number" id="cost-peak-hit" step="0.01" min="0" oninput="recalcCost()"></div>
         <div class="fg"><label>高峰·缓存未命中 单价</label><input type="number" id="cost-peak-miss" step="0.01" min="0" oninput="recalcCost()"></div>
@@ -1766,7 +1776,7 @@ function onTokenTypeChange() {
   const _lcf = document.getElementById('local-fields');
   if (_lcf) _lcf.classList.toggle('hidden', ttype !== 'local');  // 本地模型提示区
   const _pf = document.getElementById('peak-fields');
-  if (_pf) _pf.classList.toggle('hidden', ttype !== 'idle_only');  // v2.15.0 高峰时段：仅闲时可用才显示
+  if (_pf) _pf.classList.toggle('hidden', ttype !== 'all_day' && ttype !== 'idle_only');  // v2.15.1 高峰期（三维）：付费模型即显示
   const _vf = document.getElementById('valve-fields');
   if (_vf) _vf.classList.toggle('hidden', ttype === 'local');  // 本地模型 limit=0 安全阀不生效，隐藏滑块
   updateGiftHint();
@@ -2021,9 +2031,14 @@ async function editModel(id) {
   f.max_tokens.value = m.max_tokens || 0; f.ttl_seconds.value = m.ttl_seconds || 0;
   f.expire_date.value = m.expire_date || '';
   f.valve_pct.value = m.valve_pct ?? 100;  // 安全阀回填（缺省 100%，onTokenTypeChange→onValveInput 刷新预览）
-  // v2.15.0 高峰时段回填（cost_peak.windows 原文，保存时规范化；与「预估费用」弹窗同源互通）
+  // v2.15.1 高峰期三维回填（cost_peak 原文，保存时规范化；与「预估费用」弹窗同源互通）
+  const _pk = m.cost_peak || {};
   const _pkf = document.getElementById('f-peak-windows');
-  if (_pkf) _pkf.value = (m.cost_peak || {}).windows || '';
+  if (_pkf) _pkf.value = _pk.windows || '';
+  const _pkw = document.getElementById('f-peak-weekdays');
+  if (_pkw) _pkw.value = _pk.weekdays || '';
+  const _pke = document.getElementById('f-peak-exdates');
+  if (_pke) _pke.value = _pk.exdates || '';
   // v2.12.3 搜索 AI 总结回填（config 里没有该键的模型给默认 mm；显式 "" 表示用户选了"不总结"）
   if (f.summary_pool) f.summary_pool.value = (m.summary_pool === undefined || m.summary_pool === null) ? 'mm' : m.summary_pool;
   if (f.summary_length) f.summary_length.value = m.summary_length || '';
@@ -2064,19 +2079,17 @@ async function submitModel(e) {
     } catch (err) { toast('思考映射 JSON 格式错误：' + err.message, 'error'); return; }
   }
   delete body.timezone;
-  // v2.15.0 仅闲时可用：提交高峰时段（cost_peak.windows，与缓存计费同源；PUT 端浅合并不动价格）。
-  // 非表单字段 peak_windows 不入库；all_day/免费类型不提交（保留现存配置）
-  delete body.peak_windows;
-  if (body.token_type === 'idle_only') {
-    const _pwRaw = (document.getElementById('f-peak-windows') || {}).value || '';
-    const _pwTrim = _pwRaw.trim();
-    if (_pwTrim) {
-      const _wins = _parsePeakWindows(_pwTrim);
-      if (!_wins.length) { toast('高峰时段无法解析出有效时段段，请按「9:00-12:00;14:00-18:00」格式填写', true); return; }
-      body.cost_peak = { windows: _peakLabel(_wins) };   // 规范化保存，另一处打开即所见
-    } else {
-      body.cost_peak = { windows: '' };   // 留空=全天闲时（清除共享时段，价格配置不动）
-    }
+  // v2.15.1 付费模型提交高峰期三维（cost_peak.windows/weekdays/exdates，与缓存计费同源；PUT 端浅合并不动价格）。
+  // 非表单字段不入库；免费类型不提交（保留现存配置）
+  delete body.peak_windows; delete body.peak_weekdays; delete body.peak_exdates;
+  if (body.token_type === 'all_day' || body.token_type === 'idle_only') {
+    const _pwRaw = ((document.getElementById('f-peak-windows') || {}).value || '').trim();
+    if (_pwRaw && !_parsePeakWindows(_pwRaw).length) { toast('每日高峰时段无法解析出有效时段段，请按「9:00-12:00;14:00-16:00」格式填写', true); return; }
+    body.cost_peak = {
+      windows: _pwRaw ? _peakLabel(_parsePeakWindows(_pwRaw)) : '',
+      weekdays: _normPeakWeekdays((document.getElementById('f-peak-weekdays') || {}).value),
+      exdates: _normPeakExdates((document.getElementById('f-peak-exdates') || {}).value),
+    };
   }
   // 一次性字段现已按 token_type 条件显隐（问题16），不再需要「填了就自动切 one_time」的兜底
   let ok;
@@ -3278,8 +3291,13 @@ function formatDetail(reason, d) {
       if (d.age_sec != null && d.ttl_sec != null) return tail(`已存活 ${d.age_sec}s / TTL ${d.ttl_sec}s`);
       if (d.expire_date) return tail(`到期 ${d.expire_date}`);
       return d.reason_detail ? tail(d.reason_detail) : '';
-    case 'peak_blocked':
-      return d.peak_windows ? tail(`仅闲时可用 · 高峰 ${d.peak_windows} 内不路由`) : '';
+    case 'peak_blocked': {
+      const bits = [];
+      if (d.peak_windows) bits.push('高峰 ' + d.peak_windows);
+      if (d.peak_weekdays) bits.push('周' + d.peak_weekdays);
+      if (d.peak_exdates) bits.push('谷峰 ' + d.peak_exdates);
+      return bits.length ? tail(`仅闲时可用 · ${bits.join(' · ')} 内不路由`) : '';
+    }
     case 'switch_429':
     case 'fallback_switch_429':
       if (d.latency_ms != null) return tail(`HTTP 429 · ${d.latency_ms}ms · 冷却 ${d.cooldown_sec}s`);
@@ -3824,6 +3842,20 @@ function _parsePeakWindows(str) {
 }
 function _fmtMin(v) { return String(Math.floor(v / 60)).padStart(2, '0') + ':' + String(v % 60).padStart(2, '0'); }
 function _peakLabel(wins) { return wins.map(w => _fmtMin(w[0]) + '-' + _fmtMin(w[1])).join(';'); }
+/* v2.15.1 每周高峰/特定谷峰日规范化：每周仅保留 1-7 数字去重升序；谷峰仅保留合法 MMDD 四位（月1-12 日1-31）分号连接 */
+function _normPeakWeekdays(str) {
+  const seen = new Set();
+  String(str || '').split('').forEach(c => { const n = +c; if (c !== ' ' && n >= 1 && n <= 7) seen.add(n); });
+  return Array.from(seen).sort((a, b) => a - b).join('');
+}
+function _normPeakExdates(str) {
+  const seen = new Set();
+  String(str || '').split(/[;；,，\s]+/).forEach(x => {
+    x = x.trim();
+    if (/^\d{4}$/.test(x) && +x.slice(0, 2) >= 1 && +x.slice(0, 2) <= 12 && +x.slice(2) >= 1 && +x.slice(2) <= 31) seen.add(x);
+  });
+  return Array.from(seen).join(';');
+}
 /* 分钟数是否落在任一高峰段内（跨零点段 a>=b 按 a..24:00∪0:00..b 判定） */
 function _inPeakWins(minute, wins) {
   return wins.some(([a, b]) => a < b ? (minute >= a && minute < b) : (minute >= a || minute < b));
@@ -3847,9 +3879,11 @@ async function showCostEst(modelId) {
   document.getElementById('cost-p-miss').value = p.miss ?? 0;
   document.getElementById('cost-p-out').value = p.out ?? 0;
   document.getElementById('cost-peak-on').checked = !!pk.enabled;
-  // windows = 多段高峰串；兼容旧版 start/end 单段配置（拼接为一段）
+  // windows = 多段高峰串；兼容旧版 start/end 单段配置（拼接为一段）；v2.15.1 每周高峰/谷峰日三维同源回填
   document.getElementById('cost-peak-windows').value =
     pk.windows || (pk.start && pk.end ? _hhmm(pk.start, '09:00') + '-' + _hhmm(pk.end, '21:00') : '09:00-21:00');
+  document.getElementById('cost-peak-weekdays').value = pk.weekdays || '';
+  document.getElementById('cost-peak-exdates').value = pk.exdates || '';
   document.getElementById('cost-peak-hit').value = pk.hit ?? p.hit ?? 0;
   document.getElementById('cost-peak-miss').value = pk.miss ?? p.miss ?? 0;
   document.getElementById('cost-peak-out').value = pk.out ?? p.out ?? 0;
@@ -3857,7 +3891,25 @@ async function showCostEst(modelId) {
   recalcCost();
   document.getElementById('overlay-cost').classList.add('show');
 }
-/* 汇总所选时段的小时桶，并按当前价格（含高峰分段）实时算费用 */
+/* 汇总所选时段的小时桶，并按当前价格（含高峰分段：每日×每周−谷峰日）实时算费用 */
+function _costPeakCfg() {
+  const wins = _parsePeakWindows(document.getElementById('cost-peak-windows').value);
+  const wds = _normPeakWeekdays(document.getElementById('cost-peak-weekdays').value);
+  const exs = new Set(_normPeakExdates(document.getElementById('cost-peak-exdates').value).split(';').filter(Boolean));
+  return { wins, wds, exs };
+}
+/* 小时桶（hour_key "YYYY-MM-DD HH"）是否落在高峰内：谷峰日豁免 > 每周高峰日 > 每日时段；
+   每周留空=每天；每日留空=当天全天（须与后端 pool 判定同规则） */
+function _inCostPeak(hourKey, cfg) {
+  if (!cfg.wins.length && !cfg.wds.length) return false;   // 仅配置谷峰日不构成高峰
+  const ds = String(hourKey).slice(0, 10);
+  if (cfg.exs.has((+ds.slice(5, 7)) * 100 + (+ds.slice(8, 10)))) return false;
+  if (cfg.wds.length) {
+    const d = new Date(ds + 'T00:00:00');
+    if (!cfg.wds.includes(String(d.getDay() === 0 ? 7 : d.getDay()))) return false;
+  }
+  return !cfg.wins.length || _inPeakWins(parseInt(String(hourKey).slice(11, 13), 10) * 60, cfg.wins);
+}
 function recalcCost() {
   const el = document.getElementById('cost-summary'), bd = document.getElementById('cost-breakdown');
   if (!el || !costEstId) return;
@@ -3865,9 +3917,9 @@ function recalcCost() {
   const rows = costHours.filter(h => days.has(String(h.hour_key).slice(0, 10)));
   const t = { calls: 0, hit: 0, miss: 0, out: 0 }, pkT = { calls: 0, hit: 0, miss: 0, out: 0 };
   const peakOn = document.getElementById('cost-peak-on').checked;
-  const wins = _parsePeakWindows(document.getElementById('cost-peak-windows').value);
+  const pkCfg = _costPeakCfg();
   for (const h of rows) {
-    const isPeak = peakOn && wins.length && _inPeakWins(parseInt(String(h.hour_key).slice(11, 13), 10) * 60, wins);
+    const isPeak = peakOn && _inCostPeak(h.hour_key, pkCfg);
     const dst = isPeak ? pkT : null;
     t.calls += h.calls || 0; t.hit += h.hit_tokens || 0; t.miss += h.miss_tokens || 0; t.out += h.out_tokens || 0;
     if (dst) { dst.calls += h.calls || 0; dst.hit += h.hit_tokens || 0; dst.miss += h.miss_tokens || 0; dst.out += h.out_tokens || 0; }
@@ -3899,11 +3951,14 @@ function recalcCost() {
     const pkCost = _c(pkT.hit, pk.hit) + _c(pkT.miss, pk.miss) + _c(pkT.out, pk.out);
     const offCost = _c(offT.hit, p.hit) + _c(offT.miss, p.miss) + _c(offT.out, p.out);
     total = pkCost + offCost;
+    let pkDesc = pkCfg.wins.length ? _peakLabel(pkCfg.wins) : '';
+    if (pkCfg.wds) pkDesc += (pkDesc ? ' · ' : '') + '周' + pkCfg.wds;
+    if (pkCfg.exs.size) pkDesc += (pkDesc ? ' · ' : '') + '谷峰' + Array.from(pkCfg.exs).join(';');
     html += '<tr><td colspan="4" style="padding:2px 8px"></td></tr>' +
-      (wins.length
-        ? _sumRow('高峰小计（' + _peakLabel(wins) + '）', pkT.calls, pkCost, '#d70015') +
+      (pkCfg.wins.length || pkCfg.wds.length
+        ? _sumRow('高峰小计（' + pkDesc + '）', pkT.calls, pkCost, '#d70015') +
           _sumRow('平峰小计', offT.calls, offCost, 'var(--muted)')
-        : '<tr><td colspan="4" style="padding:5px 8px;color:#f87171">⚠ 高峰时段无法解析出有效时段段（已按全平峰计算）——请按「9:00-12:00;14:00-18:00」格式填写</td></tr>' +
+        : '<tr><td colspan="4" style="padding:5px 8px;color:#f87171">⚠ 高峰时段无法解析出有效配置（已按全平峰计算）——请按「9:00-12:00;14:00-16:00」填每日时段，或填每周高峰（如 12345）</td></tr>' +
           _sumRow('全平峰小计（时段未生效）', t.calls, total, '#f87171'));
   }
   html += '</tbody></table></div>' +
@@ -3916,8 +3971,10 @@ async function saveCostPrices() {
   const peakOn = document.getElementById('cost-peak-on').checked;
   const winsRaw = (document.getElementById('cost-peak-windows').value || '').trim();
   const wins = _parsePeakWindows(winsRaw);
-  if (peakOn && !wins.length) {
-    toast('高峰时段无法解析出有效时段段，请按「9:00-12:00;14:00-18:00」格式填写', true);
+  const wdNorm = _normPeakWeekdays(document.getElementById('cost-peak-weekdays').value);
+  const exNorm = _normPeakExdates(document.getElementById('cost-peak-exdates').value);
+  if (peakOn && !wins.length && !wdNorm.length) {
+    toast('高峰期无法解析出有效配置：请填每日时段（如 9:00-12:00;14:00-16:00）或每周高峰（如 12345）', true);
     return;
   }
   const body = {
@@ -3925,6 +3982,8 @@ async function saveCostPrices() {
     cost_peak: {
       enabled: peakOn,
       windows: peakOn ? _peakLabel(wins) : winsRaw,   // 勾选时保存规范化串；未勾选保留原文（便于下次编辑）
+      weekdays: peakOn ? wdNorm : (document.getElementById('cost-peak-weekdays').value || '').trim(),
+      exdates: peakOn ? exNorm : (document.getElementById('cost-peak-exdates').value || '').trim(),
       hit: _costNum('cost-peak-hit'), miss: _costNum('cost-peak-miss'), out: _costNum('cost-peak-out'),
     },
   };
