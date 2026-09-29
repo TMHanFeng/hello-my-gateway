@@ -643,8 +643,8 @@ async def add_provider(request: Request, _=Depends(verify_admin)):
     for field in ["id", "name", "protocol", "base_url", "api_key"]:
         if not body.get(field):
             raise HTTPException(status_code=400, detail=f"Missing field: {field}")
-    if body["protocol"] not in ("openai", "anthropic", "qianfan_search", "qianfan_web_search"):
-        raise HTTPException(status_code=400, detail="protocol must be 'openai', 'anthropic', 'qianfan_search' or 'qianfan_web_search'")
+    if body["protocol"] not in ("openai", "anthropic", "openai_responses", "qianfan_search", "qianfan_web_search"):
+        raise HTTPException(status_code=400, detail="protocol must be 'openai', 'anthropic', 'openai_responses', 'qianfan_search' or 'qianfan_web_search'")
     # 问题30（v2.12.3）：转发层会在 base_url 后自动拼接 /chat/completions，尾部再带一段会双重路径（稳定 404/400）
     if body["base_url"].rstrip("/").lower().endswith("/chat/completions"):
         raise HTTPException(status_code=400, detail="base_url 不能以 /chat/completions 结尾：转发层会自动拼接该路径")
@@ -705,8 +705,8 @@ async def update_provider(provider_id: str, request: Request, _=Depends(verify_a
     if idx is None:
         raise HTTPException(status_code=404, detail=f"Provider '{provider_id}' not found")
 
-    if "protocol" in body and body["protocol"] not in ("openai", "anthropic", "qianfan_search", "qianfan_web_search"):
-        raise HTTPException(status_code=400, detail="protocol must be 'openai', 'anthropic', 'qianfan_search' or 'qianfan_web_search'")
+    if "protocol" in body and body["protocol"] not in ("openai", "anthropic", "openai_responses", "qianfan_search", "qianfan_web_search"):
+        raise HTTPException(status_code=400, detail="protocol must be 'openai', 'anthropic', 'openai_responses', 'qianfan_search' or 'qianfan_web_search'")
     # 问题30（v2.12.3）：同 add_provider，尾缀 /chat/completions 会与转发层拼接双重路径
     if "base_url" in body and (body.get("base_url") or "").rstrip("/").lower().endswith("/chat/completions"):
         raise HTTPException(status_code=400, detail="base_url 不能以 /chat/completions 结尾：转发层会自动拼接该路径")
@@ -1095,11 +1095,14 @@ async def test_model(request: Request, _=Depends(verify_admin)):
     modality = (body.get("modality") or "text").strip()
     if not base_url or not api_key or not model_name:
         raise HTTPException(400, "缺少 base_url / api_key / model_name")
-    if protocol not in ("openai", "anthropic", "qianfan_search", "qianfan_web_search"):
-        raise HTTPException(400, "protocol 必须为 openai、anthropic、qianfan_search 或 qianfan_web_search")
+    if protocol not in ("openai", "anthropic", "openai_responses", "qianfan_search", "qianfan_web_search"):
+        raise HTTPException(400, "protocol 必须为 openai、anthropic、openai_responses、qianfan_search 或 qianfan_web_search")
 
     if protocol == "anthropic":
         provider = AnthropicProvider(base_url, api_key)
+    elif protocol == "openai_responses":
+        from app.providers.responses_provider import ResponsesProvider
+        provider = ResponsesProvider(base_url, api_key)
     elif protocol in ("qianfan_search", "qianfan_web_search"):
         provider = QianfanSearchProvider(base_url, api_key,
                                          variant=("web_search" if protocol == "qianfan_web_search" else "summary"))

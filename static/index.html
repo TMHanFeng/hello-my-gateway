@@ -128,6 +128,7 @@ body {
 .badge { padding: 2px 9px; border-radius: 4px; font-size: 11px; font-family: var(--mono); letter-spacing: .3px; }
 .b-openai { background: var(--teal-dim); color: var(--teal); border: 1px solid rgba(45,212,191,.3); }
 .b-anthropic { background: var(--amber-dim); color: var(--amber); border: 1px solid rgba(245,165,36,.3); }
+.b-responses { background: rgba(45,212,191,.12); color: #2dd4bf; border: 1px solid rgba(45,212,191,.3); }
 .b-once { background: var(--violet-dim); color: var(--violet); border: 1px solid rgba(167,139,250,.3); }
 .b-5h { background: rgba(56,189,248,.12); color: #38bdf8; border: 1px solid rgba(56,189,248,.3); }
 .b-local { background: rgba(52,211,153,.12); color: #34d399; border: 1px solid rgba(52,211,153,.3); }
@@ -822,7 +823,7 @@ body {
         </select>
       </div>
       <div id="inline-conn">
-        <div class="fg"><label>提供商协议</label><select name="provider" onchange="onSearchSummaryVisibility()"><option value="openai">Chat Completions</option><option value="anthropic">Messages</option><option value="qianfan_search">千帆搜索</option><option value="qianfan_web_search">千帆网页搜索</option></select></div>
+        <div class="fg"><label>提供商协议</label><select name="provider" onchange="onSearchSummaryVisibility()"><option value="openai_responses">OpenAI Responses</option><option value="openai" selected>OpenAI Compatible</option><option value="anthropic">Anthropic</option><option value="qianfan_search">千帆搜索</option><option value="qianfan_web_search">千帆网页搜索</option></select></div>
         <div class="fg"><label>Base URL</label><input name="base_url" id="f-base-url" required placeholder="https://api.openai.com/v1"></div>
         <div class="fg"><label>API Key</label><input name="api_key" id="f-api-key" required placeholder="sk-..."></div>
       </div>
@@ -919,7 +920,7 @@ body {
         <div class="fg"><label>供应商 ID（唯一标识）</label><input name="id" id="prov-id" required placeholder="my-openai"></div>
         <div class="fg"><label>供应商名称</label><input name="name" required placeholder="我的 OpenAI"></div>
       </div>
-      <div class="fg"><label>协议</label><select name="protocol"><option value="openai">Chat Completions</option><option value="anthropic">Messages</option><option value="qianfan_search">千帆搜索</option><option value="qianfan_web_search">千帆网页搜索</option></select></div>
+      <div class="fg"><label>协议</label><select name="protocol"><option value="openai_responses">OpenAI Responses</option><option value="openai" selected>OpenAI Compatible</option><option value="anthropic">Anthropic</option><option value="qianfan_search">千帆搜索</option><option value="qianfan_web_search">千帆网页搜索</option></select></div>
       <div class="fg"><label>Base URL（该供应商下所有模型共享）</label><input name="base_url" required placeholder="https://api.openai.com/v1"></div>
       <div class="fg"><label>API Key（该供应商下所有模型共享）</label><input name="api_key" required placeholder="sk-..."></div>
       <div class="fg">
@@ -1005,8 +1006,8 @@ function switchTab(name, el) {
   if (name === 'settings') loadPluginCenter();
 }
 
-function protocolLabel(p) { return p === 'openai' ? 'Chat Completions' : p === 'anthropic' ? 'Messages' : p; }  // 官方接口名（value 仍为内部枚举）
-function provBadge(p) { return p === 'anthropic' ? '<span class="badge b-anthropic">Messages</span>' : p === 'qianfan_search' ? '<span class="badge b-once">千帆搜索</span>' : p === 'qianfan_web_search' ? '<span class="badge b-5h">千帆网页搜索</span>' : '<span class="badge b-openai">Chat Completions</span>'; }
+function protocolLabel(p) { return ({openai: 'OpenAI Compatible', anthropic: 'Anthropic', openai_responses: 'OpenAI Responses'})[p] || p; }  // 官方接口名（value 仍为内部枚举）
+function provBadge(p) { return p === 'anthropic' ? '<span class="badge b-anthropic">Anthropic</span>' : p === 'openai_responses' ? '<span class="badge b-responses">OpenAI Responses</span>' : p === 'qianfan_search' ? '<span class="badge b-once">千帆搜索</span>' : p === 'qianfan_web_search' ? '<span class="badge b-5h">千帆网页搜索</span>' : '<span class="badge b-openai">OpenAI Compatible</span>'; }
 
 let providerLookup = {};
 

@@ -13,7 +13,7 @@ import json
 import time
 import uuid
 
-from .models import cached_tokens_of
+from .models import cached_tokens_of, ChatCompletionResponse, Choice, ChoiceMessage, UsageInfo
 
 
 class ResponsesFormatError(ValueError):
@@ -509,3 +509,258 @@ async def openai_sse_to_responses(openai_sse_stream, on_complete=None):
         completed_sent = True
         async for e in _emit_completed():
             yield e
+
+
+# ─────────────── 上游方向：openai_responses 协议上游适配用（chat ⇄ responses） ───────────────
+# 供 ResponsesProvider 消费：网关内部 chat 格式 → Responses 上游，响应/流式转回 chat，
+# pool 计费提取（usage.total_tokens）与既有流式链路零改动。
+
+
+def _message_text(content) -> str:
+    """chat content（str 或块数组）→ 纯文本。"""
+    if isinstance(content, str):
+        return content
+    return _output_text(content)
+
+
+def openai_to_responses_request(req, model_name: str, reasoning_fragment: dict | None = None) -> dict:
+    """ChatCompletionRequest → Responses 请求体。messages→input items、system→instructions、
+    nested tools→flat、tool 消息→function_call_output；extra_params/推理片段按保留键防护合并。"""
+    instructions = ""
+    items = []
+    for m in req.messages:
+        role = m.role or "user"
+        content = m.content
+        if role == "system":
+            if isinstance(content, str):
+                instructions += content + "\n"
+            elif isinstance(content, list):
+                for part in content:
+                    if isinstance(part, dict) and part.get("type") == "text":
+                        instructions += part.get("text", "") + "\n"
+            continue
+        if role == "tool" and m.tool_call_id:
+            items.append({"type": "function_call_output", "call_id": m.tool_call_id,
+                          "output": _message_text(content)})
+            continue
+        if role == "assistant" and m.tool_calls:
+            for tc in m.tool_calls:
+                fn = tc.get("function", {}) or {}
+                args = fn.get("arguments", "")
+                if isinstance(args, str):
+                    try:
+                        args = json.loads(args) if args else {}
+                    except json.JSONDecodeError:
+                        args = {}
+                items.append({"type": "function_call", "call_id": tc.get("id", ""),
+                              "name": fn.get("name", ""),
+                              "arguments": json.dumps(args, ensure_ascii=False)})
+            text = _message_text(content)
+            if text:
+                items.append({"type": "message", "role": "assistant",
+                              "content": [{"type": "output_text", "text": text}]})
+            continue
+        # 普通 user/assistant 消息（text/image 块）
+        text_type = "input_text" if role == "user" else "output_text"
+        parts = []
+        if isinstance(content, str):
+            parts = [{"type": text_type, "text": content}]
+        elif isinstance(content, list):
+            for part in content:
+                if not isinstance(part, dict):
+                    continue
+                if part.get("type") == "text":
+                    parts.append({"type": text_type, "text": part.get("text", "")})
+                elif part.get("type") == "image_url":
+                    url = (part.get("image_url") or {}).get("url", "")
+                    if isinstance(url, str) and url:
+                        parts.append({"type": "input_image", "image_url": url})
+        if parts:
+            items.append({"type": "message", "role": role, "content": parts})
+
+    payload = {"model": model_name, "input": items}
+    if instructions.strip():
+        payload["instructions"] = instructions.strip()
+    if req.temperature is not None:
+        payload["temperature"] = req.temperature
+    if req.top_p is not None:
+        payload["top_p"] = req.top_p
+    if req.max_tokens is not None:
+        payload["max_output_tokens"] = req.max_tokens
+    if req.stream:
+        payload["stream"] = True
+    if req.tools:
+        flat = []
+        for t in req.tools:
+            if isinstance(t, dict) and t.get("type") == "function":
+                fn = t.get("function", {}) or {}
+                ft = {"type": "function", "name": fn.get("name", ""), "description": fn.get("description", "")}
+                if isinstance(fn.get("parameters"), dict):
+                    ft["parameters"] = fn["parameters"]
+                flat.append(ft)
+        if flat:
+            payload["tools"] = flat
+            if req.tool_choice is not None:
+                tc = req.tool_choice
+                if isinstance(tc, str) and tc in ("auto", "none", "required"):
+                    payload["tool_choice"] = tc  # 两格式同名同义
+                elif isinstance(tc, dict):
+                    fn = tc.get("function", {}) or {}
+                    if fn.get("name"):
+                        payload["tool_choice"] = {"type": "function", "name": fn["name"]}
+    if req.reasoning_effort:
+        payload.setdefault("reasoning", {})["effort"] = str(req.reasoning_effort)
+    if isinstance(req.response_format, dict):
+        rf_type = req.response_format.get("type")
+        if rf_type == "json_object":
+            payload["text"] = {"format": {"type": "json_object"}}
+        elif rf_type == "json_schema":
+            js = req.response_format.get("json_schema") or {}
+            fmt = {"type": "json_schema", "name": js.get("name") or "response"}
+            if js.get("schema") is not None:
+                fmt["schema"] = js["schema"]
+            if js.get("strict") is not None:
+                fmt["strict"] = js["strict"]
+            payload["text"] = {"format": fmt}
+    # 模型级 extra_params 透传 + reasoning_map 片段合并（保留键防覆盖核心字段）
+    _reserved = {"model", "input", "instructions", "tools", "tool_choice", "stream",
+                 "max_output_tokens", "reasoning", "text"}
+    extra = getattr(req, "extra_params", None) or {}
+    for k, v in extra.items():
+        if k not in _reserved:
+            payload[k] = v
+    if isinstance(reasoning_fragment, dict):
+        for k, v in reasoning_fragment.items():
+            if k == "reasoning_effort":  # openai 协议风格的片段键 → Responses 官方嵌套位
+                payload.setdefault("reasoning", {})["effort"] = v
+            elif k not in _reserved:
+                payload[k] = v
+    return payload
+
+
+def responses_to_chat_response(data: dict, model_name: str) -> ChatCompletionResponse:
+    """Responses 响应 dict → ChatCompletionResponse（计费/内部链路共用口径）。
+    message→content、reasoning.summary→reasoning_content、function_call→tool_calls。"""
+    text_parts, reasoning_text, tool_calls = [], [], []
+    finish = "stop"
+    for item in data.get("output") or []:
+        if not isinstance(item, dict):
+            continue
+        itype = item.get("type")
+        if itype == "message":
+            for part in item.get("content") or []:
+                if isinstance(part, dict) and part.get("type") in ("output_text", "text"):
+                    t = part.get("text")
+                    if isinstance(t, str):
+                        text_parts.append(t)
+        elif itype == "reasoning":
+            for s in item.get("summary") or []:
+                if isinstance(s, dict) and isinstance(s.get("text"), str):
+                    reasoning_text.append(s["text"])
+        elif itype == "function_call":
+            tool_calls.append({
+                "id": item.get("call_id") or item.get("id") or "",
+                "type": "function",
+                "function": {"name": item.get("name", ""), "arguments": item.get("arguments") or "{}"},
+            })
+            finish = "tool_calls"
+    usage = data.get("usage") or {}
+    input_tokens = usage.get("input_tokens", 0) or 0
+    output_tokens = usage.get("output_tokens", 0) or 0
+    cached = None
+    itd = usage.get("input_tokens_details")
+    if isinstance(itd, dict) and isinstance(itd.get("cached_tokens"), int) and itd["cached_tokens"] > 0:
+        cached = itd["cached_tokens"]
+    if data.get("status") == "incomplete":
+        finish = "length" if not tool_calls else finish
+    return ChatCompletionResponse(
+        id=str(data.get("id") or f"chatcmpl-{uuid.uuid4().hex[:8]}"),
+        created=int(time.time()),
+        model=model_name,
+        choices=[Choice(index=0, message=ChoiceMessage(
+            role="assistant", content="".join(text_parts),
+            reasoning_content="".join(reasoning_text) or None,
+            tool_calls=tool_calls or None,
+        ), finish_reason=finish)],
+        usage=UsageInfo(prompt_tokens=input_tokens, completion_tokens=output_tokens,
+                        total_tokens=usage.get("total_tokens") or (input_tokens + output_tokens),
+                        cached_tokens=cached),
+    )
+
+
+async def responses_sse_to_chat(responses_sse_stream, model_name: str):
+    """Responses SSE 事件流（openai_responses 上游）→ OpenAI chat SSE chunk 文本流。
+    产出 `data: {...}\\n\\n` / `data: [DONE]\\n\\n`——pool 的 usage 提取与计费链路零改动。"""
+    completion_id = f"chatcmpl-{uuid.uuid4().hex[:8]}"
+    created = int(time.time())
+    tool_indexes: dict[str, int] = {}   # function_call item_id → chat tool_calls index
+    done_sent = False
+
+    def _chunk(delta, finish_reason=None) -> str:
+        return "data: " + json.dumps({
+            "id": completion_id, "object": "chat.completion.chunk", "created": created, "model": model_name,
+            "choices": [{"index": 0, "delta": delta, "finish_reason": finish_reason}],
+        }, ensure_ascii=False) + "\n\n"
+
+    async for line in responses_sse_stream:
+        if not isinstance(line, str) or not line.startswith("data: "):
+            continue
+        payload = line[6:].strip()
+        if not payload or payload == "[DONE]":
+            continue
+        try:
+            obj = json.loads(payload)
+        except Exception:
+            continue
+        if not isinstance(obj, dict):
+            continue
+        etype = obj.get("type", "")
+        if etype == "response.output_text.delta":
+            piece = obj.get("delta")
+            if isinstance(piece, str) and piece:
+                yield _chunk({"content": piece})
+        elif etype == "response.reasoning_text.delta":
+            piece = obj.get("delta")
+            if isinstance(piece, str) and piece:
+                yield _chunk({"reasoning_content": piece})
+        elif etype == "response.output_item.added":
+            item = obj.get("item") or {}
+            if item.get("type") == "function_call":
+                idx = len(tool_indexes)
+                tool_indexes[item.get("id") or obj.get("item_id") or f"fc{idx}"] = idx
+                yield _chunk({"tool_calls": [{
+                    "index": idx, "id": item.get("call_id", ""), "type": "function",
+                    "function": {"name": item.get("name", ""), "arguments": ""},
+                }]})
+        elif etype == "response.function_call_arguments.delta":
+            idx = tool_indexes.get(obj.get("item_id"), 0)
+            frag = obj.get("delta")
+            if isinstance(frag, str) and frag:
+                yield _chunk({"tool_calls": [{"index": idx, "function": {"arguments": frag}}]})
+        elif etype in ("response.completed", "response.failed", "response.incomplete"):
+            resp = obj.get("response") or {}
+            usage = resp.get("usage") or {}
+            finish = "tool_calls" if tool_indexes else (
+                "length" if resp.get("status") == "incomplete" else "stop")
+            yield _chunk({}, finish_reason=finish)
+            input_tokens = usage.get("input_tokens", 0) or 0
+            output_tokens = usage.get("output_tokens", 0) or 0
+            u = {"prompt_tokens": input_tokens, "completion_tokens": output_tokens,
+                 "total_tokens": usage.get("total_tokens") or (input_tokens + output_tokens)}
+            itd = usage.get("input_tokens_details")
+            if isinstance(itd, dict) and isinstance(itd.get("cached_tokens"), int) and itd["cached_tokens"] > 0:
+                u["cached_tokens"] = itd["cached_tokens"]
+            yield "data: " + json.dumps({
+                "id": completion_id, "object": "chat.completion.chunk", "created": created, "model": model_name,
+                "choices": [], "usage": u,
+            }, ensure_ascii=False) + "\n\n"
+            yield "data: [DONE]\n\n"
+            done_sent = True
+    # 兜底：上游事件耗尽但无 completed 事件（异常截断）——补 finish+0 usage+[DONE]，客户端不挂等
+    if not done_sent:
+        yield _chunk({}, finish_reason="stop")
+        yield "data: " + json.dumps({
+            "id": completion_id, "object": "chat.completion.chunk", "created": created, "model": model_name,
+            "choices": [], "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+        }, ensure_ascii=False) + "\n\n"
+        yield "data: [DONE]\n\n"

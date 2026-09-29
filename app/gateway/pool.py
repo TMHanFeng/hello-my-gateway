@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 import httpx
 from app.providers.openai_provider import OpenAIProvider, RateLimitError
 from app.providers.anthropic_provider import AnthropicProvider
+from app.providers.responses_provider import ResponsesProvider
 from app.providers.qianfan_search import QianfanSearchProvider
 from app.gateway import search_summary
 from app.core import reasoning
@@ -441,6 +442,9 @@ class ModelPool:
         """按模型条目构建上游 provider（_get_provider 与问题31 自愈重建共用）。"""
         if entry.provider == "anthropic":
             return AnthropicProvider(entry.base_url, entry.api_key, entry.proxy_url,
+                                     timeout_seconds=entry.timeout_seconds)
+        if entry.provider == "openai_responses":
+            return ResponsesProvider(entry.base_url, entry.api_key, entry.proxy_url,
                                      timeout_seconds=entry.timeout_seconds)
         if entry.provider == "qianfan_search":
             return QianfanSearchProvider(entry.base_url, entry.api_key, entry.proxy_url,

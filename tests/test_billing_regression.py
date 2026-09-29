@@ -78,6 +78,49 @@ class MockHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(out_b)
             return
+        if self.path == "/responses":
+            # T30f-h（v2.16.1）openai_responses 协议上游：以 Responses 格式收发
+            if body.get("stream"):
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.end_headers()
+
+                def rs_sse(evt, obj):
+                    return ("event: " + evt + "\ndata: " + json.dumps(
+                        dict({"type": evt}, **obj), ensure_ascii=False) + "\n\n").encode()
+                _rid = "resp_mock_stream"
+                self.wfile.write(rs_sse("response.created", {"response": {"id": _rid, "status": "in_progress"}}))
+                self.wfile.flush()
+                self.wfile.write(rs_sse("response.output_item.added",
+                                        {"output_index": 0, "item": {"id": "msg_m", "type": "message", "role": "assistant"}}))
+                self.wfile.flush()
+                for _piece in ("答", "案"):
+                    self.wfile.write(rs_sse("response.output_text.delta",
+                                            {"item_id": "msg_m", "output_index": 0, "delta": _piece}))
+                    self.wfile.flush()
+                self.wfile.write(rs_sse("response.output_text.done", {"item_id": "msg_m", "text": "答案"}))
+                self.wfile.flush()
+                self.wfile.write(rs_sse("response.completed", {"response": {
+                    "id": _rid, "status": "completed",
+                    "output": [{"id": "msg_m", "type": "message", "role": "assistant", "status": "completed",
+                                "content": [{"type": "output_text", "text": "答案", "annotations": []}]}],
+                    "usage": {"input_tokens": 100, "output_tokens": 33, "total_tokens": 133}}}))
+                self.wfile.flush()
+            else:
+                out_b = json.dumps({
+                    "id": "resp_mock_1", "object": "response", "status": "completed",
+                    "model": body.get("model"),
+                    "output": [{"id": "msg_m", "type": "message", "role": "assistant", "status": "completed",
+                                "content": [{"type": "output_text", "text": "答案", "annotations": []}]}],
+                    "usage": {"input_tokens": 100, "output_tokens": 33, "total_tokens": 133,
+                              "input_tokens_details": {"cached_tokens": 40}},
+                }, ensure_ascii=False).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(out_b)))
+                self.end_headers()
+                self.wfile.write(out_b)
+            return
         if self.path == "/v1/rerank":
             # T27 模态测速：rerank 卡片「⚡测速」走 /rerank
             out_b = json.dumps({"results": [{"index": 0, "relevance_score": 0.9}],
@@ -273,6 +316,9 @@ TEST_MODELS = [
     # T30（v2.16.0）Responses 工具往返：mock-toolcall 按 OpenAI 形状回 tool_calls（非流式/流式增量）
     {"id": "zzbt/echo-tool", "name": "mock-toolcall", "provider_id": "zzmock", "modality": "text",
      "is_free": True, "daily_token_limit": 1000000000},
+    # T30f-h（v2.16.1）openai_responses 上游协议：mock 以 Responses 格式收发
+    {"id": "zzbt/echo-resp", "name": "mock-resp", "provider_id": "zzmockr", "modality": "text",
+     "is_free": True, "daily_token_limit": 1000000000},
 ]
 TEST_IDS = [m["id"] for m in TEST_MODELS]
 
@@ -285,7 +331,7 @@ def db_exec(sql, args=()):
 
 def deep_clean():
     c = json.load(open(os.path.join(REPO, "config.json"), encoding="utf-8"))
-    c["providers"] = [p for p in c.get("providers", []) if p["id"] not in ("zzmock", "zzark", "zzqf", "zzqf2")]
+    c["providers"] = [p for p in c.get("providers", []) if p["id"] not in ("zzmock", "zzark", "zzqf", "zzqf2", "zzmockr")]
     c["models"] = [m for m in c.get("models", [])
                    if not str(m.get("id", "")).startswith("zzbt/") and str(m.get("id", "")) != "zzmock/probe-noauto"]
     c.get("pools", {}).pop("zzall", None)
@@ -293,7 +339,7 @@ def deep_clean():
     for pn in ("zzreq", "zzonce", "zzsmart", "zznso", "zzgift", "zzrpm", "zzvalve", "zzvnl", "zzqfp", "zzqfp2",
                "zzqfws2", "zzsump", "zzbad", "zzlocal", "zzswitch", "zzhr", "zzhrctl", "zzsw", "zzsw2",
                "zzswsubl", "zzswsubn", "zzswnest", "zzswnestn", "zzcost", "zzpaid", "zzpaid2", "zzpaid3",
-               "zzresp", "zztool"):
+               "zzresp", "zztool", "zzrespp"):
         c.get("pools", {}).pop(pn, None)
     # T23：还原 search_summary 专门 Key 与抓取开关为生产原值（用例中途崩溃时兜底）
     ss = c.get("search_summary")
@@ -335,7 +381,7 @@ def deep_clean():
         if t in _tables:
             db_exec(f"DELETE FROM {t} WHERE {q}")
     if "decision_log" in _tables:
-        db_exec("DELETE FROM decision_log WHERE selected IN ({}) OR pool_name IN ('zzall','zzbad','zzlocal','zzswitch','zzsump','zzqfws2','zzsw','zzsw2','zzswsubl','zzswsubn','zzswnest','zzswnestn','zzpaid','zzpaid2','zzpaid3','zzresp','zztool')".format(
+        db_exec("DELETE FROM decision_log WHERE selected IN ({}) OR pool_name IN ('zzall','zzbad','zzlocal','zzswitch','zzsump','zzqfws2','zzsw','zzsw2','zzswsubl','zzswsubn','zzswnest','zzswnestn','zzpaid','zzpaid2','zzpaid3','zzresp','zztool','zzrespp')".format(
             ",".join(chr(39) + i + chr(39) for i in TEST_IDS)))
     # T30（v2.16.0）：清理测试产生的 Responses 存档（response.model 命中 mock 测试模型名；生产行不受影响）
     if "responses_store" in _tables:
@@ -409,6 +455,8 @@ def main():
     # 余额返还制 v2.11.3+:显式 token_type="gift" 选择,不再做供应商名文字识别
     c["providers"].append({"id": "zzark", "name": "zz-普通供应商", "protocol": "openai",
                            "base_url": f"http://127.0.0.1:{MOCK_PORT}/v1", "api_key": "x"})
+    c["providers"].append({"id": "zzmockr", "name": "zz-responses", "protocol": "openai_responses",
+                           "base_url": f"http://127.0.0.1:{MOCK_PORT}", "api_key": "x"})
     c["providers"].append({"id": "zzqf", "name": "zz-千帆搜索", "protocol": "qianfan_search",
                            "base_url": f"http://127.0.0.1:{MOCK_PORT}", "api_key": "x"})
     c["providers"].append({"id": "zzqf2", "name": "zz-千帆网页搜索", "protocol": "qianfan_web_search",
@@ -448,6 +496,8 @@ def main():
     # T30 Responses API：echo-token 通用池 + mock-toolcall 工具池
     c["pools"]["zzresp"] = {"model_ids": ["zzbt/echo-token"], "strategy": "sequential"}
     c["pools"]["zztool"] = {"model_ids": ["zzbt/echo-tool"], "strategy": "sequential"}
+    # T30f-h openai_responses 上游协议池
+    c["pools"]["zzrespp"] = {"model_ids": ["zzbt/echo-resp"], "strategy": "sequential"}
     json.dump(c, open(os.path.join(REPO, "config.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=2)
 
     # 启动隔离实例
@@ -1752,6 +1802,57 @@ def main():
               r_bg.status_code == 400 and r_cv.status_code == 400
               and r_ws.status_code == 400 and r_it.status_code == 400,
               (r_bg.status_code, r_cv.status_code, r_ws.status_code, r_it.status_code))
+
+        # ── T30f-h（v2.16.1）openai_responses 上游协议：网关 chat 格式 ⇄ Responses 上游互转 ──
+        # T30f chat 客户端 → Responses 上游：上游收到 Responses 格式（input/instructions/max_output_tokens），
+        # 响应转回 chat 格式（content/usage），计费 133 落账
+        captured_bodies.clear()
+        r = httpx.post(f"{BASE}/v1/chat/completions", headers=dict(ADMIN), timeout=30, json={
+            "model": "zzrespp", "max_tokens": 777,
+            "messages": [{"role": "system", "content": "系统提示"},
+                         {"role": "user", "content": "你好"}]})
+        rb = r.json()
+        up = captured_bodies[-1]
+        check("T30f chat→Responses上游互转与计费",
+              r.status_code == 200 and rb["choices"][0]["message"]["content"] == "答案"
+              and rb["usage"]["total_tokens"] == 133
+              and "input" in up and "messages" not in up and up.get("instructions") == "系统提示"
+              and up.get("max_output_tokens") == 777
+              and up["input"][0] == {"type": "message", "role": "user",
+                                     "content": [{"type": "input_text", "text": "你好"}]}
+              and token_used("zzbt/echo-resp") >= 133,
+              (r.status_code, rb.get("usage"), up.get("instructions")))
+
+        # T30g Responses 客户端 → Responses 上游（responses→chat→responses 全链往返）
+        r = httpx.post(f"{BASE}/v1/responses", headers=dict(ADMIN), timeout=30,
+                       json={"model": "zzrespp", "instructions": "系统提示", "input": "你好"})
+        rb = r.json()
+        check("T30g Responses客户端→Responses上游全链往返",
+              r.status_code == 200 and rb.get("object") == "response"
+              and any(i.get("type") == "message" and i["content"][0]["text"] == "答案"
+                      for i in rb.get("output", []))
+              and rb.get("usage", {}).get("total_tokens") == 133,
+              (r.status_code, rb.get("usage")))
+
+        # T30h 流式：上游 Responses 事件 → chat chunk（content 增量 + usage 帧 + [DONE]），决策日志 133
+        chunks30 = []
+        with httpx.stream("POST", f"{BASE}/v1/chat/completions", headers=dict(ADMIN), timeout=30,
+                          json={"model": "zzrespp", "stream": True,
+                                "messages": [{"role": "user", "content": "流式"}]}) as sr:
+            _st30h = sr.status_code
+            for line in sr.iter_lines():
+                if line.startswith("data: "):
+                    chunks30.append(line[6:])
+        dec30 = DB.execute("SELECT actual_tokens FROM decision_log WHERE pool_name='zzrespp' ORDER BY id DESC LIMIT 1").fetchone()
+        frames30 = [json.loads(c) for c in chunks30 if c != "[DONE]"]
+        content30 = "".join(f["choices"][0]["delta"].get("content", "")
+                            for f in frames30 if f.get("choices") and f["choices"][0].get("delta"))
+        usage30 = [f for f in frames30 if f.get("usage")]
+        check("T30h Responses上游流式→chat chunk与计费落账",
+              _st30h == 200 and chunks30[-1] == "[DONE]" and content30 == "答案"
+              and usage30 and usage30[-1]["usage"]["total_tokens"] == 133
+              and dec30 and dec30["actual_tokens"] == 133,
+              (_st30h, content30, dec30["actual_tokens"] if dec30 else None))
 
     finally:
         try:

@@ -262,6 +262,7 @@ main { max-width: 1240px; margin: 0 auto; padding: 40px 24px 90px; }
 .badge { display: inline-flex; align-items: center; gap: 4px; padding: 2.5px 9px; border-radius: 980px; font-size: 11px; font-weight: 600; letter-spacing: 0.01em; }
 .b-openai { background: rgba(0, 113, 227, 0.1); color: #0066cc; }
 .b-anthropic { background: rgba(255, 59, 48, 0.09); color: #d70015; }
+.b-responses { background: rgba(90, 200, 250, 0.12); color: #0a7fa8; }
 .b-free { background: rgba(52, 199, 89, 0.14); color: #1b7a3d; }
 .b-paid { background: rgba(255, 59, 48, 0.1); color: #d70015; }
 .b-once { background: rgba(175, 82, 222, 0.12); color: #7d26a8; }
@@ -1049,7 +1050,7 @@ select { max-width: 100%; }
       </div>
       <div id="inline-conn">
         <div class="f2">
-          <div class="fg"><label>提供商协议</label><select name="provider" onchange="onSearchSummaryVisibility()"><option value="openai">Chat Completions</option><option value="anthropic">Messages</option><option value="qianfan_search">千帆搜索</option><option value="qianfan_web_search">千帆网页搜索</option></select></div>
+          <div class="fg"><label>提供商协议</label><select name="provider" onchange="onSearchSummaryVisibility()"><option value="openai_responses">OpenAI Responses</option><option value="openai" selected>OpenAI Compatible</option><option value="anthropic">Anthropic</option><option value="qianfan_search">千帆搜索</option><option value="qianfan_web_search">千帆网页搜索</option></select></div>
           <div class="fg"><label>Base URL</label><input name="base_url" id="f-base-url" required placeholder="https://api.openai.com/v1"></div>
         </div>
         <div class="fg"><label>API Key</label><input name="api_key" id="f-api-key" required placeholder="sk-..."></div>
@@ -1145,7 +1146,7 @@ select { max-width: 100%; }
         <div class="fg"><label>供应商名称</label><input name="name" required placeholder="我的 OpenAI"></div>
       </div>
       <div class="f2">
-        <div class="fg"><label>协议</label><select name="protocol"><option value="openai">Chat Completions</option><option value="anthropic">Messages</option><option value="qianfan_search">千帆搜索</option><option value="qianfan_web_search">千帆网页搜索</option></select></div>
+        <div class="fg"><label>协议</label><select name="protocol"><option value="openai_responses">OpenAI Responses</option><option value="openai" selected>OpenAI Compatible</option><option value="anthropic">Anthropic</option><option value="qianfan_search">千帆搜索</option><option value="qianfan_web_search">千帆网页搜索</option></select></div>
         <div class="fg"><label>Base URL</label><input name="base_url" required placeholder="https://api.openai.com/v1"></div>
       </div>
       <div class="fg"><label>API Key</label><input name="api_key" required placeholder="sk-..."></div>
@@ -1433,8 +1434,8 @@ let modelLookup = {}, providerLookup = {}, poolLookup = {};
 let cachedModels = null, cachedProviders = null;
 let speedCache = JSON.parse(localStorage.getItem('gw_speed') || '{}');
 
-function protocolLabel(p) { return p === 'openai' ? 'Chat Completions' : p === 'anthropic' ? 'Messages' : p; }  // 官方接口名（value 仍为内部枚举）
-function provBadge(p) { return p === 'anthropic' ? '<span class="badge b-anthropic">Messages</span>' : p === 'qianfan_search' ? '<span class="badge b-once">千帆搜索</span>' : p === 'qianfan_web_search' ? '<span class="badge b-5h">千帆网页搜索</span>' : '<span class="badge b-openai">Chat Completions</span>'; }
+function protocolLabel(p) { return ({openai: 'OpenAI Compatible', anthropic: 'Anthropic', openai_responses: 'OpenAI Responses'})[p] || p; }  // 官方接口名（value 仍为内部枚举）
+function provBadge(p) { return p === 'anthropic' ? '<span class="badge b-anthropic">Anthropic</span>' : p === 'openai_responses' ? '<span class="badge b-responses">OpenAI Responses</span>' : p === 'qianfan_search' ? '<span class="badge b-once">千帆搜索</span>' : p === 'qianfan_web_search' ? '<span class="badge b-5h">千帆网页搜索</span>' : '<span class="badge b-openai">OpenAI Compatible</span>'; }
 function typeBadge(m) {
   if (m.token_type === 'one_time') return '<span class="badge b-once">一次性</span>';
   if (m.token_type === 'rolling_5h') return '<span class="badge b-5h">5h限额</span>';
