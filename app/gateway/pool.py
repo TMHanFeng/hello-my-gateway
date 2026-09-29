@@ -61,6 +61,7 @@ class ModelEntry:
     peak_windows: list = field(default_factory=list)
     peak_weekdays: set = field(default_factory=set)
     peak_exdates: set = field(default_factory=set)
+    peak_exdates_raw: str = ""  # v2.15.2 谷峰日原始串（含区间记法），供决策日志 detail 展示
     # Headroom 选配插件（非必装）：勾选模型在接单时压缩出站 messages 省 token；判定在回退循环内，
     # 未勾选候选收原文——同池勾选/不勾选并存即天然 A/B。库未安装/总开关关闭时自动旁路（headroom_plugin.py）
     headroom: bool = False
@@ -131,10 +132,33 @@ def _parse_peak_weekdays(raw) -> set:
 
 
 def _parse_peak_exdates(raw) -> set:
-    """特定谷峰日：MMDD 四位（如 1001=10月1日），段间 ; ，，空白均可；月 1-12 日 1-31 校验，非法段忽略"""
+    """特定谷峰日：MMDD 四位，或 MMDD-MMDD 区间（v2.15.2，如 1001-1007 含首尾；起>止=跨年经元旦），
+    段间 ; ，，空白均可；区间端点按真实日历校验（闰年 2/29 支持），非法段忽略。
+    返回展开后的 {MMDD 整型} 集合。"""
     out = set()
     for seg in re.split(r"[;；,，\s]+", str(raw or "")):
         seg = seg.strip()
+        m = re.fullmatch(r"(\d{4})\s*(?:-|—|－|~|～|至|到)\s*(\d{4})", seg)
+        if m:
+            try:
+                d0 = datetime(2000, int(m[1][:2]), int(m[1][2:]))   # 闰年锚点：支持 0229
+                d1 = datetime(2000, int(m[2][:2]), int(m[2][2:]))
+            except ValueError:
+                continue
+            if d0 <= d1:                    # 常规区间：含首尾逐日展开
+                while d0 <= d1:
+                    out.add(d0.month * 100 + d0.day)
+                    d0 += timedelta(days=1)
+            else:                           # 跨年区间：起 → 年末，年初 → 止
+                eoy = datetime(2000, 12, 31)
+                while d0 <= eoy:
+                    out.add(d0.month * 100 + d0.day)
+                    d0 += timedelta(days=1)
+                d0 = datetime(2000, 1, 1)
+                while d0 <= d1:
+                    out.add(d0.month * 100 + d0.day)
+                    d0 += timedelta(days=1)
+            continue
         if re.fullmatch(r"\d{4}", seg):
             mm, dd = int(seg[:2]), int(seg[2:])
             if 1 <= mm <= 12 and 1 <= dd <= 31:
@@ -281,6 +305,7 @@ class ModelPool:
                 peak_windows=_parse_peak_windows((m.get("cost_peak") or {}).get("windows", "")),
                 peak_weekdays=_parse_peak_weekdays((m.get("cost_peak") or {}).get("weekdays", "")),
                 peak_exdates=_parse_peak_exdates((m.get("cost_peak") or {}).get("exdates", "")),
+                peak_exdates_raw=str((m.get("cost_peak") or {}).get("exdates", "") or ""),
                 headroom=bool(m.get("headroom", False)),
                 valve_pct=valve_pct,
                 summary_pool=(m.get("summary_pool") or "").strip(),
@@ -672,7 +697,8 @@ class ModelPool:
                 hour_ok = (not entry.peak_windows) or _in_peak_windows(bj.hour * 60 + bj.minute, entry.peak_windows)
                 if day_ok and hour_ok:
                     wd_label = "".join(str(d) for d in sorted(entry.peak_weekdays))
-                    ex_label = ";".join(f"{d // 100:02d}{d % 100:02d}" for d in sorted(entry.peak_exdates))
+                    # 谷峰日优先展示原始串（保留区间记法），无原始串时退回展开集
+                    ex_label = entry.peak_exdates_raw or ";".join(f"{d // 100:02d}{d % 100:02d}" for d in sorted(entry.peak_exdates))
                     parts = []
                     if entry.peak_windows:
                         parts.append("每日 " + _fmt_peak_windows(entry.peak_windows))

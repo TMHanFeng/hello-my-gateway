@@ -1080,9 +1080,9 @@ select { max-width: 100%; }
         <div class="fg"><label>每日高峰时段（北京时间）</label><input name="peak_windows" id="f-peak-windows" placeholder="如 9:00-12:00;14:00-16:00（段内起≥止视为跨零点，如 21:00-6:00；留空=当天全天）"></div>
         <div class="f2">
           <div class="fg"><label>每周高峰（周几，1=周一 … 7=周日）</label><input name="peak_weekdays" id="f-peak-weekdays" placeholder="如 12345（周一至周五；留空=每天）"></div>
-          <div class="fg"><label>特定谷峰日（月日四位，每年循环）</label><input name="peak_exdates" id="f-peak-exdates" placeholder="如 1001;1002;0930（谷峰日全天视为闲时）"></div>
+          <div class="fg"><label>特定谷峰日（月日四位，每年循环）</label><input name="peak_exdates" id="f-peak-exdates" placeholder="如 1001-1007;0930（区间含首尾，起>止=跨年经元旦）"></div>
         </div>
-        <div class="hint">与「缓存 Token 计费统计」的高峰期为同一份数据（存储一处，两处修改互通，不影响其单价配置）。高峰 = 每周高峰日 ∩ 每日高峰时段 − 特定谷峰日；「仅闲时可用」模型高峰内不路由，三者均留空 = 全天闲时。每日时段：段间 <b>; ，，</b>、区间符 <b>- — ~ 至 到</b> 均可；每周仅认 1-7 数字；谷峰日段间 <b>; ，，</b> 均可，非法段自动忽略。</div>
+        <div class="hint">与「缓存 Token 计费统计」的高峰期为同一份数据（存储一处，两处修改互通，不影响其单价配置）。高峰 = 每周高峰日 ∩ 每日高峰时段 − 特定谷峰日；「仅闲时可用」模型高峰内不路由，三者均留空 = 全天闲时。每日时段：段间 <b>; ，，</b>、区间符 <b>- — ~ 至 到</b> 均可；每周仅认 1-7 数字；谷峰日支持单日与区间（如 1001-1007），段间 <b>; ，，</b> 均可，非法段自动忽略。</div>
       </div>
       <div id="local-fields" class="hidden">
         <div class="hint" style="color:#0f9d6e">本地模型：不计费、不限量，仅记录用量（usage 照常入统计）；安全阀不生效。</div>
@@ -1301,7 +1301,7 @@ select { max-width: 100%; }
       <div class="fg"><label>每日高峰时段（多段用分号分隔，北京时间）</label><input id="cost-peak-windows" placeholder="如 9:00-12:00;14:00-16:00（段内起≥止视为跨零点，如 21:00-6:00；留空=当天全天）" oninput="recalcCost()"><div class="hint">自适应解析：段间 <b>; ； , ，</b> 均可；区间符 <b>- — ~ ～ 至 到</b> 均可；时间 <b>9:00 / 09:00 / 9:30</b> 均可；无法解析的段自动忽略</div></div>
       <div class="f2">
         <div class="fg"><label>每周高峰（周几，1=周一 … 7=周日）</label><input id="cost-peak-weekdays" placeholder="如 12345（周一至周五；留空=每天）" oninput="recalcCost()"></div>
-        <div class="fg"><label>特定谷峰日（月日四位，每年循环）</label><input id="cost-peak-exdates" placeholder="如 1001;1002;0930（谷峰日全天按平峰计）" oninput="recalcCost()"></div>
+        <div class="fg"><label>特定谷峰日（月日四位，每年循环）</label><input id="cost-peak-exdates" placeholder="如 1001-1007;0930（区间含首尾，起>止=跨年经元旦）" oninput="recalcCost()"></div>
       </div>
       <div class="hint" style="margin:2px 0 8px">与模型编辑（付费模型）的高峰期为同一份数据（存储一处，两处修改互通）。高峰 = 每周高峰日 ∩ 每日高峰时段 − 特定谷峰日；仅配置谷峰日不构成高峰。</div>
       <div class="f3">
@@ -3842,19 +3842,53 @@ function _parsePeakWindows(str) {
 }
 function _fmtMin(v) { return String(Math.floor(v / 60)).padStart(2, '0') + ':' + String(v % 60).padStart(2, '0'); }
 function _peakLabel(wins) { return wins.map(w => _fmtMin(w[0]) + '-' + _fmtMin(w[1])).join(';'); }
-/* v2.15.1 每周高峰/特定谷峰日规范化：每周仅保留 1-7 数字去重升序；谷峰仅保留合法 MMDD 四位（月1-12 日1-31）分号连接 */
+/* v2.15.1 每周高峰规范化：仅保留 1-7 数字去重升序 */
 function _normPeakWeekdays(str) {
   const seen = new Set();
   String(str || '').split('').forEach(c => { const n = +c; if (c !== ' ' && n >= 1 && n <= 7) seen.add(n); });
   return Array.from(seen).sort((a, b) => a - b).join('');
 }
+/* v2.15.1 每周高峰/特定谷峰日规范化：每周仅保留 1-7 数字去重升序；
+   v2.15.2 谷峰支持 MMDD-MMDD 区间（如 1001-1007 含首尾；起>止=跨年经元旦），保留区间记法 */
+function _validMD(s4) { const mm = +s4.slice(0, 2), dd = +s4.slice(2); return mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31; }
 function _normPeakExdates(str) {
-  const seen = new Set();
-  String(str || '').split(/[;；,，\s]+/).forEach(x => {
-    x = x.trim();
-    if (/^\d{4}$/.test(x) && +x.slice(0, 2) >= 1 && +x.slice(0, 2) <= 12 && +x.slice(2) >= 1 && +x.slice(2) <= 31) seen.add(x);
+  const seen = new Set(), items = [];
+  String(str || '').split(/[;；,，\s]+/).forEach(raw => {
+    const seg = raw.trim();
+    if (!seg) return;
+    const m = seg.match(/^(\d{4})\s*(?:-|—|－|~|～|至|到)\s*(\d{4})$/);
+    if (m && _validMD(m[1]) && _validMD(m[2])) {
+      const key = 'r' + m[1] + m[2];
+      if (!seen.has(key)) { seen.add(key); items.push({ key, text: m[1] + '-' + m[2], start: +m[1] }); }
+      return;
+    }
+    if (/^\d{4}$/.test(seg) && _validMD(seg) && !seen.has(seg)) { seen.add(seg); items.push({ key: seg, text: seg, start: +seg }); }
   });
-  return Array.from(seen).join(';');
+  items.sort((a, b) => a.start - b.start);
+  return items.map(x => x.text).join(';');
+}
+/* 规范化谷峰串 → {MMDD 整型} 集合（区间含首尾展开；起>止=跨年；闰年锚点支持 0229；与后端同规则） */
+function _expandExdates(normStr) {
+  const out = new Set();
+  String(normStr || '').split(';').forEach(tok => {
+    if (!tok) return;
+    const m = tok.match(/^(\d{4})-(\d{4})$/);
+    if (m) {
+      let cur = new Date(2000, +m[1].slice(0, 2) - 1, +m[1].slice(2));
+      const end = new Date(2000, +m[2].slice(0, 2) - 1, +m[2].slice(2));
+      const add = () => { out.add((cur.getMonth() + 1) * 100 + cur.getDate()); };
+      if (cur <= end) { while (cur <= end) { add(); cur.setDate(cur.getDate() + 1); } }
+      else {
+        const eoy = new Date(2000, 11, 31);
+        while (cur <= eoy) { add(); cur.setDate(cur.getDate() + 1); }
+        cur = new Date(2000, 0, 1);
+        while (cur <= end) { add(); cur.setDate(cur.getDate() + 1); }
+      }
+      return;
+    }
+    out.add(+tok);
+  });
+  return out;
 }
 /* 分钟数是否落在任一高峰段内（跨零点段 a>=b 按 a..24:00∪0:00..b 判定） */
 function _inPeakWins(minute, wins) {
@@ -3895,8 +3929,9 @@ async function showCostEst(modelId) {
 function _costPeakCfg() {
   const wins = _parsePeakWindows(document.getElementById('cost-peak-windows').value);
   const wds = _normPeakWeekdays(document.getElementById('cost-peak-weekdays').value);
-  const exs = new Set(_normPeakExdates(document.getElementById('cost-peak-exdates').value).split(';').filter(Boolean));
-  return { wins, wds, exs };
+  const exLabel = _normPeakExdates(document.getElementById('cost-peak-exdates').value);
+  const exs = _expandExdates(exLabel);
+  return { wins, wds, exs, exLabel };
 }
 /* 小时桶（hour_key "YYYY-MM-DD HH"）是否落在高峰内：谷峰日豁免 > 每周高峰日 > 每日时段；
    每周留空=每天；每日留空=当天全天（须与后端 pool 判定同规则） */
@@ -3953,7 +3988,7 @@ function recalcCost() {
     total = pkCost + offCost;
     let pkDesc = pkCfg.wins.length ? _peakLabel(pkCfg.wins) : '';
     if (pkCfg.wds) pkDesc += (pkDesc ? ' · ' : '') + '周' + pkCfg.wds;
-    if (pkCfg.exs.size) pkDesc += (pkDesc ? ' · ' : '') + '谷峰' + Array.from(pkCfg.exs).join(';');
+    if (pkCfg.exs.size) pkDesc += (pkDesc ? ' · ' : '') + '谷峰' + pkCfg.exLabel;
     html += '<tr><td colspan="4" style="padding:2px 8px"></td></tr>' +
       (pkCfg.wins.length || pkCfg.wds.length
         ? _sumRow('高峰小计（' + pkDesc + '）', pkT.calls, pkCost, '#d70015') +

@@ -1523,6 +1523,27 @@ def main():
               and d.get("peak", {}).get("windows") == _ALLDAY
               and d.get("peak", {}).get("exdates") == _md_today, d.get("peak"))
 
+        # ── T29l-n（v2.15.2）谷峰日区间：MMDD-MMDD 含首尾；起>止=跨年经元旦 ──
+        from datetime import timedelta as _td2
+        _yest = (_bj - _td2(days=1)).strftime("%m%d")
+        _tom = (_bj + _td2(days=1)).strftime("%m%d")
+        # T29l 区间 昨天-今天-明天（跨月时自动成为跨年区间）必覆盖今天 → 谷峰豁免放行
+        _set_peak({"enabled": False, "windows": _ALLDAY, "weekdays": _wd_today, "exdates": f"{_yest}-{_tom}"})
+        row = _zzpaid_sel()
+        check("T29l 谷峰区间覆盖今天(放行)", row["selected"] == "zzbt/paid-idle-block", row["selected"])
+        # T29m 跨年环绕区间 明天-昨天：覆盖除今天外一整圈，唯独不含今天 → 照拦（验证环绕展开的空档语义）
+        _set_peak({"enabled": False, "windows": _ALLDAY, "weekdays": _wd_today, "exdates": f"{_tom}-{_yest}"})
+        row = _zzpaid_sel()
+        check("T29m 跨年环绕区间不含今天照拦", row["selected"] == "zzbt/paid-allday", row["selected"])
+        # T29n 不含今天的常规区间 → 照拦；且原始区间串原样保留落库（cost 端点透出）
+        _rng_far = f"{(_bj + _td2(days=10)).strftime('%m%d')}-{(_bj + _td2(days=20)).strftime('%m%d')}"
+        _set_peak({"enabled": False, "windows": _ALLDAY, "weekdays": _wd_today, "exdates": _rng_far})
+        row = _zzpaid_sel()
+        d = httpx.get(f"{BASE}/admin/model/zzbt/paid-idle-block/cost", headers=ADMIN, timeout=15).json()
+        check("T29n 区间不含今天照拦且区间串保留",
+              row["selected"] == "zzbt/paid-allday"
+              and d.get("peak", {}).get("exdates") == _rng_far, (row["selected"], d.get("peak", {}).get("exdates")))
+
     finally:
         try:
             deep_clean()
