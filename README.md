@@ -83,13 +83,13 @@ data/ 运行时数据（gateway.db、探测缓存、dev pid），与代码隔离
 |:---|:---|:---|
 | 传统 `/admin` + 科技感 `/hfadmin`，共用同一套后端 API | 池内模型、模型列表、池/供应商顺序均可拖拽 | 每条 step 携带具体数值（ms/RPM/错误类型/HTTP 状态） |
 
-| 🔌 OpenAI / Anthropic 双协议 | 📡 流式支持 | ⚡ 自动测速 |
+| 🔌 三接口官方格式 | 📡 流式支持 | ⚡ 自动测速 |
 |:---|:---|:---|
-| 客户端可用任一协议调用，网关自动转换 | SSE 流式透传，Anthropic 自动转 OpenAI chunk | 管理后台一键并发测速，滑动平均延迟 |
+| Chat Completions / Responses / Messages 三格式原生收发（含工具调用与状态化），网关自动转换 | SSE 流式透传，Anthropic 自动转 OpenAI chunk | 管理后台一键并发测速，滑动平均延迟 |
 
 | 🧠 统一思考控制 | 🧪 计费回归安全网 | 📐 智能估算超时 |
 |:---|:---|:---|
-| `reasoning_effort` 六档 → 按模型 `reasoning_map` 换算上游思考参数；思考内容统一回传 `reasoning_content` / `thinking` | 203 断言计费回归套件（`test_billing_regression.py`）：流式/非流式/一次性/RPM 触顶/安全阀/并发入账零丢失，任何改动先跑套件再上线 | `smart_estimate` 模型按 token 量动态计算超时（吞吐 EMA 校准），样本不足自动回退固定值 |
+| `reasoning_effort` 六档 → 按模型 `reasoning_map` 换算上游思考参数；思考内容统一回传 `reasoning_content` / `thinking` | 208 断言计费回归套件（`test_billing_regression.py`）：流式/非流式/一次性/RPM 触顶/安全阀/并发入账零丢失，任何改动先跑套件再上线 | `smart_estimate` 模型按 token 量动态计算超时（吞吐 EMA 校准），样本不足自动回退固定值 |
 
 | 📡 Embedding / Rerank | 🔑 用户密钥管理 | 📄 JSON 输出路由 |
 |:---|:---|:---|
@@ -166,7 +166,7 @@ python -m app.main
 >
 > 💡 **Ubuntu / Linux**：`python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt && python3 -m app.main`，或直接 `./start_gateway.sh`（自动选 venv/系统解释器；停止 `./stop_gateway.sh`）。代码本身跨平台：运行时目录（data/ logs/ backup/）首次启动自动创建，路径处理与日志滚动均适配 POSIX 文件系统。回归套件同样可在 Linux 运行：`python tests/test_billing_regression.py`。
 >
-> 🧪 **改动计费相关代码后**：`python tests/test_billing_regression.py` 运行 203 断言计费回归套件（自动在 8651 起隔离实例 + mock 上游，不触碰生产端口），全绿再上线。
+> 🧪 **改动计费相关代码后**：`python tests/test_billing_regression.py` 运行 208 断言计费回归套件（自动在 8651 起隔离实例 + mock 上游，不触碰生产端口），全绿再上线。
 
 ---
 
@@ -213,7 +213,7 @@ hello-my-gateway/
 │   ├── index.html                # 传统管理后台（/admin）
 │   └── hfadmin.html              # 科技感管理面板（/hfadmin）
 ├── tests/
-│   └── test_billing_regression.py # 计费回归套件（203 断言，隔离实例 + mock 上游）
+│   └── test_billing_regression.py # 计费回归套件（208 断言，隔离实例 + mock 上游）
 ├── start_gateway.cmd             # Windows 启动入口（自动选解释器，幂等）
 ├── stop_gateway.cmd              # 停止入口（身份核验，只停本仓库网关）
 ├── start_gateway.sh              # Linux/macOS 启动入口（语义同 .cmd：选解释器 + 已运行自检）
@@ -248,7 +248,19 @@ hello-my-gateway/
 | **请求** | Anthropic Messages → OpenAI Chat Completions：`system` 字段提取、`messages` 内容块（text/image）转换、`stop_sequences` → `stop` |
 | **认证** | `x-api-key: <密钥>` 或 `Authorization: Bearer <密钥>` 均可 |
 | **响应** | OpenAI → Anthropic Messages：含流式事件 `message_start` / `content_block_delta` / `content_block_stop` / `message_delta` / `message_stop`；`message_delta.usage.output_tokens` 反映真实 Token 用量 |
-| **限制** | Anthropic 格式暂不支持 `tools` / `tool_choice`（返回 400 明确拒绝，请用 OpenAI 格式） |
+| **限制** | Anthropic 格式暂不支持 `tools` / `tool_choice`（返回 400 明确拒绝，请用 Chat Completions 或 Responses 格式） |
+
+### OpenAI Responses 格式调用（v2.16.0）
+
+客户端可用 OpenAI SDK 的 `client.responses.create()` 直接调用（`base_url` 指向网关、以 `/v1` 结尾，与 Chat Completions 同一配置），端点为官方路径 `POST /v1/responses`：
+
+| 方向 | 处理 |
+|:---|:---|
+| **请求** | Responses → Chat Completions：`input`（字符串/item 数组）→ `messages`、`instructions` → `system`、`tools`（flat）→ nested function、`tool_choice` 映射、`reasoning.effort` → `reasoning_effort`、`max_output_tokens` → `max_tokens`、`text.format`（json_object/json_schema）→ `response_format`（json_output 路由门槛自动生效） |
+| **工具往返** | `function_call` item → assistant `tool_calls`、`function_call_output` → role=tool；响应/流式增量中的 `tool_calls` → `function_call` output item（`call_id`/`name`/`arguments`，流式为 `response.function_call_arguments.delta` 事件） |
+| **响应** | Chat → Responses：`object:"response"` + output items（`reasoning` / `message`(`output_text`) / `function_call`）+ 官方 usage 形状；流式事件 `response.created` → `output_item.added` → `output_text.delta` / `reasoning_text.delta` → `response.completed`（sequence_number 递增） |
+| **状态化** | `store` 默认 true：响应自动存档（`previous_response_id` 引用完整上下文，一次查库链展开）；`GET /v1/responses/{id}` 检索、`DELETE /v1/responses/{id}` 删除；`item_reference` 在所引用响应 output 内一级解析。TTL 由 config 键 `responses_store_ttl_hours` 控制（默认 720 小时，存档时顺带清理过期行） |
+| **限制** | 不支持 `background`、`conversation`、内置工具（`web_search` / `file_search` 等，仅支持 function 工具）、未知 item 类型（均 400 带原因）；`truncate` / `include` / `metadata` / `parallel_tool_calls` 忽略 |
 
 ---
 
@@ -256,7 +268,7 @@ hello-my-gateway/
 
 | `provider` | 协议 | 端点 |
 |:---|:---|:---|
-| `openai` | OpenAI 兼容 | `{base_url}/chat/completions` |
+| `openai` | Chat Completions 兼容 | `{base_url}/chat/completions` |
 | `anthropic` | Anthropic Messages | `{base_url}/v1/messages` |
 
 Anthropic 适配器自动完成：
@@ -492,8 +504,10 @@ Anthropic 适配器自动完成：
 
 | 端点 | 方法 | 说明 |
 |:---|:---:|:---|
-| `/v1/chat/completions` | POST | 对话（支持 `stream`，OpenAI 与 Anthropic 格式均可） |
+| `/v1/chat/completions` | POST | 对话（支持 `stream`，Chat Completions 与 Messages 格式均可） |
 | `/v1/messages` | POST | Anthropic Messages 格式对话（同 `/v1/chat/completions`） |
+| `/v1/responses` | POST | OpenAI Responses 格式对话（v2.16.0，含工具调用与 `previous_response_id` 状态化，见上文专节） |
+| `/v1/responses/{id}` | GET / DELETE | 检索 / 删除已存档的 Responses（`store=true` 时；创建 Key 本人或管理员） |
 | `/v1/embeddings` | POST | OpenAI 兼容 embedding（仅路由到模态=embedding 的模型，响应透传上游） |
 | `/v1/rerank` | POST | 重排（Jina/Cohere/SiliconFlow 兼容；仅路由到模态=rerank 的模型，响应透传上游） |
 | `/v1/models` | GET | 模型与池列表 |
@@ -619,6 +633,8 @@ SQLite（`gateway.db`）持久化以下表：
 ## 📜 版本
 
 ### 最新
+
+**`v2.16.0`** — **三接口官方命名 + OpenAI Responses API（含工具与状态化）**：①**接口命名统一为官方名**：面板协议下拉/徽章/详情显示 `Chat Completions`（原"openai（兼容格式）"）/ `Messages`（原"anthropic"），内部枚举值不变（config 零迁移，顺带修复 hfadmin 供应商表单与 admin 面板文案不一致）。②**新端点 `POST /v1/responses`**（官方路径，OpenAI SDK `base_url` 以 `/v1` 结尾即同一套配置直接 `client.responses.create()`）：新增 `app/core/responses_adapter.py` 纯函数适配（与 format_adapter 同构，内部经 chat 枢纽，路由/计费/决策日志零改动）——请求方向 `input`(str/items)→messages、`instructions`→system、flat `tools`→nested、`function_call`/`function_call_output` 历史往返、`tool_choice` 映射、`reasoning.effort`→`reasoning_effort`、`max_output_tokens`→`max_tokens`、`text.format`→`response_format`；响应方向 output items（`reasoning`/`message`/`function_call`）+ 官方 usage 形状；流式 chat chunk → Responses 事件流（`response.created`→`output_item.added`→`output_text.delta`/`reasoning_text.delta`/`function_call_arguments.delta`→`response.completed`，sequence_number 递增，幂等收尾兜底照抄 openai_sse_to_anthropic 成熟模式）。③**状态化**：新表 `responses_store`（CREATE TABLE IF NOT EXISTS，存量库重启自动建）存档链展开后的完整输入与响应对象，`store` 默认 true、`previous_response_id` 一次查库链展开（存档即展开结果无递归）、`item_reference` output 内一级解析；`GET /v1/responses/{id}` 检索、`DELETE` 删除（创建 Key 本人或管理员）；TTL config 键 `responses_store_ttl_hours`（默认 720h），存档时顺带清理过期行（不进 scheduler）。④不支持项明确 400：`background`/`conversation`/内置工具（仅 function）/未知 item 类型；`truncate`/`include`/`metadata` 忽略。⑤回归 203→208 断言全绿（T30：非流式转换与上游 payload 断言/工具定义-历史-结果与响应往返/流式事件序+completed 带 usage+计费落账 133/状态化存取-链拼接-删除-store=false-404/不支持项四连 400）；修复实施中发现的 previous_response_id + 字符串 input 的 list+str TypeError。生效说明：需重启网关生效。
 
 **`v2.13.3`** — **池级 Switch 切换路由（配合 dsh 脱敏网关插件）**：①**池编辑新增「🔀 Switch 切换」开关**：config 池字典 `switch_enabled`，双面板池卡片接线（复用 auto_order/load_balance 开关模式），开启被拒（池内缺某侧模型）时 api() 自动 toast 服务端原因，失败也重拉池让勾选回弹为服务端真实状态 ②**本地/云端标注复用 `token_type`**：`local`=令牌类型为 local 的本地模型（v2.12.5），`net`=其余云端模型——模型管理零改动、存量零迁移 ③**新入站端点 `POST /{池名}`**（不走 /v1）：`switch=local|net`（query 参数优先、body 字段兜底）定向路由池内对应侧模型，校验链 404 池不存在 → 403 Key 无池权限（复用 allowed_pools，不新增权限位）→ 403 池未开 switch → 422 非法/缺失值（报错列出合法值）；body.model 一律改写为池名 ④**语义红线——绝不静默跨侧**：switch 请求旁路 single_override 与兜底池升级，同侧耗尽宁可 503 让客户端重试（脱敏场景下跨侧=安全事故）；同侧多模型仍可在同侧内按序重试/冷却，失败详情明确报"池内没有该侧模型" ⑤**路由可查零建表**：decision_log 复用现有表，`requested` 列写 `switch:local/net`，调用决策弹窗与 Key 最近调用记录两个现有界面零改动即显示走了哪侧 ⑥**开池校验**：开启 switch 时按本次提交的 model_ids 递归展开（含 pool: 子池）要求两侧齐全，缺侧 400 带指引；先校验后改配置，被拒改动不残留共享缓存 ⑦回归 142→162 断言全绿（T24 二十项：两侧路由精确且另一侧零调用、同侧耗尽 503 不跨侧、决策日志与 /admin/decisions 可查、授权 Key 计费 133、流式、body 传参与 model 补齐、开池校验 400/不残留/还原、双面板控件在位）
 

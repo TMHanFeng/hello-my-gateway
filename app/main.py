@@ -23,6 +23,12 @@ from app.core.format_adapter import (
     openai_to_anthropic_response,
     openai_sse_to_anthropic,
 )
+from app.core.responses_adapter import (
+    ResponsesFormatError,
+    responses_to_openai,
+    openai_to_responses_response,
+    openai_sse_to_responses,
+)
 
 import logging
 from app.core.logging_config import setup_logging, LOG_FILE
@@ -145,8 +151,24 @@ def _overflow_passthrough_response(e: ContextOverflowPassThrough):
     return JSONResponse(status_code=e.status_code, content=body_obj)
 
 
+def _responses_store_cb(ctx: dict | None):
+    """Responses 状态化（v2.16.0）：流式 response.completed 事件前把完整 response 对象落库。
+    store=false 或无 ctx 时返回 None（转换器零开销旁路）；落库失败不影响事件流收尾。"""
+    if not ctx or not ctx.get("store"):
+        return None
+
+    async def _store(resp_obj: dict):
+        await db.store_response(
+            resp_obj.get("id", ""), ctx.get("input_items") or [], resp_obj,
+            key_id=ctx.get("key_id"), ttl_hours=ctx.get("ttl_hours", 720),
+        )
+
+    return _store
+
+
 async def _chat_handler(request: Request, auth: dict, forced_pool: str | None = None,
-                        switch_role: str = "", body: dict | None = None):
+                        switch_role: str = "", body: dict | None = None,
+                        inbound_format: str | None = None, responses_ctx: dict | None = None):
     # 请求体大小预检：Content-Length 超 20MB 直接拒绝（在解析 JSON 之前）
     cl = request.headers.get("content-length")
     if cl and cl.isdigit() and int(cl) > 20 * 1024 * 1024:
@@ -162,7 +184,8 @@ async def _chat_handler(request: Request, auth: dict, forced_pool: str | None = 
             raise HTTPException(status_code=400, detail="Invalid JSON body")
         body["model"] = forced_pool
 
-    is_anthropic = is_anthropic_request(dict(request.headers), body)
+    # responses 入站在端点层已归一为 chat：跳过 anthropic 嗅探（防 anthropic-version 头误判二次转换）
+    is_anthropic = False if inbound_format == "responses" else is_anthropic_request(dict(request.headers), body)
     if is_anthropic:
         # Anthropic 格式暂不支持工具调用（tool_use 转换未实现）：显式拒绝而非静默降级
         if body.get("tools") or body.get("tool_choice"):
@@ -232,6 +255,8 @@ async def _chat_handler(request: Request, auth: dict, forced_pool: str | None = 
             stream = _wrap_key_stream(stream, key, key.get("billing_mode", "token"))
         if is_anthropic:
             stream = openai_sse_to_anthropic(stream)
+        elif inbound_format == "responses":
+            stream = openai_sse_to_responses(stream, on_complete=_responses_store_cb(responses_ctx))
 
         async def generate():
             # 问题31（v2.12.3）：最外层确定性关闭——客户端断开/取消时由 finally 逐层传播
@@ -281,6 +306,16 @@ async def _chat_handler(request: Request, auth: dict, forced_pool: str | None = 
             await keyauth.charge_key_usage(key, amount)
     if is_anthropic:
         return openai_to_anthropic_response(response.model_dump())
+    if inbound_format == "responses":
+        resp_obj = openai_to_responses_response(response)
+        if responses_ctx and responses_ctx.get("store"):
+            try:
+                await db.store_response(resp_obj["id"], responses_ctx.get("input_items") or [], resp_obj,
+                                        key_id=responses_ctx.get("key_id"),
+                                        ttl_hours=responses_ctx.get("ttl_hours", 720))
+            except Exception:
+                logger.warning(f"[Responses存档失败] id={resp_obj.get('id')}", exc_info=True)
+        return resp_obj
     return response
 
 
@@ -293,6 +328,110 @@ async def chat_completions(request: Request, auth: dict = Depends(verify_key)):
 async def messages_endpoint(request: Request, auth: dict = Depends(verify_key)):
     # Anthropic Messages 格式端点：同处理逻辑（is_anthropic 因 anthropic-version 头为 True → 响应自动转 Anthropic）
     return await _chat_handler(request, auth)
+
+
+def _as_input_items(effective_input) -> list:
+    """状态化存档用：input 归一为 item 数组（字符串输入包成单条 user message item）。"""
+    if isinstance(effective_input, list):
+        return effective_input
+    if isinstance(effective_input, str):
+        return [{"type": "message", "role": "user", "content": effective_input}]
+    return []
+
+
+@app.post("/v1/responses")
+async def responses_endpoint(request: Request, auth: dict = Depends(verify_key)):
+    """OpenAI Responses API 端点（v2.16.0）：归一为 chat 格式后复用 _chat_handler 全链路
+    （鉴权/池路由/fallback/计费/决策日志），响应侧转回 Responses 格式。
+    状态化：previous_response_id 链展开 + item_reference 一级解析 + 存档（store 默认 true）。"""
+    cl = request.headers.get("content-length")
+    if cl and cl.isdigit() and int(cl) > 20 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="请求体过大（上限 20MB）")
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+    if body.get("background"):
+        raise HTTPException(status_code=400, detail="background 模式暂不支持")
+    if body.get("conversation"):
+        raise HTTPException(status_code=400, detail="conversation 暂不支持（请使用 previous_response_id）")
+
+    effective_input = body.get("input")
+    prev_id = body.get("previous_response_id")
+    if prev_id:
+        prev = await db.get_response(str(prev_id))
+        if prev is None:
+            raise HTTPException(status_code=404, detail=f"previous_response_id '{prev_id}' 不存在或已过期")
+        if isinstance(effective_input, str):
+            # 字符串输入先包成 item，再与链历史拼接（list + str 会 TypeError）
+            effective_input = [{"type": "message", "role": "user", "content": effective_input}]
+        if isinstance(effective_input, list):
+            resolved = []
+            for it in effective_input:
+                if isinstance(it, dict) and it.get("type") == "item_reference":
+                    hit = next(
+                        (o for o in prev["response"].get("output", [])
+                         if isinstance(o, dict) and o.get("id") == it.get("id")),
+                        None,
+                    )
+                    if hit is None:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"item_reference '{it.get('id')}' 不在所引用响应的 output 内",
+                        )
+                    resolved.append(hit)
+                else:
+                    resolved.append(it)
+            effective_input = resolved
+        # 链展开：存档 input_items 本就是链展开结果 → 一次查库拼接即可，无递归
+        effective_input = (prev["input_items"] or []) + (prev["response"].get("output", []) or []) + (effective_input or [])
+        body = {**body, "input": effective_input}
+
+    try:
+        chat_body = responses_to_openai(body)
+    except ResponsesFormatError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    key = auth.get("key") or {}
+    responses_ctx = {
+        "store": bool(body.get("store", True)),
+        "input_items": _as_input_items(effective_input),
+        "key_id": key.get("id") if key else None,
+        "ttl_hours": load_config().get("responses_store_ttl_hours", 720),
+    }
+    return await _chat_handler(request, auth, body=chat_body,
+                               inbound_format="responses", responses_ctx=responses_ctx)
+
+
+def _check_response_access(rec: dict, auth: dict):
+    """GET/DELETE /v1/responses/{id} 权限：创建 Key 本人、管理员 Key 或服务器密钥。"""
+    if auth["kind"] == "key_user":
+        key = auth.get("key") or {}
+        if not key or rec.get("key_id") != key.get("id"):
+            raise HTTPException(status_code=403, detail="无权访问该 response")
+
+
+@app.get("/v1/responses/{resp_id}")
+async def responses_get(resp_id: str, auth: dict = Depends(verify_key)):
+    """检索已存档的 response（store=true 时可用；重建完整 response 对象）。"""
+    rec = await db.get_response(resp_id)
+    if rec is None:
+        raise HTTPException(status_code=404, detail=f"response '{resp_id}' 不存在或已过期")
+    _check_response_access(rec, auth)
+    return rec["response"]
+
+
+@app.delete("/v1/responses/{resp_id}")
+async def responses_delete(resp_id: str, auth: dict = Depends(verify_key)):
+    """删除已存档的 response（删除后 previous_response_id 引用将 404）。"""
+    rec = await db.get_response(resp_id)
+    if rec is None:
+        raise HTTPException(status_code=404, detail=f"response '{resp_id}' 不存在或已过期")
+    _check_response_access(rec, auth)
+    await db.delete_response(resp_id)
+    return {"id": resp_id, "object": "response", "deleted": True}
 
 
 @app.get("/v1/models")

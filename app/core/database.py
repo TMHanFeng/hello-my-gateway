@@ -335,6 +335,21 @@ async def init_db():
                 PRIMARY KEY (model_name, hour_key)
             )
         """)
+        # v2.16.0 Responses API 状态化：previous_response_id 引用的响应存档
+        # （input_items 为链展开后的完整输入；response_json 为返回给客户端的完整 response 对象，
+        #  GET /v1/responses/{id} 原样重建。有界性：store 时顺带清理过期行，TTL 由 config
+        #  responses_store_ttl_hours 控制，默认 720h）
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS responses_store (
+                id TEXT PRIMARY KEY,
+                created_at REAL NOT NULL,
+                expires_at REAL NOT NULL,
+                key_id INTEGER,
+                input_items TEXT DEFAULT '[]',
+                response_json TEXT DEFAULT '{}'
+            )
+        """)
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_responses_store_expires ON responses_store(expires_at)")
         await db.commit()
 
 
@@ -1390,3 +1405,55 @@ async def get_hourly_usage(key_id: int, date_str: str) -> dict[str, int]:
         hour = str(r["hour_key"]).split("-")[-1]
         out[hour] = r["used_amount"]
     return out
+
+
+async def store_response(resp_id: str, input_items: list, response_obj: dict,
+                         key_id: int | None = None, ttl_hours: float = 720) -> None:
+    """v2.16.0 Responses 状态化：存档一条 response（input_items 为链展开后的完整输入）。
+    顺带清理过期行——不进 scheduler，写入频率即清理频率，表恒有界。"""
+    now = time.time()
+    async with _maybe_lock():
+        db = await _get_conn()
+        await db.execute(
+            "INSERT OR REPLACE INTO responses_store (id, created_at, expires_at, key_id, input_items, response_json)"
+            " VALUES (?,?,?,?,?,?)",
+            (resp_id, now, now + (ttl_hours or 720) * 3600, key_id,
+             json.dumps(input_items, ensure_ascii=False), json.dumps(response_obj, ensure_ascii=False)),
+        )
+        await db.execute("DELETE FROM responses_store WHERE expires_at < ?", (now,))
+        await _commit(db)
+
+
+async def get_response(resp_id: str) -> dict | None:
+    """读取一条 response 存档：{id, created_at, expires_at, key_id, input_items(list), response(dict)}。"""
+    async with _maybe_lock():
+        db = await _get_conn()
+        row = await (await db.execute(
+            "SELECT id, created_at, expires_at, key_id, input_items, response_json"
+            " FROM responses_store WHERE id = ? AND expires_at >= ?",
+            (resp_id, time.time()),
+        )).fetchone()
+    if row is None:
+        return None
+    try:
+        input_items = json.loads(row["input_items"])
+    except Exception:
+        input_items = []
+    try:
+        response_obj = json.loads(row["response_json"])
+    except Exception:
+        response_obj = {}
+    return {
+        "id": row["id"], "created_at": row["created_at"], "expires_at": row["expires_at"],
+        "key_id": row["key_id"], "input_items": input_items, "response": response_obj,
+    }
+
+
+async def delete_response(resp_id: str) -> bool:
+    """删除一条 response 存档（DELETE /v1/responses/{id}）。返回是否删除了行。"""
+    async with _maybe_lock():
+        db = await _get_conn()
+        cursor = await db.execute("DELETE FROM responses_store WHERE id = ?", (resp_id,))
+        removed = cursor.rowcount or 0
+        await _commit(db)
+    return removed > 0

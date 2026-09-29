@@ -1049,7 +1049,7 @@ select { max-width: 100%; }
       </div>
       <div id="inline-conn">
         <div class="f2">
-          <div class="fg"><label>提供商协议</label><select name="provider" onchange="onSearchSummaryVisibility()"><option value="openai">openai（兼容格式）</option><option value="anthropic">anthropic</option><option value="qianfan_search">千帆搜索</option><option value="qianfan_web_search">千帆网页搜索</option></select></div>
+          <div class="fg"><label>提供商协议</label><select name="provider" onchange="onSearchSummaryVisibility()"><option value="openai">Chat Completions</option><option value="anthropic">Messages</option><option value="qianfan_search">千帆搜索</option><option value="qianfan_web_search">千帆网页搜索</option></select></div>
           <div class="fg"><label>Base URL</label><input name="base_url" id="f-base-url" required placeholder="https://api.openai.com/v1"></div>
         </div>
         <div class="fg"><label>API Key</label><input name="api_key" id="f-api-key" required placeholder="sk-..."></div>
@@ -1145,7 +1145,7 @@ select { max-width: 100%; }
         <div class="fg"><label>供应商名称</label><input name="name" required placeholder="我的 OpenAI"></div>
       </div>
       <div class="f2">
-        <div class="fg"><label>协议</label><select name="protocol"><option value="openai">openai</option><option value="anthropic">anthropic</option><option value="qianfan_search">千帆搜索</option><option value="qianfan_web_search">千帆网页搜索</option></select></div>
+        <div class="fg"><label>协议</label><select name="protocol"><option value="openai">Chat Completions</option><option value="anthropic">Messages</option><option value="qianfan_search">千帆搜索</option><option value="qianfan_web_search">千帆网页搜索</option></select></div>
         <div class="fg"><label>Base URL</label><input name="base_url" required placeholder="https://api.openai.com/v1"></div>
       </div>
       <div class="fg"><label>API Key</label><input name="api_key" required placeholder="sk-..."></div>
@@ -1433,7 +1433,8 @@ let modelLookup = {}, providerLookup = {}, poolLookup = {};
 let cachedModels = null, cachedProviders = null;
 let speedCache = JSON.parse(localStorage.getItem('gw_speed') || '{}');
 
-function provBadge(p) { return p === 'anthropic' ? '<span class="badge b-anthropic">anthropic</span>' : p === 'qianfan_search' ? '<span class="badge b-once">千帆搜索</span>' : p === 'qianfan_web_search' ? '<span class="badge b-5h">千帆网页搜索</span>' : '<span class="badge b-openai">openai</span>'; }
+function protocolLabel(p) { return p === 'openai' ? 'Chat Completions' : p === 'anthropic' ? 'Messages' : p; }  // 官方接口名（value 仍为内部枚举）
+function provBadge(p) { return p === 'anthropic' ? '<span class="badge b-anthropic">Messages</span>' : p === 'qianfan_search' ? '<span class="badge b-once">千帆搜索</span>' : p === 'qianfan_web_search' ? '<span class="badge b-5h">千帆网页搜索</span>' : '<span class="badge b-openai">Chat Completions</span>'; }
 function typeBadge(m) {
   if (m.token_type === 'one_time') return '<span class="badge b-once">一次性</span>';
   if (m.token_type === 'rolling_5h') return '<span class="badge b-5h">5h限额</span>';
@@ -2380,7 +2381,7 @@ function infoTip(id) {
   if (!m) return `<span class="info-wrap"><span class="info-dot">i</span><div class="info-tip"><div class="t-title">${esc(id)}</div><div class="t-row"><span>该接口未在模型库中注册</span></div></div></span>`;
   const p = providerLookup[m.provider_id];
   const rows = [
-    ['协议', p ? p.protocol : m.provider],
+    ['协议', protocolLabel(p ? p.protocol : m.provider)],
     ['模型名', m.name],
     ['Base URL', p ? p.base_url : (m.base_url || '')],
     ['所属供应商', p ? `${p.name}（${p.id}）` : '—（独立内联）'],

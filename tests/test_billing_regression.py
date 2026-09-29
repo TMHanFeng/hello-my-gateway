@@ -115,6 +115,44 @@ class MockHandler(BaseHTTPRequestHandler):
             self.wfile.write(b"data: [DONE]\n\n")
             self.wfile.flush()
             return
+        # T30（v2.16.0）Responses 工具往返：mock-toolcall 模型按 OpenAI 形状回 tool_calls
+        if str(body.get("model", "")).startswith("mock-toolcall"):
+            if body.get("stream"):
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.end_headers()
+
+                def sse2(obj):
+                    return ("data: " + json.dumps(obj, ensure_ascii=False) + "\n\n").encode()
+                self.wfile.write(sse2({"id": "m", "choices": [{"index": 0, "delta": {"role": "assistant"}}]}))
+                self.wfile.flush()
+                self.wfile.write(sse2({"id": "m", "choices": [{"index": 0, "delta": {"tool_calls": [
+                    {"index": 0, "id": "call_t1", "type": "function",
+                     "function": {"name": "get_weather", "arguments": ""}}]}}]}))
+                self.wfile.flush()
+                for _frag in ('{"city":', '"北京"}'):
+                    self.wfile.write(sse2({"id": "m", "choices": [{"index": 0, "delta": {"tool_calls": [
+                        {"index": 0, "function": {"arguments": _frag}}]}}]}))
+                    self.wfile.flush()
+                self.wfile.write(sse2({"id": "m", "choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]}))
+                self.wfile.flush()
+                if mock_mode["usage"]:
+                    self.wfile.write(sse2({"id": "m", "choices": [], "usage": cur_usage()}))
+                    self.wfile.flush()
+                self.wfile.write(b"data: [DONE]\n\n")
+                self.wfile.flush()
+            else:
+                out_b = json.dumps({"id": "m", "object": "chat.completion", "choices": [
+                    {"index": 0, "message": {"role": "assistant", "content": "", "tool_calls": [
+                        {"id": "call_t1", "type": "function",
+                         "function": {"name": "get_weather", "arguments": "{\"city\":\"北京\"}"}}]},
+                     "finish_reason": "tool_calls"}], "usage": cur_usage()}, ensure_ascii=False).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(out_b)))
+                self.end_headers()
+                self.wfile.write(out_b)
+            return
         if body.get("stream"):
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
@@ -232,6 +270,9 @@ TEST_MODELS = [
      "cost_peak": {"enabled": False, "windows": "0:00-23:59;23:59-0:00", "hit": 0, "miss": 0, "out": 0}},
     {"id": "zzbt/paid-idle-open", "name": "mock-paid-idle-open", "provider_id": "zzmock", "modality": "text",
      "is_free": False, "token_type": "idle_only"},
+    # T30（v2.16.0）Responses 工具往返：mock-toolcall 按 OpenAI 形状回 tool_calls（非流式/流式增量）
+    {"id": "zzbt/echo-tool", "name": "mock-toolcall", "provider_id": "zzmock", "modality": "text",
+     "is_free": True, "daily_token_limit": 1000000000},
 ]
 TEST_IDS = [m["id"] for m in TEST_MODELS]
 
@@ -251,7 +292,8 @@ def deep_clean():
     c.get("pools", {}).pop("zzdef", None)  # v2.11.19 曾漏清该测试池残留至生产配置
     for pn in ("zzreq", "zzonce", "zzsmart", "zznso", "zzgift", "zzrpm", "zzvalve", "zzvnl", "zzqfp", "zzqfp2",
                "zzqfws2", "zzsump", "zzbad", "zzlocal", "zzswitch", "zzhr", "zzhrctl", "zzsw", "zzsw2",
-               "zzswsubl", "zzswsubn", "zzswnest", "zzswnestn", "zzcost", "zzpaid", "zzpaid2", "zzpaid3"):
+               "zzswsubl", "zzswsubn", "zzswnest", "zzswnestn", "zzcost", "zzpaid", "zzpaid2", "zzpaid3",
+               "zzresp", "zztool"):
         c.get("pools", {}).pop(pn, None)
     # T23：还原 search_summary 专门 Key 与抓取开关为生产原值（用例中途崩溃时兜底）
     ss = c.get("search_summary")
@@ -293,8 +335,11 @@ def deep_clean():
         if t in _tables:
             db_exec(f"DELETE FROM {t} WHERE {q}")
     if "decision_log" in _tables:
-        db_exec("DELETE FROM decision_log WHERE selected IN ({}) OR pool_name IN ('zzall','zzbad','zzlocal','zzswitch','zzsump','zzqfws2','zzsw','zzsw2','zzswsubl','zzswsubn','zzswnest','zzswnestn','zzpaid','zzpaid2','zzpaid3')".format(
+        db_exec("DELETE FROM decision_log WHERE selected IN ({}) OR pool_name IN ('zzall','zzbad','zzlocal','zzswitch','zzsump','zzqfws2','zzsw','zzsw2','zzswsubl','zzswsubn','zzswnest','zzswnestn','zzpaid','zzpaid2','zzpaid3','zzresp','zztool')".format(
             ",".join(chr(39) + i + chr(39) for i in TEST_IDS)))
+    # T30（v2.16.0）：清理测试产生的 Responses 存档（response.model 命中 mock 测试模型名；生产行不受影响）
+    if "responses_store" in _tables:
+        db_exec("DELETE FROM responses_store WHERE response_json LIKE '%mock-echo-token%' OR response_json LIKE '%mock-toolcall%'")
     if "one_time_state" in _tables:
         db_exec("DELETE FROM one_time_state WHERE model_name='zzbt/echo-once'")
     if "api_keys" in _tables:
@@ -400,6 +445,9 @@ def main():
     c["pools"]["zzpaid"] = {"model_ids": ["zzbt/paid-idle-block", "zzbt/paid-allday"], "strategy": "sequential"}
     c["pools"]["zzpaid2"] = {"model_ids": ["zzbt/paid-idle-open"], "strategy": "sequential"}
     c["pools"]["zzpaid3"] = {"model_ids": ["zzbt/paid-allday"], "strategy": "sequential"}
+    # T30 Responses API：echo-token 通用池 + mock-toolcall 工具池
+    c["pools"]["zzresp"] = {"model_ids": ["zzbt/echo-token"], "strategy": "sequential"}
+    c["pools"]["zztool"] = {"model_ids": ["zzbt/echo-tool"], "strategy": "sequential"}
     json.dump(c, open(os.path.join(REPO, "config.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=2)
 
     # 启动隔离实例
@@ -1591,6 +1639,119 @@ def main():
         check("T29n 区间不含今天照拦且区间串保留",
               row["selected"] == "zzbt/paid-allday"
               and d.get("peak", {}).get("exdates") == _rng_far, (row["selected"], d.get("peak", {}).get("exdates")))
+
+        # ── T30（v2.16.0）OpenAI Responses API：POST/GET/DELETE /v1/responses + 工具往返 + 状态化 ──
+        # T30a 非流式基本转换：instructions→system、input 字符串→user、max_output_tokens/reasoning.effort 映射；
+        # 响应 object=response + message(output_text) item + usage 三元组
+        captured_bodies.clear()
+        r = httpx.post(f"{BASE}/v1/responses", headers=dict(ADMIN), timeout=30,
+                       json={"model": "zzresp", "instructions": "你是测试助手", "input": "你好",
+                             "max_output_tokens": 800, "reasoning": {"effort": "low"}})
+        rb = r.json()
+        up = captured_bodies[-1]
+        check("T30a 非流式Responses→chat转换与响应形状",
+              r.status_code == 200 and rb.get("object") == "response" and rb.get("status") == "completed"
+              and any(i.get("type") == "message" and i["content"][0]["text"] == "答案" for i in rb.get("output", []))
+              and rb.get("usage", {}).get("total_tokens") == 133
+              and up["messages"][0] == {"role": "system", "content": "你是测试助手"}
+              and up["messages"][1] == {"role": "user", "content": "你好"}
+              and up.get("max_tokens") == 800 and up.get("reasoning_effort") == "low",
+              (r.status_code, rb.get("object"), rb.get("usage")))
+
+        # T30b 工具往返：flat tools→nested、function_call/输出历史→assistant.tool_calls/role=tool、
+        # tool_choice 映射；上游 tool_calls 响应 → function_call item（call_id/name/arguments）
+        captured_bodies.clear()
+        r = httpx.post(f"{BASE}/v1/responses", headers=dict(ADMIN), timeout=30, json={
+            "model": "zztool",
+            "input": [
+                {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "北京天气"}]},
+                {"type": "function_call", "call_id": "call_prev", "name": "get_weather",
+                 "arguments": "{\"city\":\"上海\"}"},
+                {"type": "function_call_output", "call_id": "call_prev", "output": "多云"},
+            ],
+            "tools": [{"type": "function", "name": "get_weather", "description": "查天气",
+                       "parameters": {"type": "object", "properties": {"city": {"type": "string"}}}}],
+            "tool_choice": {"type": "function", "name": "get_weather"},
+        })
+        rb = r.json()
+        up = captured_bodies[-1]
+        fc = [i for i in rb.get("output", []) if i.get("type") == "function_call"]
+        check("T30b 工具定义/历史/结果与tool_call响应往返",
+              r.status_code == 200
+              and up["tools"] == [{"type": "function", "function": {
+                  "name": "get_weather", "description": "查天气",
+                  "parameters": {"type": "object", "properties": {"city": {"type": "string"}}}}}]
+              and up["tool_choice"] == {"type": "function", "function": {"name": "get_weather"}}
+              and up["messages"][1]["tool_calls"][0]["id"] == "call_prev"
+              and up["messages"][2] == {"role": "tool", "tool_call_id": "call_prev", "content": "多云"}
+              and len(fc) == 1 and fc[0]["call_id"] == "call_t1"
+              and fc[0]["name"] == "get_weather" and json.loads(fc[0]["arguments"]) == {"city": "北京"},
+              (r.status_code, [i.get("type") for i in rb.get("output", [])]))
+
+        # T30c 流式：chat chunk → Responses 事件流（created → output_text.delta → completed 带 usage），
+        # 计费与决策日志走既有链路（actual_tokens=133）
+        _c30_before = call_count("zzbt/echo-token")
+        ev_types, _completed30 = [], {}
+        with httpx.stream("POST", f"{BASE}/v1/responses", headers=dict(ADMIN), timeout=30,
+                          json={"model": "zzresp", "input": "流式测试", "stream": True}) as sr:
+            _st30 = sr.status_code
+            _cur30 = None
+            for line in sr.iter_lines():
+                if line.startswith("event: "):
+                    _cur30 = line[7:]
+                elif line.startswith("data: ") and _cur30:
+                    ev_types.append(_cur30)
+                    if _cur30 == "response.completed":
+                        _completed30 = json.loads(line[6:])
+        _dec30 = DB.execute("SELECT actual_tokens FROM decision_log WHERE pool_name='zzresp' ORDER BY id DESC LIMIT 1").fetchone()
+        check("T30c 流式事件序+completed带usage+计费落账",
+              _st30 == 200 and ev_types[0] == "response.created"
+              and "response.output_text.delta" in ev_types and ev_types[-1] == "response.completed"
+              and _completed30.get("response", {}).get("usage", {}).get("total_tokens") == 133
+              and _dec30 and _dec30["actual_tokens"] == 133
+              and call_count("zzbt/echo-token") == _c30_before + 1,
+              (_st30, ev_types[:3], _dec30["actual_tokens"] if _dec30 else None))
+
+        # T30d 状态化：store 默认 true → GET 可取；previous_response_id 链拼接（上游收到完整历史）；
+        # DELETE 后 GET 404；store=false 不落档；未知 previous_response_id 404
+        r0 = httpx.post(f"{BASE}/v1/responses", headers=dict(ADMIN), timeout=30,
+                        json={"model": "zzresp", "input": "第一轮"})
+        rid = r0.json().get("id")
+        g = httpx.get(f"{BASE}/v1/responses/{rid}", headers=dict(ADMIN), timeout=15)
+        captured_bodies.clear()
+        r2 = httpx.post(f"{BASE}/v1/responses", headers=dict(ADMIN), timeout=30,
+                        json={"model": "zzresp", "previous_response_id": rid, "input": "第二轮"})
+        up2 = captured_bodies[-1]
+        chain_msgs = [(m["role"], m["content"]) for m in up2["messages"]]
+        g404 = httpx.get(f"{BASE}/v1/responses/resp_nonexistent", headers=dict(ADMIN), timeout=15)
+        d30 = httpx.delete(f"{BASE}/v1/responses/{rid}", headers=dict(ADMIN), timeout=15)
+        g2 = httpx.get(f"{BASE}/v1/responses/{rid}", headers=dict(ADMIN), timeout=15)
+        r3 = httpx.post(f"{BASE}/v1/responses", headers=dict(ADMIN), timeout=30,
+                        json={"model": "zzresp", "input": "不留档", "store": False})
+        g3 = httpx.get(f"{BASE}/v1/responses/{r3.json().get('id')}", headers=dict(ADMIN), timeout=15)
+        p404 = httpx.post(f"{BASE}/v1/responses", headers=dict(ADMIN), timeout=30,
+                          json={"model": "zzresp", "input": "hi", "previous_response_id": "resp_gone"})
+        check("T30d 状态化存取/链拼接/删除/store=false",
+              r0.status_code == 200 and rid and g.status_code == 200 and g.json().get("id") == rid
+              and r2.status_code == 200
+              and chain_msgs == [("user", "第一轮"), ("assistant", "答案"), ("user", "第二轮")]
+              and g404.status_code == 404 and d30.status_code == 200 and g2.status_code == 404
+              and r3.status_code == 200 and g3.status_code == 404 and p404.status_code == 404,
+              (rid, chain_msgs, g404.status_code, g2.status_code, g3.status_code, p404.status_code))
+
+        # T30e 不支持项明确 400：background / conversation / 内置工具 / 未知 item 类型
+        r_bg = httpx.post(f"{BASE}/v1/responses", headers=dict(ADMIN), timeout=15,
+                          json={"model": "zzresp", "input": "hi", "background": True})
+        r_cv = httpx.post(f"{BASE}/v1/responses", headers=dict(ADMIN), timeout=15,
+                          json={"model": "zzresp", "input": "hi", "conversation": "conv_1"})
+        r_ws = httpx.post(f"{BASE}/v1/responses", headers=dict(ADMIN), timeout=15,
+                          json={"model": "zzresp", "input": "hi", "tools": [{"type": "web_search"}]})
+        r_it = httpx.post(f"{BASE}/v1/responses", headers=dict(ADMIN), timeout=15,
+                          json={"model": "zzresp", "input": [{"type": "mystery"}]})
+        check("T30e 不支持项400(background/conversation/内置工具/未知item)",
+              r_bg.status_code == 400 and r_cv.status_code == 400
+              and r_ws.status_code == 400 and r_it.status_code == 400,
+              (r_bg.status_code, r_cv.status_code, r_ws.status_code, r_it.status_code))
 
     finally:
         try:
