@@ -300,32 +300,6 @@ async def probe_reasoning_api(request: Request, _=Depends(verify_admin)):
     return {"queued": True, "model_id": model_id}
 
 
-def _auto_probe_model(model_id: str):
-    """后台线程：探测新增模型的思考档位并自动写入 reasoning_map（写完热重载）。
-
-    embedding/rerank、无连接信息、探测失败的模型静默跳过——不影响模型本身使用。
-    """
-    try:
-        from app.tools import probe_reasoning
-        config = load_config()
-        model = next((m for m in config.get("models", []) if m.get("id") == model_id), None)
-        if not model or model.get("modality") in ("embedding", "rerank"):
-            return
-        suggested = probe_reasoning.probe_single(model, config.get("providers", []))
-        if not suggested:
-            return
-        config = load_config()
-        model = next((m for m in config.get("models", []) if m.get("id") == model_id), None)
-        if not model:
-            return
-        model["reasoning_map"] = suggested
-        save_config(config)
-        _sync_pool()
-        logging.getLogger(__name__).info(f"[思考探测] 新增模型 {model_id} 自动探测完成，已保存 reasoning_map")
-    except Exception:
-        logging.getLogger(__name__).exception(f"[思考探测] 新增模型 {model_id} 自动探测失败")
-
-
 @router.post("/models")
 async def add_model(request: Request, _=Depends(verify_admin)):
     body = await request.json()
@@ -434,25 +408,11 @@ async def add_model(request: Request, _=Depends(verify_admin)):
     save_config(config)
     restart_scheduler()
 
-    # 非 embedding/rerank 模型：新增后自动探测思考档位。
-    # 命中探测缓存 → 即时套用；否则后台线程探测，完成后自动写入 config 并热重载。
-    probe_status = "skipped"
-    if entry.get("modality") not in ("embedding", "rerank"):
-        try:
-            from app.tools import probe_reasoning
-            cached = probe_reasoning.cached_suggestion(entry, config.get("providers", []))
-            if cached:
-                entry["reasoning_map"] = cached
-                save_config(config)
-                probe_status = "applied"
-            else:
-                probe_reasoning.register_main_loop(asyncio.get_running_loop())  # 探测线程的用量记账投回主循环执行
-                threading.Thread(target=_auto_probe_model, args=(entry["id"],), daemon=True).start()
-                probe_status = "queued"
-        except Exception:
-            probe_status = "skipped"  # 探测失败不影响模型本身的使用（默认思考行为）
+    # v2.15.3 起新增模型不再自动探测思考档位（含缓存自动套用）：
+    # 探测只在面板「重新探测」按钮人工触发（POST /admin/reasoning/probe），结论只进缓存、
+    # reasoning_map 是否采用仍由用户在编辑框决定（🧠 探测条可一键填入）。
 
-    return {"ok": True, "model": entry, "probe": probe_status}
+    return {"ok": True, "model": entry}
 
 
 @router.get("/model/{model_id:path}/load")

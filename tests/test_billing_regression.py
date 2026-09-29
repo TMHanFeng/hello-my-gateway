@@ -245,7 +245,8 @@ def db_exec(sql, args=()):
 def deep_clean():
     c = json.load(open(os.path.join(REPO, "config.json"), encoding="utf-8"))
     c["providers"] = [p for p in c.get("providers", []) if p["id"] not in ("zzmock", "zzark", "zzqf", "zzqf2")]
-    c["models"] = [m for m in c.get("models", []) if not str(m.get("id", "")).startswith("zzbt/")]
+    c["models"] = [m for m in c.get("models", [])
+                   if not str(m.get("id", "")).startswith("zzbt/") and str(m.get("id", "")) != "zzmock/probe-noauto"]
     c.get("pools", {}).pop("zzall", None)
     c.get("pools", {}).pop("zzdef", None)  # v2.11.19 曾漏清该测试池残留至生产配置
     for pn in ("zzreq", "zzonce", "zzsmart", "zznso", "zzgift", "zzrpm", "zzvalve", "zzvnl", "zzqfp", "zzqfp2",
@@ -1000,11 +1001,58 @@ def main():
         try:
             _cp = os.path.join(REPO, "data", "reasoning_probe_cache.json")  # v2.14.0 起缓存归 data/
             _cache = json.load(open(_cp, encoding="utf-8"))
-            for _k in [k for k in _cache if "mock-echo-probe" in _k]:
-                _cache.pop(_k, None)
+            for k in [k for k in _cache if "mock-echo-probe" in k]:
+                _cache.pop(k, None)
             json.dump(_cache, open(_cp, "w", encoding="utf-8"), indent=1)
         except Exception:
             pass
+
+        # T19z（v2.15.3）新增模型不再自动探测思考档位：只允许人工触发（/admin/reasoning/probe）
+        def _purge_probe_cache(name):
+            try:
+                _cp2 = os.path.join(REPO, "data", "reasoning_probe_cache.json")
+                _c2 = json.load(open(_cp2, encoding="utf-8"))
+                for k in [k for k in _c2 if name in k]:
+                    _c2.pop(k, None)
+                json.dump(_c2, open(_cp2, "w", encoding="utf-8"), indent=1)
+                return [k for k in _c2 if name in k]
+            except Exception as e:
+                return [f"purge异常:{e}"]
+        _purge_resid = _purge_probe_cache("mock-probe-noauto")   # 上轮人工探测缓存可能晚于收尾清理落盘
+        httpx.delete(f"{BASE}/admin/models/zzmock/probe-noauto", headers=ADMIN, timeout=15)  # 断点续跑幂等
+        r = httpx.post(f"{BASE}/admin/models", headers=ADMIN, timeout=15, json={
+            "id": "probe-noauto", "name": "mock-probe-noauto", "provider_id": "zzmock",
+            "modality": "text", "is_free": True})
+        check("T19z0 新增模型成功(无 probe 字段)",
+              r.status_code == 200 and "probe" not in r.json(), r.text[:160])
+        rd = httpx.get(f"{BASE}/admin/reasoning", headers=ADMIN, timeout=15).json()
+        rec = (rd.get("models") or {}).get("zzmock/probe-noauto") or {}
+        _cache_keys_now = [k for k in json.load(open(os.path.join(REPO, "data", "reasoning_probe_cache.json"), encoding="utf-8")) if "probe-noauto" in k]
+        check("T19z1 新增后即刻未探测", rd.get("summary") is not None and rec.get("probed") is False,
+              (rec.get("probed"), _purge_resid, _cache_keys_now))
+        time.sleep(3)  # 旧实现后台线程早已发探测请求；新实现应零请求、缓存恒空
+        rd = httpx.get(f"{BASE}/admin/reasoning", headers=ADMIN, timeout=15).json()
+        rec = (rd.get("models") or {}).get("zzmock/probe-noauto") or {}
+        cfg_chk = json.load(open(os.path.join(REPO, "config.json"), encoding="utf-8"))
+        m_noauto = next((m for m in cfg_chk["models"] if m.get("id") == "zzbt/probe-noauto"), {})
+        check("T19z2 等待后仍零自动探测(无请求/无缓存/未写映射)",
+              _probe_hits("mock-probe-noauto") == 0 and rec.get("probed") is False
+              and not m_noauto.get("reasoning_map"),
+              (_probe_hits("mock-probe-noauto"), rec.get("probed"), bool(m_noauto.get("reasoning_map"))))
+        # 人工触发仍可用：受理 queued 且真实发上游
+        t0 = time.time()
+        r = httpx.post(f"{BASE}/admin/reasoning/probe", headers=ADMIN, json={"model_id": "zzmock/probe-noauto"}, timeout=15)
+        n = _wait_probe_settled("mock-probe-noauto", t0)
+        check("T19z3 人工探测仍可用(受理+发上游)", r.status_code == 200 and r.json().get("queued") is True and n > 0,
+              (r.status_code, n))
+        for _ in range(5):  # 探测线程最后一批写可能晚于上游请求收尾：重试清到键消失
+            _purge_probe_cache("mock-probe-noauto")
+            _c3 = json.load(open(os.path.join(REPO, "data", "reasoning_probe_cache.json"), encoding="utf-8"))
+            if not any("mock-probe-noauto" in k for k in _c3):
+                break
+            time.sleep(1)
+        r = httpx.delete(f"{BASE}/admin/models/zzmock/probe-noauto", headers=ADMIN, timeout=15)
+        check("T19z4 测试模型清理", r.status_code == 200, r.status_code)
 
         # ===== T20 每池50条滚动保留 + 密钥最近调用记录端点 =====
         for _ in range(55):

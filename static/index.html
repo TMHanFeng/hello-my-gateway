@@ -3003,9 +3003,7 @@ async function submitModel(e) {
   if (!ok) return;
   await api('/admin/reload', { method: 'POST' });
   closeModal();
-  if (!editingId && ok && ok.probe === 'queued') toast('模型已添加；思考档位后台探测中，完成后自动保存', true);
-  else if (!editingId && ok && ok.probe === 'applied') toast('模型已添加；思考映射已按实测缓存自动套用');
-  else toast(editingId ? '模型已更新' : '模型已添加');
+  toast(editingId ? '模型已更新' : '模型已添加');
   loadModels();
 }
 
