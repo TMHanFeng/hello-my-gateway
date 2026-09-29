@@ -2,6 +2,7 @@ import time
 import asyncio
 import json
 import logging
+import re
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -53,6 +54,9 @@ class ModelEntry:
     # 缓存计费统计：勾选后该模型每次成功调用按小时桶记录 缓存命中/未命中/输出 token
     # （model_cache_stats），用量统计卡片出现「预估费用」入口；未勾选模型零额外写入
     cost_enabled: bool = False
+    # v2.15.0 付费模型·仅闲时可用（token_type=idle_only）：高峰时段（cost_peak.windows，与
+    # 缓存计费的高峰期同源共享）内不路由；构建时解析为 [(起分钟,止分钟),...]，空=全天闲时（不限制）
+    peak_windows: list = field(default_factory=list)
     # Headroom 选配插件（非必装）：勾选模型在接单时压缩出站 messages 省 token；判定在回退循环内，
     # 未勾选候选收原文——同池勾选/不勾选并存即天然 A/B。库未安装/总开关关闭时自动旁路（headroom_plugin.py）
     headroom: bool = False
@@ -86,6 +90,35 @@ class ModelEntry:
 
 
 ROLLING_5H_SECONDS = 5 * 3600
+
+
+def _parse_peak_windows(raw) -> list:
+    """解析高峰时段串（与前端 _parsePeakWindows 同规则）：段间 ; ，，、换行均可，
+    区间符 - — ～ ~ 至 到 均可，时间 9:00/09:00/9:30 均可；起≥止=跨零点段；
+    无法解析的段忽略。返回 [(起分钟, 止分钟), ...]。"""
+    out = []
+    for seg in str(raw or "").replace("；", ";").replace("，", ";").replace(",", ";").replace("\n", ";").split(";"):
+        seg = seg.strip()
+        m = re.match(r"^(\d{1,2})(?::(\d{1,2}))?\s*(?:-|—|－|~|～|→|至|到)\s*(\d{1,2})(?::(\d{1,2}))?$", seg)
+        if not m:
+            continue
+        h1, mi1, h2, mi2 = int(m[1]), int(m[2] or 0), int(m[3]), int(m[4] or 0)
+        if h1 > 23 or h2 > 23 or mi1 > 59 or mi2 > 59:
+            continue
+        a, b = h1 * 60 + mi1, h2 * 60 + mi2
+        if a == b:
+            continue  # 空段忽略
+        out.append((a, b))
+    return out
+
+
+def _fmt_peak_windows(wins: list) -> str:
+    return ";".join(f"{a // 60:02d}:{a % 60:02d}-{b // 60:02d}:{b % 60:02d}" for a, b in wins)
+
+
+def _in_peak_windows(minute: int, wins: list) -> bool:
+    """分钟数是否落在任一高峰段内（跨零点段 a>=b 按 a..24:00∪0:00..b 判定）"""
+    return any((a < b and a <= minute < b) or (a >= b and (minute >= a or minute < b)) for a, b in wins)
 
 # 配额预检缓存秒数（问题19）：预检结果短缓存，避免每个候选模型每次选择都串行打 sqlite；
 # 该模型的每次调用计费后（log_request 处）立即失效，保证自身计数新鲜
@@ -224,6 +257,7 @@ class ModelPool:
                 smart_estimate=bool(m.get("smart_estimate", False)),
                 no_stream_options=bool(m.get("no_stream_options", False)),
                 cost_enabled=bool(m.get("cost_enabled", False)),
+                peak_windows=_parse_peak_windows((m.get("cost_peak") or {}).get("windows", "")),
                 headroom=bool(m.get("headroom", False)),
                 valve_pct=valve_pct,
                 summary_pool=(m.get("summary_pool") or "").strip(),
@@ -603,6 +637,18 @@ class ModelPool:
                   预估输出用 EMA 校准×1.1，未校准回退仅输入，避免 max_tokens 虚高误杀——v2.10.6 教训）。"""
         now = time.time()
         detail = None
+
+        # v2.15.0 付费模型·仅闲时可用（token_type=idle_only）：高峰时段内不路由。
+        # 时段取自 cost_peak.windows（与缓存计费的高峰期同源，改一处两处生效）；
+        # 未配置时段=全天闲时，不限制。纯时钟计算，放在配额缓存之外逐请求判定。
+        if entry.token_type == "idle_only" and entry.peak_windows:
+            bj = datetime.now(ZoneInfo("Asia/Shanghai"))
+            if _in_peak_windows(bj.hour * 60 + bj.minute, entry.peak_windows):
+                wins_label = _fmt_peak_windows(entry.peak_windows)
+                return False, "peak_blocked", {
+                    "peak_windows": wins_label,
+                    "reason_detail": f"高峰时段（{wins_label}，北京时间）内不路由，仅闲时可用",
+                }
 
         # 配额/限速预检（问题19）：这部分需读 sqlite（每候选 1-4 次串行查询），
         # 结果短缓存 QUOTA_CACHE_TTL 秒；该模型每次调用计费后立即失效，自身计数保持新鲜

@@ -381,6 +381,8 @@ async def add_model(request: Request, _=Depends(verify_admin)):
         "no_stream_options": bool(body.get("no_stream_options", False)),
         # 缓存计费统计：勾选后按小时桶记录缓存命中/未命中/输出 token（价格在用量统计「预估费用」弹窗配置）
         "cost_enabled": bool(body.get("cost_enabled", False)),
+        # v2.15.0 付费模型·高峰时段（token_type=idle_only 用作闲时判定）：与缓存计费高峰期同源共享
+        **({"cost_peak": body["cost_peak"]} if isinstance(body.get("cost_peak"), dict) else {}),
         # v2.13.0 Headroom 选配插件：勾选模型接单时压缩出站 messages（默认 False=不参与）
         "headroom": bool(body.get("headroom", False)),
         # v2.12.3 搜索 AI 总结（仅 qianfan_web_search 协议在面板有 UI 入口）
@@ -609,6 +611,12 @@ async def update_model(model_id: str, request: Request, _=Depends(verify_admin))
             value = bool(value)
         if key == "timeout_seconds":
             value = None if value in (None, "") else int(value)
+        # v2.15.0 cost_peak 浅合并：模型编辑表单只提交 windows（闲时判定与缓存计费高峰期同源互通），
+        # 不携带的键（enabled/三高峰单价）保留现值，避免整对象覆盖抹掉「预估费用」弹窗里配置的价格
+        if key == "cost_peak" and isinstance(value, dict) and isinstance(models[idx].get("cost_peak"), dict):
+            _merged = dict(models[idx]["cost_peak"])
+            _merged.update(value)
+            value = _merged
         models[idx][key] = value
     models[idx]["timezone"] = "Asia/Shanghai"
 

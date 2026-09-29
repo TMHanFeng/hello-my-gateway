@@ -838,12 +838,16 @@ body {
       </div>
       <div class="form-sec">计费与额度</div>
       <div class="f2">
-        <div class="fg"><label>令牌类型</label><select name="token_type" id="f-token-type" onchange="onTokenTypeChange()"><option value="daily">daily（每日刷新）</option><option value="rolling_5h">rolling_5h（5h 限额）</option><option value="one_time">one_time（一次性）</option><option value="gift">gift（余额返还制）</option><option value="local">local（本地模型·不计费不限量）</option></select></div>
+        <div class="fg"><label>令牌类型</label><select name="token_type" id="f-token-type" onchange="onTokenTypeChange()"><option value="daily">daily（每日刷新）</option><option value="rolling_5h">rolling_5h（5h 限额）</option><option value="one_time">one_time（一次性）</option><option value="gift">gift（余额返还制）</option><option value="local">local（本地模型·不计费不限量）</option><option value="all_day">all_day（付费·全天可用）</option><option value="idle_only">idle_only（付费·仅闲时可用）</option></select></div>
         <div class="fg"><label>计费模式</label><select name="billing_mode" onchange="onBillingChange()"><option value="token">按 Token 计费</option><option value="request">按请求次数计费</option></select></div>
       </div>
       <div class="f2">
-        <div class="fg"><label>收费标注</label><select name="is_free"><option value="true">免费模型（绿）</option><option value="false">付费模型（红）</option></select></div>
+        <div class="fg"><label>收费标注</label><select name="is_free" onchange="onIsFreeChange()"><option value="true">免费模型（绿）</option><option value="false">付费模型（红）</option></select></div>
         <div class="fg"><label>模型模态</label><select name="modality" onchange="onModalityChange()"><option value="text">纯文本（不支持图片）</option><option value="vision">多模态（支持图片）</option><option value="embedding">embedding（嵌入模型）</option><option value="rerank">rerank（重排模型）</option></select></div>
+      </div>
+      <!-- v2.15.0 付费模型·仅闲时可用：高峰时段（与「缓存 Token 计费统计」的 cost_peak.windows 同源互通，留空=全天闲时） -->
+      <div id="peak-fields" style="display:none">
+        <div class="fg"><label>高峰时段（北京时间，留空=全天闲时）</label><input name="peak_windows" id="f-peak-windows" placeholder="如 9:00-12:00;14:00-18:00（段内起≥止视为跨零点，如 21:00-6:00）"><div class="hint">高峰时段内该模型不路由。段间 <b>; ； , ，</b> 均可；区间符 <b>- — ~ ～ 至 到</b> 均可；时间 <b>9:00 / 09:00 / 9:30</b> 均可；无法解析的段自动忽略。与缓存计费的高峰时段为同一份数据，两处修改互通。</div></div>
       </div>
       <div class="form-sec">配额与限流</div>
       <div class="f2">
@@ -1130,7 +1134,7 @@ function modelRowHTML(m, i) {
           ${m.modality === 'embedding' ? '<span class="badge b-embedding">embedding</span>' : m.modality === 'rerank' ? '<span class="badge b-rerank">rerank</span>' : m.modality === 'vision' ? '<span class="badge b-vision">多模态</span>' : '<span class="badge b-text">纯文本</span>'}
           ${m.json_output && m.modality !== 'embedding' && m.modality !== 'rerank' ? '<span class="badge b-json" title="支持 response_format JSON 格式输出">JSON</span>' : ''}
           ${m.is_free ? '<span class="badge b-free">免费</span>' : '<span class="badge b-paid">付费</span>'}
-          ${m.token_type === 'one_time' ? '<span class="badge b-once">一次性</span>' : m.token_type === 'rolling_5h' ? '<span class="badge b-5h">5h限额</span>' : m.token_type === 'gift' ? '<span class="badge b-5h" title="余额返还制：到账时刻按昨日消耗补回额度（余额上限封顶）">余额返还制</span>' : m.token_type === 'local' ? '<span class="badge b-local" title="本地模型：不计费不限量，仅记录用量">本地</span>' : ''}
+          ${m.token_type === 'one_time' ? '<span class="badge b-once">一次性</span>' : m.token_type === 'rolling_5h' ? '<span class="badge b-5h">5h限额</span>' : m.token_type === 'gift' ? '<span class="badge b-5h" title="余额返还制：到账时刻按昨日消耗补回额度（余额上限封顶）">余额返还制</span>' : m.token_type === 'all_day' ? '<span class="badge b-ghost" title="付费模型：全天可用">全天可用</span>' : m.token_type === 'idle_only' ? '<span class="badge b-5h" title="付费模型：仅闲时可用（高峰时段内不路由）">仅闲时</span>' : m.token_type === 'local' ? '<span class="badge b-local" title="本地模型：不计费不限量，仅记录用量">本地</span>' : ''}
           ${m.reasoning_map && Object.keys(m.reasoning_map).length ? `<span class="badge b-5h" style="cursor:pointer" title="点击打开编辑，查看思考参数探测结论" onclick="editModel('${m.id}')">思考映射</span>` : ''}
           ${m.expire_date ? `<span class="badge b-once">到期 ${esc(m.expire_date)}</span>` : ''}
           <button class="btn btn-ghost btn-sm" onclick="editModel('${m.id}')">编辑</button>
@@ -1377,7 +1381,7 @@ function infoTip(id) {
     ['收费标注', m.is_free ? '免费' : '付费'],
     ['计费模式', m.billing_mode === 'request' ? '按请求次数' : '按 Token'],
     ['模型模态', m.modality === 'embedding' ? 'embedding（嵌入模型）' : m.modality === 'rerank' ? 'rerank（重排模型）' : m.modality === 'vision' ? '多模态（支持图片）' : '纯文本'],
-    ['令牌类型', m.token_type === 'one_time' ? '一次性' : m.token_type === 'local' ? '本地模型（不计费不限量）' : m.token_type === 'rolling_5h' ? '5h 窗口（5h限额）' : '每日刷新'],
+    ['令牌类型', m.token_type === 'one_time' ? '一次性' : m.token_type === 'local' ? '本地模型（不计费不限量）' : m.token_type === 'rolling_5h' ? '5h 窗口（5h限额）' : m.token_type === 'all_day' ? '付费·全天可用' : m.token_type === 'idle_only' ? '付费·仅闲时可用' : '每日刷新'],
     [(m.token_type === 'rolling_5h' ? '5h 窗口限额' : '每日上限'), m.daily_token_limit ? m.daily_token_limit.toLocaleString() + (m.billing_mode === 'request' ? ' 次' : ' Token') : '不限'],
     ['上下文窗口', m.context_window ? m.context_window.toLocaleString() : '不限'],
     ['RPM', m.rpm_limit || '不限'],
@@ -2135,12 +2139,15 @@ async function loadStats() {
     const billing = m.billing_mode === 'request' ? '按次计费' : '按 Token 计费';
     const typeBadge = m.token_type === 'one_time' ? '<span class="badge b-once">一次性</span>'
       : m.token_type === 'rolling_5h' ? '<span class="badge b-5h">5h限额</span>'
+      : m.token_type === 'all_day' ? '<span class="badge b-ghost" title="付费模型：全天可用">全天可用</span>'
+      : m.token_type === 'idle_only' ? '<span class="badge b-5h" title="付费模型：仅闲时可用（高峰时段内不路由）">仅闲时</span>'
       : m._gift ? '<span class="badge b-5h" title="余额返还制：到账时刻按昨日消耗补回额度">余额返还制</span>'
       : m._windowModel ? `<span class="badge b-5h" title="每日 ${m.refresh_time} 刷新窗口">${m.refresh_time}窗口</span>`
       : '<span class="badge b-openai">每日</span>';
     const freeBadge = m.is_free ? '<span class="badge b-free">免费</span>' : '<span class="badge b-paid">付费</span>';
     let refresh = m.token_type === 'one_time' ? '不刷新'
       : m.token_type === 'rolling_5h' ? '5h窗口 · 剩 ' + fmtDur(m.window_remaining_sec)
+      : (m.token_type === 'all_day' || m.token_type === 'idle_only') ? '—'
       : m._gift ? (giftPosted
         ? ('已补 ' + (m.gift_last_grant_amount ?? 0).toLocaleString()
           + ' <span class="i-tip" data-tip="当前可用余额：' + (m.gift_balance ?? 0).toLocaleString() + '&#10;当前可用总额：' + giftPool.toLocaleString() + '（昨日剩余 ' + (m.gift_yesterday_leftover ?? 0).toLocaleString() + ' + 今日已补 ' + (m.gift_last_grant_amount ?? 0).toLocaleString() + '）&#10;用户设置上限（封顶）：' + (m.daily_token_limit || 0).toLocaleString() + '&#10;今日计费上限（与用户上限取小）：' + giftLimit.toLocaleString() + '&#10;今日 / 昨日自然日消耗：' + (m.today_tokens || 0).toLocaleString() + ' / ' + (m.gift_yesterday_usage ?? 0).toLocaleString() + ' tok&#10;今日已采：' + Math.min(m.today_tokens || 0, m.gift_grant_cap || 5000000).toLocaleString() + ' / ' + (m.gift_grant_cap || 5000000).toLocaleString() + '（超出不返还）&#10;今日 ' + (m.refresh_time || '') + ' 已到账 ' + (m.gift_last_grant_amount ?? 0).toLocaleString() + '&#10;预计下次补账：' + (m.gift_pending_grant ?? 0).toLocaleString() + '（明日 ' + (m.refresh_time || '') + '，按今日消耗）&#10;上一天剩余（昨日 24:00）：' + (m.gift_yesterday_leftover ?? 0).toLocaleString() + '">ⓘ</span>')
@@ -2295,6 +2302,7 @@ const REASON_BASE = {
   context_overflow: ['上下文超限·不冷却透传', 'rsn-warn'],
   no_vision: ['不支持图片', 'rsn-skip'],
   one_time_expired: ['一次性已失效', 'rsn-skip'],
+  peak_blocked: ['高峰时段', 'rsn-skip'],
   already_tried: ['本轮已尝试', 'rsn-neutral'],
   pool_exhausted: ['子池无可用接口', 'rsn-skip'],
   cycle: ['循环引用已跳过', 'rsn-warn'],
@@ -2338,6 +2346,8 @@ function formatDetail(reason, d) {
       if (d.age_sec != null && d.ttl_sec != null) return tail(`已存活 ${d.age_sec}s / TTL ${d.ttl_sec}s`);
       if (d.expire_date) return tail(`到期 ${d.expire_date}`);
       return d.reason_detail ? tail(d.reason_detail) : '';
+    case 'peak_blocked':
+      return d.peak_windows ? tail(`仅闲时可用 · 高峰 ${d.peak_windows} 内不路由`) : '';
     case 'switch_429':
     case 'fallback_switch_429':
       if (d.latency_ms != null) return tail(`HTTP 429 · ${d.latency_ms}ms · 冷却 ${d.cooldown_sec}s`);
@@ -2479,6 +2489,21 @@ async function loadDecisions() {
   });
 })();
 
+/* v2.15.0 付费模型令牌类型：收费标注=付费时只显示全天可用/仅闲时可用（免费额度型选项隐藏），
+   切换时旧值自动落到该侧默认项（付费→all_day / 免费→daily） */
+const PAID_TOKEN_TYPES = ['all_day', 'idle_only'];
+function onIsFreeChange() {
+  const f = document.getElementById('mform');
+  const paid = f.is_free.value === 'false';
+  const sel = document.getElementById('f-token-type');
+  if (!sel) return;
+  Array.from(sel.options).forEach(o => {
+    const isPaidOpt = PAID_TOKEN_TYPES.includes(o.value);
+    o.hidden = paid ? !isPaidOpt : isPaidOpt;
+  });
+  if (sel.selectedOptions[0] && sel.selectedOptions[0].hidden) sel.value = paid ? 'all_day' : 'daily';
+  onTokenTypeChange();
+}
 function onBillingChange() {
   const form = document.getElementById('mform');
   const mode = form.billing_mode.value;
@@ -2506,6 +2531,8 @@ function onTokenTypeChange() {
   if (_lf) _lf.style.display = (ttype === 'one_time' || ttype === 'local') ? 'none' : '';
   const _lcf = document.getElementById('local-fields');
   if (_lcf) _lcf.style.display = ttype === 'local' ? '' : 'none';  // 本地模型提示区
+  const _pf = document.getElementById('peak-fields');
+  if (_pf) _pf.style.display = ttype === 'idle_only' ? '' : 'none';  // v2.15.0 高峰时段：仅闲时可用才显示
   const _vf = document.getElementById('valve-fields');
   if (_vf) _vf.style.display = ttype === 'local' ? 'none' : '';  // 本地模型 limit=0 安全阀不生效，隐藏滑块
   updateGiftHint();
@@ -2567,6 +2594,22 @@ function onValveInput() {
   hint.textContent = '已用 + 预估 ≥ k×最大量限制 时跳过该模型；' + note;
 }
 
+/* v2.15.0 高峰时段自适应解析（与 hfadmin「缓存计费预估」同规则）：返回 [[起分钟,止分钟],...]，起≥止=跨零点段 */
+function _parsePeakWindows(str) {
+  const out = [];
+  String(str || '').split(/[;；,，\n]+/).forEach(seg => {
+    const m = seg.trim().match(/^(\d{1,2})(?::(\d{1,2}))?\s*(?:-|—|－|~|～|→|至|到)\s*(\d{1,2})(?::(\d{1,2}))?$/);
+    if (!m) return;
+    const h1 = +m[1], mi1 = +(m[2] || 0), h2 = +m[3], mi2 = +(m[4] || 0);
+    if (h1 > 23 || h2 > 23 || mi1 > 59 || mi2 > 59) return;
+    const a = h1 * 60 + mi1, b = h2 * 60 + mi2;
+    if (a === b) return;   // 空段忽略
+    out.push([a, b]);
+  });
+  return out;
+}
+function _fmtMin(v) { return String(Math.floor(v / 60)).padStart(2, '0') + ':' + String(v % 60).padStart(2, '0'); }
+function _peakLabel(wins) { return wins.map(w => _fmtMin(w[0]) + '-' + _fmtMin(w[1])).join(';'); }
 function showGiftCalibrate() {
   if (!editingId) return;
   document.getElementById('giftcal-model').textContent = editingId;
@@ -2610,7 +2653,7 @@ function showAdd() {
   document.getElementById('f-model-id').disabled = false;
   renderReasoningStrip(null);
   populateProviderSelect('').then(() => { onBillingChange(); onProviderSelect(); });
-  onTokenTypeChange(); onModalityChange(); onSmartToggle();
+  onIsFreeChange(); onModalityChange(); onSmartToggle();   // onIsFreeChange 内部已调 onTokenTypeChange
   document.getElementById('overlay').classList.add('show');
 }
 
@@ -2623,8 +2666,7 @@ async function showAddUnder(pid) {
   renderReasoningStrip(null);
   await populateProviderSelect(pid);
   document.getElementById('f-model-id').placeholder = '例如: glm-4.7-flash（供应商将自动前缀）';
-  onBillingChange(); onProviderSelect();
-  onTokenTypeChange(); onModalityChange(); onSmartToggle();
+  onBillingChange(); onProviderSelect(); onIsFreeChange(); onModalityChange(); onSmartToggle();
   document.getElementById('overlay').classList.add('show');
 }
 
@@ -2833,8 +2875,11 @@ async function editModel(id) {
   document.getElementById('modal-title').textContent = '编辑模型';
   const f = document.getElementById('mform');
   f.id.value = m.id; f.name.value = m.name; f.provider.value = m.provider || 'openai';
-  f.base_url.value = m.base_url || ''; f.api_key.value = m.api_key || ''; f.token_type.value = m.token_type;
+  f.base_url.value = m.base_url || ''; f.api_key.value = m.api_key || '';
   f.billing_mode.value = m.billing_mode || 'token'; f.is_free.value = m.is_free ? 'true' : 'false';
+  onIsFreeChange();  // v2.15.0 先按收费标注切换令牌类型选项集（免费/付费两套）
+  // 付费模型存量数据仍为免费额度型 token_type（daily 等）：编辑时迁移显示为「全天可用」，保存后落库为新类型
+  f.token_type.value = (!m.is_free && !PAID_TOKEN_TYPES.includes(m.token_type)) ? 'all_day' : m.token_type;
   f.modality.value = m.modality || 'text';
   const _jc = document.getElementById('f-json-output'); if (_jc) _jc.checked = !!m.json_output;
   const _rm = m.reasoning_map || {};
@@ -2851,6 +2896,9 @@ async function editModel(id) {
   f.max_tokens.value = m.max_tokens || 0; f.ttl_seconds.value = m.ttl_seconds || 0;
   f.expire_date.value = m.expire_date || '';
   f.valve_pct.value = m.valve_pct ?? 100;  // 安全阀回填（缺省 100%，onTokenTypeChange→onValveInput 刷新预览）
+  // v2.15.0 高峰时段回填（cost_peak.windows 原文，保存时规范化；与缓存计费同源互通）
+  const _pkf = document.getElementById('f-peak-windows');
+  if (_pkf) _pkf.value = (m.cost_peak || {}).windows || '';
   // v2.12.3 搜索 AI 总结回填（config 里没有该键的模型给默认 mm；显式 "" 表示用户选了"不总结"）
   if (f.summary_pool) f.summary_pool.value = (m.summary_pool === undefined || m.summary_pool === null) ? 'mm' : m.summary_pool;
   if (f.summary_length) f.summary_length.value = m.summary_length || '';
@@ -2896,6 +2944,20 @@ async function submitModel(e) {
     } catch (err) { toast('思考映射 JSON 格式错误：' + err.message, true); return; }
   }
   delete body.timezone;
+  // v2.15.0 仅闲时可用：提交高峰时段（cost_peak.windows，与缓存计费同源；PUT 端浅合并不动价格）。
+  // 非表单字段 peak_windows 不入库；all_day/免费类型不提交（保留现存配置）
+  delete body.peak_windows;
+  if (body.token_type === 'idle_only') {
+    const _pwRaw = (document.getElementById('f-peak-windows') || {}).value || '';
+    const _pwTrim = _pwRaw.trim();
+    if (_pwTrim) {
+      const _wins = _parsePeakWindows(_pwTrim);
+      if (!_wins.length) { toast('高峰时段无法解析出有效时段段，请按「9:00-12:00;14:00-18:00」格式填写', true); return; }
+      body.cost_peak = { windows: _peakLabel(_wins) };   // 规范化保存，另一处打开即所见
+    } else {
+      body.cost_peak = { windows: '' };   // 留空=全天闲时（清除共享时段，价格配置不动）
+    }
+  }
   // 一次性字段现已按 token_type 条件显隐（问题16），不再需要「填了就自动切 one_time」的兜底
   let ok;
   if (editingId) ok = await api('/admin/models/' + encodeURIComponent(editingId).replace(/%2F/g, '/'), { method: 'PUT', body: JSON.stringify(body) });

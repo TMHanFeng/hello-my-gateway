@@ -221,6 +221,17 @@ TEST_MODELS = [
      "is_free": True},
     {"id": "zzbt/echo-rer", "name": "mock-echo-rer", "provider_id": "zzmock", "modality": "rerank",
      "is_free": True},
+    # T29（v2.15.0）付费令牌类型：all_day 全天可用 / idle_only 仅闲时可用（cost_peak.windows 同源互通）。
+    # idle-block 高峰段 "0:00-23:59;23:59-0:00" 两段并集覆盖全天 1440 分钟（跨零点段补 23:59 这一分钟），
+    # 任何时刻运行均被拦截；paid-allday 带同样的全天段验证 all_day 不受时段约束；idle-open 不设时段=默认全天闲时
+    {"id": "zzbt/paid-allday", "name": "mock-paid-allday", "provider_id": "zzmock", "modality": "text",
+     "is_free": False, "token_type": "all_day",
+     "cost_peak": {"enabled": True, "windows": "0:00-23:59;23:59-0:00", "hit": 1, "miss": 2, "out": 4}},
+    {"id": "zzbt/paid-idle-block", "name": "mock-paid-idle-block", "provider_id": "zzmock", "modality": "text",
+     "is_free": False, "token_type": "idle_only",
+     "cost_peak": {"enabled": False, "windows": "0:00-23:59;23:59-0:00", "hit": 0, "miss": 0, "out": 0}},
+    {"id": "zzbt/paid-idle-open", "name": "mock-paid-idle-open", "provider_id": "zzmock", "modality": "text",
+     "is_free": False, "token_type": "idle_only"},
 ]
 TEST_IDS = [m["id"] for m in TEST_MODELS]
 
@@ -239,7 +250,7 @@ def deep_clean():
     c.get("pools", {}).pop("zzdef", None)  # v2.11.19 曾漏清该测试池残留至生产配置
     for pn in ("zzreq", "zzonce", "zzsmart", "zznso", "zzgift", "zzrpm", "zzvalve", "zzvnl", "zzqfp", "zzqfp2",
                "zzqfws2", "zzsump", "zzbad", "zzlocal", "zzswitch", "zzhr", "zzhrctl", "zzsw", "zzsw2",
-               "zzswsubl", "zzswsubn", "zzswnest", "zzswnestn", "zzcost"):
+               "zzswsubl", "zzswsubn", "zzswnest", "zzswnestn", "zzcost", "zzpaid", "zzpaid2", "zzpaid3"):
         c.get("pools", {}).pop(pn, None)
     # T23：还原 search_summary 专门 Key 与抓取开关为生产原值（用例中途崩溃时兜底）
     ss = c.get("search_summary")
@@ -281,7 +292,7 @@ def deep_clean():
         if t in _tables:
             db_exec(f"DELETE FROM {t} WHERE {q}")
     if "decision_log" in _tables:
-        db_exec("DELETE FROM decision_log WHERE selected IN ({}) OR pool_name IN ('zzall','zzbad','zzlocal','zzswitch','zzsump','zzqfws2','zzsw','zzsw2','zzswsubl','zzswsubn','zzswnest','zzswnestn')".format(
+        db_exec("DELETE FROM decision_log WHERE selected IN ({}) OR pool_name IN ('zzall','zzbad','zzlocal','zzswitch','zzsump','zzqfws2','zzsw','zzsw2','zzswsubl','zzswsubn','zzswnest','zzswnestn','zzpaid','zzpaid2','zzpaid3')".format(
             ",".join(chr(39) + i + chr(39) for i in TEST_IDS)))
     if "one_time_state" in _tables:
         db_exec("DELETE FROM one_time_state WHERE model_name='zzbt/echo-once'")
@@ -384,6 +395,10 @@ def main():
     c["pools"]["zzhr"] = {"model_ids": ["zzbt/echo-hr"], "strategy": "sequential"}
     c["pools"]["zzhrctl"] = {"model_ids": ["zzbt/echo-token"], "strategy": "sequential"}  # T22 未勾选对照
     c["pools"]["zzcost"] = {"model_ids": ["zzbt/echo-cost"], "strategy": "sequential"}  # T26 缓存计费
+    # T29 付费令牌类型：先拦后选（idle-block 高峰全遮蔽 → 落到 all_day）+ 无时段默认全天闲时
+    c["pools"]["zzpaid"] = {"model_ids": ["zzbt/paid-idle-block", "zzbt/paid-allday"], "strategy": "sequential"}
+    c["pools"]["zzpaid2"] = {"model_ids": ["zzbt/paid-idle-open"], "strategy": "sequential"}
+    c["pools"]["zzpaid3"] = {"model_ids": ["zzbt/paid-allday"], "strategy": "sequential"}
     json.dump(c, open(os.path.join(REPO, "config.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=2)
 
     # 启动隔离实例
@@ -1407,6 +1422,63 @@ def main():
         check("T28d Key维度含管理员调用", r.status_code == 200 and krow and krow["calls"] >= 1, krow)
         r = httpx.get(f"{BASE}/admin/stats/grouped?dim=bogus&days=1", headers=ADMIN, timeout=15)
         check("T28e 非法维度返回400", r.status_code == 400, r.status_code)
+
+        # ── T29（v2.15.0）付费令牌类型 all_day/idle_only：高峰时段拦截 + cost_peak.windows 同源互通 ──
+        # T29a 全天高峰段的 idle_only 被拦（peak_blocked）、同池 all_day 正常接单
+        r = httpx.post(f"{BASE}/v1/chat/completions", headers=ADMIN,
+                       json={"model": "zzpaid", "messages": [{"role": "user", "content": "hi"}]}, timeout=30)
+        steps_row = DB.execute("SELECT steps, selected FROM decision_log WHERE pool_name='zzpaid' ORDER BY id DESC LIMIT 1").fetchone()
+        steps = json.loads(steps_row["steps"]) if steps_row and steps_row["steps"] else []
+        idle_steps = [s for s in steps if s.get("model") == "zzbt/paid-idle-block"]
+        check("T29a idle_only高峰时段被拦(peak_blocked)且all_day接单",
+              r.status_code == 200 and steps_row and steps_row["selected"] == "zzbt/paid-allday"
+              and idle_steps and idle_steps[0].get("reason") == "peak_blocked"
+              and "0:00-23:59" in (idle_steps[0].get("detail") or {}).get("peak_windows", ""),
+              (r.status_code, steps_row["selected"] if steps_row else None, idle_steps[:1]))
+        # T29b 不设高峰时段的 idle_only 默认全天闲时：正常路由不拦截
+        r = httpx.post(f"{BASE}/v1/chat/completions", headers=ADMIN,
+                       json={"model": "zzpaid2", "messages": [{"role": "user", "content": "hi"}]}, timeout=30)
+        check("T29b idle_only未设时段默认全天闲时(放行)",
+              r.status_code == 200, r.status_code)
+        # T29c all_day 带全天高峰段仍放行（时段只约束 idle_only）
+        r = httpx.post(f"{BASE}/v1/chat/completions", headers=ADMIN,
+                       json={"model": "zzpaid3", "messages": [{"role": "user", "content": "hi"}]}, timeout=30)
+        check("T29c all_day不受高峰时段约束", r.status_code == 200, r.status_code)
+        # T29d 编辑表单式 PUT（只带 token_type + cost_peak.windows）：浅合并保留价格与 enabled。
+        # 先设价格（模拟「预估费用」弹窗配置），再以表单口径提交 windows-only PUT，价格必须原样保留
+        # （前端表单提交前已按 _peakLabel 规范化为 HH:MM，与表单行为一致）
+        httpx.put(f"{BASE}/admin/models/zzbt/paid-allday", headers=ADMIN, timeout=15,
+                  json={"cost_prices": {"hit": 1, "miss": 2, "out": 4}})
+        r = httpx.put(f"{BASE}/admin/models/zzbt/paid-allday", headers=ADMIN, timeout=15, json={
+            "token_type": "idle_only", "cost_peak": {"windows": "09:00-12:00"}})
+        d = httpx.get(f"{BASE}/admin/model/zzbt/paid-allday/cost", headers=ADMIN, timeout=15).json()
+        check("T29d 表单式PUT浅合并windows(价格/enabled保留·规范化)",
+              r.status_code == 200 and d.get("peak", {}).get("windows") == "09:00-12:00"
+              and d.get("peak", {}).get("enabled") is True
+              and d.get("prices", {}) == {"hit": 1, "miss": 2, "out": 4}, d.get("peak"))
+        # T29e 改回 all_day + 清空时段：windows 落空串、价格仍在；/admin/models 可见 cost_peak
+        r = httpx.put(f"{BASE}/admin/models/zzbt/paid-allday", headers=ADMIN, timeout=15, json={
+            "token_type": "all_day", "cost_peak": {"windows": ""}})
+        d = httpx.get(f"{BASE}/admin/models", headers=ADMIN, timeout=15).json()
+        m29 = next((m for m in d.get("models", []) if m["id"] == "zzbt/paid-allday"), {})
+        check("T29e 清空时段落空串且价格保留(/admin/models透出)",
+              r.status_code == 200 and (m29.get("cost_peak") or {}).get("windows") == ""
+              and (m29.get("cost_peak") or {}).get("enabled") is True
+              and m29.get("token_type") == "all_day" and m29.get("is_free") is False, m29.get("cost_peak"))
+        # T29f 新增模型（POST）携带 token_type=idle_only + cost_peak：原样落库
+        # （供应商制模型 id 由后端加前缀，请求 id 不可含 /）
+        r = httpx.post(f"{BASE}/admin/models", headers=ADMIN, timeout=15, json={
+            "id": "paid-new", "name": "mock-paid-new", "provider_id": "zzmock",
+            "is_free": False, "token_type": "idle_only",
+            "cost_peak": {"windows": "21:00-6:00"}})
+        d = httpx.get(f"{BASE}/admin/models", headers=ADMIN, timeout=15).json()
+        mn = next((m for m in d.get("models", []) if m["id"] == "zzmock/paid-new"), {})
+        check("T29f POST新增idle_only+跨零点时段落库",
+              r.status_code == 200 and mn.get("token_type") == "idle_only"
+              and (mn.get("cost_peak") or {}).get("windows") == "21:00-6:00",
+              (r.status_code, mn.get("cost_peak")))
+        r = httpx.delete(f"{BASE}/admin/models/zzmock/paid-new", headers=ADMIN, timeout=15)
+        check("T29g 测试新增模型清理", r.status_code == 200, r.status_code)
 
     finally:
         try:

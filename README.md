@@ -89,7 +89,7 @@ data/ 运行时数据（gateway.db、探测缓存、dev pid），与代码隔离
 
 | 🧠 统一思考控制 | 🧪 计费回归安全网 | 📐 智能估算超时 |
 |:---|:---|:---|
-| `reasoning_effort` 六档 → 按模型 `reasoning_map` 换算上游思考参数；思考内容统一回传 `reasoning_content` / `thinking` | 184 断言计费回归套件（`test_billing_regression.py`）：流式/非流式/一次性/RPM 触顶/安全阀/并发入账零丢失，任何改动先跑套件再上线 | `smart_estimate` 模型按 token 量动态计算超时（吞吐 EMA 校准），样本不足自动回退固定值 |
+| `reasoning_effort` 六档 → 按模型 `reasoning_map` 换算上游思考参数；思考内容统一回传 `reasoning_content` / `thinking` | 191 断言计费回归套件（`test_billing_regression.py`）：流式/非流式/一次性/RPM 触顶/安全阀/并发入账零丢失，任何改动先跑套件再上线 | `smart_estimate` 模型按 token 量动态计算超时（吞吐 EMA 校准），样本不足自动回退固定值 |
 
 | 📡 Embedding / Rerank | 🔑 用户密钥管理 | 📄 JSON 输出路由 |
 |:---|:---|:---|
@@ -166,7 +166,7 @@ python -m app.main
 >
 > 💡 **Ubuntu / Linux**：`python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt && python3 -m app.main`，或直接 `./start_gateway.sh`（自动选 venv/系统解释器；停止 `./stop_gateway.sh`）。代码本身跨平台：运行时目录（data/ logs/ backup/）首次启动自动创建，路径处理与日志滚动均适配 POSIX 文件系统。回归套件同样可在 Linux 运行：`python tests/test_billing_regression.py`。
 >
-> 🧪 **改动计费相关代码后**：`python tests/test_billing_regression.py` 运行 184 断言计费回归套件（自动在 8651 起隔离实例 + mock 上游，不触碰生产端口），全绿再上线。
+> 🧪 **改动计费相关代码后**：`python tests/test_billing_regression.py` 运行 191 断言计费回归套件（自动在 8651 起隔离实例 + mock 上游，不触碰生产端口），全绿再上线。
 
 ---
 
@@ -213,7 +213,7 @@ hello-my-gateway/
 │   ├── index.html                # 传统管理后台（/admin）
 │   └── hfadmin.html              # 科技感管理面板（/hfadmin）
 ├── tests/
-│   └── test_billing_regression.py # 计费回归套件（184 断言，隔离实例 + mock 上游）
+│   └── test_billing_regression.py # 计费回归套件（191 断言，隔离实例 + mock 上游）
 ├── start_gateway.cmd             # Windows 启动入口（自动选解释器，幂等）
 ├── stop_gateway.cmd              # 停止入口（身份核验，只停本仓库网关）
 ├── start_gateway.sh              # Linux/macOS 启动入口（语义同 .cmd：选解释器 + 已运行自检）
@@ -380,9 +380,12 @@ Anthropic 适配器自动完成：
       "tpm_limit": 100000,              // 每分钟 Token 上限（0=不限）
       "context_window": 128000,         // 上下文窗口（0=不校验）
       "max_concurrency": 0,             // 最大并发（0=不限，默认 0）
-      "token_type": "daily",            // daily / rolling_5h / one_time / gift（余额返还制）
+      "token_type": "daily",            // 免费模型: daily / rolling_5h / one_time / gift / local；付费模型: all_day（全天可用）/ idle_only（仅闲时可用，高峰时段取 cost_peak.windows，留空=全天闲时）
       "billing_mode": "token",          // token（按 Token）/ request（按请求次数）
-      "is_free": true,                  // 免费标注（绿）；付费模型显式设为 false（红）
+      "is_free": true,                  // 免费标注（绿）；付费模型显式设为 false（红，令牌类型即切换为 all_day/idle_only 两套）
+      "cost_peak": {                    // 高峰时段（与「缓存 Token 计费统计」高峰期同源互通；仅 idle_only 用作路由闲时判定，其余键仅供计费）
+        "enabled": false, "windows": "9:00-12:00;14:00-18:00", "hit": 0, "miss": 0, "out": 0
+      },
       "modality": "vision",             // text / vision / embedding / rerank
       "json_output": false,             // true = 支持 response_format(json)，硬门槛路由
       "smart_estimate": false,          // true = 按 token 量动态计算非流式超时（吞吐 EMA 校准）
