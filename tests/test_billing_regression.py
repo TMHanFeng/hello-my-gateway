@@ -302,6 +302,9 @@ TEST_MODELS = [
      "is_free": True},
     {"id": "zzbt/echo-rer", "name": "mock-echo-rer", "provider_id": "zzmock", "modality": "rerank",
      "is_free": True},
+    # T31（v2.16.2）缓存亲和：第二个 embedding 条目（模态预筛后候选集 ≥2 才有亲和意义）
+    {"id": "zzbt/echo-emb2", "name": "mock-echo-emb2", "provider_id": "zzmock", "modality": "embedding",
+     "is_free": True},
     # T29（v2.15.0）付费令牌类型：all_day 全天可用 / idle_only 仅闲时可用（cost_peak.windows 同源互通）。
     # idle-block 高峰段 "0:00-23:59;23:59-0:00" 两段并集覆盖全天 1440 分钟（跨零点段补 23:59 这一分钟），
     # 任何时刻运行均被拦截；paid-allday 带同样的全天段验证 all_day 不受时段约束；idle-open 不设时段=默认全天闲时
@@ -339,8 +342,11 @@ def deep_clean():
     for pn in ("zzreq", "zzonce", "zzsmart", "zznso", "zzgift", "zzrpm", "zzvalve", "zzvnl", "zzqfp", "zzqfp2",
                "zzqfws2", "zzsump", "zzbad", "zzlocal", "zzswitch", "zzhr", "zzhrctl", "zzsw", "zzsw2",
                "zzswsubl", "zzswsubn", "zzswnest", "zzswnestn", "zzcost", "zzpaid", "zzpaid2", "zzpaid3",
-               "zzresp", "zztool", "zzrespp"):
+               "zzresp", "zztool", "zzrespp", "zzaff", "zzaffsw", "zzaffemb"):
         c.get("pools", {}).pop(pn, None)
+    # T31：affinity 插件状态还原为未配置（default_enabled=false → 停用；生产用户后续自行开启）
+    if isinstance(c.get("plugins"), dict):
+        c["plugins"].pop("affinity", None)
     # T23：还原 search_summary 专门 Key 与抓取开关为生产原值（用例中途崩溃时兜底）
     ss = c.get("search_summary")
     if isinstance(ss, dict):
@@ -381,7 +387,7 @@ def deep_clean():
         if t in _tables:
             db_exec(f"DELETE FROM {t} WHERE {q}")
     if "decision_log" in _tables:
-        db_exec("DELETE FROM decision_log WHERE selected IN ({}) OR pool_name IN ('zzall','zzbad','zzlocal','zzswitch','zzsump','zzqfws2','zzsw','zzsw2','zzswsubl','zzswsubn','zzswnest','zzswnestn','zzpaid','zzpaid2','zzpaid3','zzresp','zztool','zzrespp')".format(
+        db_exec("DELETE FROM decision_log WHERE selected IN ({}) OR pool_name IN ('zzall','zzbad','zzlocal','zzswitch','zzsump','zzqfws2','zzsw','zzsw2','zzswsubl','zzswsubn','zzswnest','zzswnestn','zzpaid','zzpaid2','zzpaid3','zzresp','zztool','zzrespp','zzaff','zzaffsw','zzaffemb')".format(
             ",".join(chr(39) + i + chr(39) for i in TEST_IDS)))
     # T30（v2.16.0）：清理测试产生的 Responses 存档（response.model 命中 mock 测试模型名；生产行不受影响）
     if "responses_store" in _tables:
@@ -498,6 +504,14 @@ def main():
     c["pools"]["zztool"] = {"model_ids": ["zzbt/echo-tool"], "strategy": "sequential"}
     # T30f-h openai_responses 上游协议池
     c["pools"]["zzrespp"] = {"model_ids": ["zzbt/echo-resp"], "strategy": "sequential"}
+    # T31（v2.16.2）缓存亲和路由：load_balance 池（无亲和时轮询打散 = 缓存 miss 场景）、
+    # switch 池（定向请求旁路验证）、embedding 池（模态预筛后候选 ≥2）
+    c["pools"]["zzaff"] = {"model_ids": ["zzbt/echo-token", "zzbt/echo-req", "zzbt/echo-smart"],
+                           "strategy": "sequential", "load_balance": True}
+    c["pools"]["zzaffsw"] = {"model_ids": ["zzbt/sw-local", "zzbt/sw-local2", "zzbt/sw-net"],
+                             "strategy": "sequential", "switch_enabled": True}
+    c["pools"]["zzaffemb"] = {"model_ids": ["zzbt/echo-emb2", "zzbt/echo-emb", "zzbt/echo-token"],
+                              "strategy": "sequential"}
     json.dump(c, open(os.path.join(REPO, "config.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=2)
 
     # 启动隔离实例
@@ -1853,6 +1867,111 @@ def main():
               and usage30 and usage30[-1]["usage"]["total_tokens"] == 133
               and dec30 and dec30["actual_tokens"] == 133,
               (_st30h, content30, dec30["actual_tokens"] if dec30 else None))
+
+        # ── T31（v2.16.2）缓存亲和路由（affinity 插件）：同 Key + 同池候选集 → 确定性同一模型条目 ──
+        from app.plugins.installed.affinity.plugin import pick_target as _aff_pick
+
+        def _dec31(pool):
+            row = DB.execute("SELECT selected, steps FROM decision_log WHERE pool_name=? ORDER BY id DESC LIMIT 1",
+                             (pool,)).fetchone()
+            return dict(row) if row else {}
+
+        _AFF_CANDS = ["zzbt/echo-token", "zzbt/echo-req", "zzbt/echo-smart"]
+
+        # T31a 基线（插件关）：load_balance 轮询把连续请求打散到不同条目——即上游缓存 miss 的根源
+        _sel_a = []
+        for _ in range(3):
+            chat("zzaff", max_tokens=300)
+            _sel_a.append(_dec31("zzaff").get("selected"))
+        check("T31a 插件关:轮询打散(≥2不同条目)", len(set(_sel_a)) >= 2, _sel_a)
+
+        # 建亲和测试 Key + 启用插件（pools 留空 = 全部池）
+        r = httpx.post(f"{BASE}/admin/keys", headers=ADMIN,
+                       json={"name": "zzkey4", "type": "user", "allowed_pools": ["zzaff", "zzaffsw", "zzaffemb"],
+                             "token_type": "daily", "billing_mode": "token", "limit_amount": 1000000}, timeout=15)
+        _aff_kid = r.json().get("key", {}).get("id")
+        # 按创建返回的 id 取 secret：套件内 T24 已先建过一个同名 zzkey4（allowed_pools=["zzsw"]），
+        # 按名字查会取到旧行的 secret → 鉴权落在旧 Key 上被 403
+        _aff_sec = DB.execute("SELECT secret FROM api_keys WHERE id=?", (_aff_kid,)).fetchone()["secret"]
+        httpx.post(f"{BASE}/admin/plugins/affinity/config", headers=ADMIN,
+                   json={"pools": "", "virtual_nodes": 40}, timeout=15)
+        _r_en = httpx.post(f"{BASE}/admin/plugins/affinity/enable", headers=ADMIN, timeout=15)
+        _exp = _aff_pick(_AFF_CANDS, str(_aff_kid), 40)
+
+        # T31b 同 Key 六连请求全部粘同一条目（= 纯函数哈希期望），决策含 affinity_selected
+        _sel_b = []
+        for _ in range(6):
+            chat("zzaff", auth=_aff_sec, max_tokens=300)
+            _sel_b.append(_dec31("zzaff").get("selected"))
+        _steps_b = json.loads(_dec31("zzaff").get("steps") or "[]")
+        check("T31b 同Key六连粘同一条目(=哈希期望)+affinity_selected",
+              _r_en.status_code == 200 and _exp in _AFF_CANDS
+              and all(s == _exp for s in _sel_b)
+              and any(s.get("reason") == "affinity_selected" for s in _steps_b),
+              (_exp, _sel_b, [s.get("reason") for s in _steps_b]))
+
+        # T31c 无状态：/admin/reload 重建注册表后同一 Key 仍落同一条目（记忆表方案重启即丢）
+        httpx.post(f"{BASE}/admin/reload", headers=ADMIN, timeout=30)
+        time.sleep(0.3)
+        chat("zzaff", auth=_aff_sec, max_tokens=300)
+        _sel_c = _dec31("zzaff").get("selected")
+        check("T31c reload后落点不变(无状态哈希)", _sel_c == _exp, (_sel_c, _exp))
+
+        # T31d 亲和目标停用（valve_pct=0）→ 记 affinity_unavailable 落回正常次序；恢复后自动回粘
+        def _cfg31(mutate):
+            _c = json.load(open(os.path.join(REPO, "config.json"), encoding="utf-8"))
+            for _m in _c["models"]:
+                if _m.get("id") == _exp:
+                    mutate(_m)
+            json.dump(_c, open(os.path.join(REPO, "config.json"), "w", encoding="utf-8"),
+                      ensure_ascii=False, indent=2)
+            httpx.post(f"{BASE}/admin/reload", headers=ADMIN, timeout=30)
+            time.sleep(0.3)
+
+        _cfg31(lambda m: m.update(valve_pct=0))
+        r = chat("zzaff", auth=_aff_sec, max_tokens=300)
+        _d_fail = _dec31("zzaff")
+        _cfg31(lambda m: m.update(valve_pct=100))
+        chat("zzaff", auth=_aff_sec, max_tokens=300)
+        _d_back = _dec31("zzaff").get("selected")
+        _steps_d = json.loads(_d_fail.get("steps") or "[]")
+        check("T31d 目标停用落回次序+恢复回粘",
+              r.status_code == 200 and _d_fail.get("selected") not in (None, _exp) and _d_back == _exp
+              and any(str(s.get("reason", "")).startswith("affinity_unavailable") for s in _steps_d),
+              (_d_fail.get("selected"), _d_back, [s.get("reason") for s in _steps_d]))
+
+        # T31e 池清单过滤：pools 不含 zzaff → 该池不亲和（决策无 affinity 步）
+        httpx.post(f"{BASE}/admin/plugins/affinity/config", headers=ADMIN,
+                   json={"pools": "zznonexist", "virtual_nodes": 40}, timeout=15)
+        chat("zzaff", auth=_aff_sec, max_tokens=300)
+        _steps_e = json.loads(_dec31("zzaff").get("steps") or "[]")
+        check("T31e 池清单外不亲和",
+              not any("affinity" in str(s.get("reason", "")) for s in _steps_e),
+              [s.get("reason") for s in _steps_e])
+        httpx.post(f"{BASE}/admin/plugins/affinity/config", headers=ADMIN,
+                   json={"pools": "", "virtual_nodes": 40}, timeout=15)
+
+        # T31f Switch 定向请求旁路：亲和目标可能属另一侧，switch 请求不得参与（防静默跨侧）
+        r = sw_chat("zzaffsw", switch="local", auth=_aff_sec)
+        _steps_f = json.loads(_dec31("zzaffsw").get("steps") or "[]")
+        check("T31f switch定向旁路(无affinity步,本地侧选中)",
+              r.status_code == 200 and _dec31("zzaffsw").get("selected") == "zzbt/sw-local"
+              and not any("affinity" in str(s.get("reason", "")) for s in _steps_f),
+              (_dec31("zzaffsw").get("selected"), [s.get("reason") for s in _steps_f]))
+
+        # T31g embedding 模态预筛：chat 条目被预筛掉，候选集={emb,emb2}，落点=二者哈希期望
+        _exp_g = _aff_pick(["zzbt/echo-emb", "zzbt/echo-emb2"], str(_aff_kid), 40)
+        _sel_g = []
+        for _ in range(2):
+            httpx.post(f"{BASE}/v1/embeddings", headers=dict(ADMIN, Authorization="Bearer " + _aff_sec),
+                       json={"model": "zzaffemb", "input": "亲和测试"}, timeout=30)
+            _sel_g.append(_dec31("zzaffemb").get("selected"))
+        check("T31g embedding预筛后粘同一条目(≠chat条目)",
+              _exp_g in ("zzbt/echo-emb", "zzbt/echo-emb2") and all(s == _exp_g for s in _sel_g),
+              (_exp_g, _sel_g))
+
+        # 收尾：停用插件（deep_clean 兜底再清 config 残留）
+        httpx.post(f"{BASE}/admin/plugins/affinity/disable", headers=ADMIN, timeout=15)
 
     finally:
         try:

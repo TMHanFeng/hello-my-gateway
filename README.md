@@ -34,7 +34,8 @@ app/
 └── plugins/           # ★ 插件中心：manager + base + installed/<插件>/
     └── installed/
         ├── switch_pool/   # 🔀 Switch 切换池（热插拔，POST /{池名}?switch=local|net）
-        └── headroom/      # 🪴 Headroom 上下文压缩（热插拔，默认停用）
+        ├── headroom/      # 🪴 Headroom 上下文压缩（热插拔，默认停用）
+        └── affinity/      # 🧲 缓存亲和路由（热插拔，默认停用）
 providers→app/providers，static/ 前端，scripts/ 启动脚本，docs/ 全部文档，tests/ 回归测试
 backup/ 备份统一归档（config/ db/ static/ snapshots/，见 backup/README.md）
 data/ 运行时数据（gateway.db、探测缓存、dev pid），与代码隔离
@@ -89,11 +90,15 @@ data/ 运行时数据（gateway.db、探测缓存、dev pid），与代码隔离
 
 | 🧠 统一思考控制 | 🧪 计费回归安全网 | 📐 智能估算超时 |
 |:---|:---|:---|
-| `reasoning_effort` 六档 → 按模型 `reasoning_map` 换算上游思考参数；思考内容统一回传 `reasoning_content` / `thinking` | 211 断言计费回归套件（`test_billing_regression.py`）：流式/非流式/一次性/RPM 触顶/安全阀/并发入账零丢失，任何改动先跑套件再上线 | `smart_estimate` 模型按 token 量动态计算超时（吞吐 EMA 校准），样本不足自动回退固定值 |
+| `reasoning_effort` 六档 → 按模型 `reasoning_map` 换算上游思考参数；思考内容统一回传 `reasoning_content` / `thinking` | 218 断言计费回归套件（`test_billing_regression.py`）：流式/非流式/一次性/RPM 触顶/安全阀/并发入账零丢失，任何改动先跑套件再上线 | `smart_estimate` 模型按 token 量动态计算超时（吞吐 EMA 校准），样本不足自动回退固定值 |
 
 | 📡 Embedding / Rerank | 🔑 用户密钥管理 | 📄 JSON 输出路由 |
 |:---|:---|:---|
 | `/v1/embeddings`、`/v1/rerank` 独立端点，仅路由到对应模态的模型 | 用户密钥可设限额（daily / 5h / 一次性）、计费模式、可用池，1 小时粒度用量历史，到期自动轮换 | 勾选 `json_output` 的模型组成硬门槛：带 `response_format(json)` 的请求只路由到支持的模型 |
+
+| 🧲 缓存亲和路由（插件） | 🎚️ 亲和即优先 | 📈 命中可观测 |
+|:---|:---|:---|
+| 同一调用 Key 在同一池内始终优先路由到同一模型条目（无状态一致性哈希），提升上游提示词缓存命中率 | 亲和目标不可用（冷却/限流/高峰/配额尽/模态不符）自动落回池内正常次序，恢复后自动回粘；Switch 定向与单模型锁定不参与 | 决策日志 `affinity_selected` / `affinity_unavailable` 标签直接反映亲和命中情况，配合「预估费用」的缓存命中统计可量化改造成效 |
 
 | ⚡ 高性能数据层 | 🔒 并发事务安全 | 🪶 轻量运行 |
 |:---|:---|:---|
@@ -166,7 +171,7 @@ python -m app.main
 >
 > 💡 **Ubuntu / Linux**：`python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt && python3 -m app.main`，或直接 `./start_gateway.sh`（自动选 venv/系统解释器；停止 `./stop_gateway.sh`）。代码本身跨平台：运行时目录（data/ logs/ backup/）首次启动自动创建，路径处理与日志滚动均适配 POSIX 文件系统。回归套件同样可在 Linux 运行：`python tests/test_billing_regression.py`。
 >
-> 🧪 **改动计费相关代码后**：`python tests/test_billing_regression.py` 运行 211 断言计费回归套件（自动在 8651 起隔离实例 + mock 上游，不触碰生产端口），全绿再上线。
+> 🧪 **改动计费相关代码后**：`python tests/test_billing_regression.py` 运行 218 断言计费回归套件（自动在 8651 起隔离实例 + mock 上游，不触碰生产端口），全绿再上线。
 
 ---
 
@@ -206,14 +211,15 @@ hello-my-gateway/
 │   └── plugins/                  # 插件中心：base/manager/routes + installed/ 下可热插拔插件
 │       └── installed/
 │           ├── switch_pool/      # 🔀 Switch 切换池（POST /{池名}?switch=local|net）
-│           └── headroom/         # 🪴 Headroom 上下文压缩（非必装，无库自动旁路）
+│           ├── headroom/         # 🪴 Headroom 上下文压缩（非必装，无库自动旁路）
+│           └── affinity/         # 🧲 缓存亲和路由（同 Key 同池粘同一模型条目，无状态一致性哈希）
 ├── scripts/                      # 启停与工具脚本（updater / dev8651 / 静默启停 ps1）
 ├── docs/                         # 全部文档
 ├── static/
 │   ├── index.html                # 传统管理后台（/admin）
 │   └── hfadmin.html              # 科技感管理面板（/hfadmin）
 ├── tests/
-│   └── test_billing_regression.py # 计费回归套件（211 断言，隔离实例 + mock 上游）
+│   └── test_billing_regression.py # 计费回归套件（218 断言，隔离实例 + mock 上游）
 ├── start_gateway.cmd             # Windows 启动入口（自动选解释器，幂等）
 ├── stop_gateway.cmd              # 停止入口（身份核验，只停本仓库网关）
 ├── start_gateway.sh              # Linux/macOS 启动入口（语义同 .cmd：选解释器 + 已运行自检）
@@ -301,6 +307,7 @@ Anthropic 适配器自动完成：
 - **顺序模式**：严格按池内设定顺序，第一个可用的即被选中
 - **自动择优模式**：在可用模型中按**实时延迟从低到高**优先（延迟来自测速 + 真实请求耗时的滑动平均）；超过池配置 `slow_latency_threshold`（默认 3000ms，0=不限）的模型直接排到末尾（nested 子池用各自阈值）
 - **负载均衡模式**（`load_balance: true`，与自动择优互斥）：每次请求从**上次选中模型的下一个**开始轮转（round-robin），失败仍顺序尝试后续模型——即在多个可用模型间轮流分配请求，而非固定用第一个
+- **🧲 缓存亲和**（`affinity` 插件启用后叠加在上述策略之前）：同一调用 Key 在本池候选集上确定性优先同一**模型条目**——无状态一致性哈希（`hash(key_id)` 落在候选环上的位置），重启/热加载不丢亲和关系，候选增删只影响相邻 Key 的落点。粘性粒度是条目而非模型名（上游提示词缓存跟随 上游账号×模型×前缀，同名模型挂多供应商时只有条目级粘性能命中）。亲和只是优先：目标不可用时照常走池内原策略并记 `affinity_unavailable`，恢复后自动回粘；候选先按请求形状预筛（模态/JSON/视觉）。`auto_order` 池不建议开启（亲和会覆盖其"优先消耗快到期配额"的排序语义）
 
 ### 3️⃣ 故障切换
 
@@ -478,6 +485,8 @@ Anthropic 适配器自动完成：
 | 一次性已失效 · 已用 50,000/50,000 | 一次性模型到期/用完 |
 | 一次性已失效 · 已存活 3700s / TTL 3600s | 同上，TTL 触发 |
 | 子池无可用接口 | 嵌套子池内全部不可用 |
+| **🧲 亲和选中** | 缓存亲和插件命中：该 Key 在本池候选集上的确定性落点（`affinity_selected`） |
+| **🧲 亲和目标不可用 · （安全阀触顶等具体原因）** | 亲和落点被可用性检查拦下，本次落回池内正常次序（`affinity_unavailable:<原因>`），目标恢复后自动回粘 |
 | **上游限流 → 切换 · HTTP 429 · 234ms · 冷却 5s** | 上游 429 限流后切换 |
 | **上游错误 → 切换 · TimeoutError · HTTP 500 · 2300ms · 冷却 5s** | 上游错误后切换 |
 
@@ -634,6 +643,8 @@ SQLite（`gateway.db`）持久化以下表：
 ## 📜 版本
 
 ### 最新
+
+**`v2.16.2`** — **🧲 缓存亲和路由（`affinity` 插件）**：解决中转池路由打散请求导致的上游缓存命中率低——同一调用 Key 在同一池内始终优先路由到同一**模型条目**。①**插件本体**（`app/plugins/installed/affinity/`，managed 域、默认停用、面板热启停）：无状态一致性哈希（`hash(key_id)` 落在 `sorted(候选条目)` 哈希环上的虚拟节点，默认每条目 40 虚拟节点可调），不建记忆表——重启/热加载后亲和关系自动恢复（记忆表方案会丢，重启后第一波请求全部 miss）；候选集增删只影响相邻 Key 落点、多 Key 天然均匀分布；配置项 `pools`（逗号分隔池名清单，留空=全部池）与 `virtual_nodes`。**粘性粒度是条目而非模型名**：上游提示词缓存跟随 上游账号×模型×前缀，同名模型挂多供应商时只有条目级粘性能命中。②**核心 hook 点**（选模层首次对插件开放，模式照抄 `active_compressor` 成熟先例）：`GatewayPlugin.preferred_model(pool_name, key_id, candidates)` 协议方法 + `plugin_center.preferred_model()` 分发（单插件抛错只损失其建议，绝不影响选模主流程）；`pool._select_from_pool` 在单模型锁定之后、池内遍历之前询问——亲和只是**优先**：候选先按请求稳定约束预筛（模态/JSON/视觉），目标过完整 `_check_available` 不可用则记 `affinity_unavailable:<原因>` 落回池内原策略（sequential/auto_order/load_balance），恢复后自动回粘；Switch 定向请求与子池递归不参与（同 `single_override` 旁路理由，防静默跨侧）；管理员服务器密钥直连无 key 记录自然不亲和。③**调用方身份贯通**：`main.py` 三端点（chat/messages/responses 经 `_chat_handler`、embeddings、rerank）计算 `caller_key_id`（按 key **id** 而非名字，改名不打散亲和）传入四个 fallback 入口（非流式/流式/embedding/rerank，hook 在 `_select_from_pool` 一层全部覆盖，兜底池内同样亲和）。④回归 211→218 断言全绿（T31：插件关轮询打散基线/同 Key 六连粘哈希期望条目+`affinity_selected`/reload 后落点不变/目标停用 valve 记 `affinity_unavailable` 落回次序+恢复回粘/池清单外不亲和/switch=local 旁路无 affinity 步/embedding 模态预筛后粘同一条目≠chat 条目）。README 特性表加缓存亲和行、调用顺序节加亲和条目、原因标签表加两条、断言数 211→218、start_gateway.cmd 对齐 v2.16.2。验证：回归 218 全绿；8651 浏览器实测插件中心卡片与设置页。生效说明：插件默认停用，面板「插件中心」启用即热生效（无需重启）；`auto_order` 池不建议开启（亲和会覆盖其优先消耗快到期配额的排序语义）。
 
 **`v2.16.1`** — **接口命名对齐图片官方名（OpenAI Responses / OpenAI Compatible / Anthropic）+ `openai_responses` 上游协议**：①**命名修正**：v2.16.0 误用了 Chat Completions/Messages 等非图片官方名，现按用户提供图片统一为 `OpenAI Responses` / `OpenAI Compatible` / `Anthropic`——双面板协议下拉改为三接口在前（按图片顺序）+ 千帆搜索/千帆网页搜索垫后，默认选中仍为 OpenAI Compatible（`selected` 固定，新增表单行为不变）；徽章新增 `.b-responses` 配色、`protocolLabel`/`provBadge` 三接口映射，内部枚举值不变（config 零迁移）。②**新上游协议 `openai_responses`**（第三接口的上游侧补齐）：新增 `app/providers/responses_provider.py`（与 AnthropicProvider 同构——`chat()`/`chat_stream()` 以内部 chat 格式进出、转换在本层完成，pool 的路由/计费/流式 usage 提取零改动；POST `{base_url}/responses`，429→RateLimitError，speedtest 用最小 Responses 请求）；`responses_adapter.py` 补上游方向三函数：`openai_to_responses_request`（messages→input items、system→instructions、nested tools→flat、tool 消息→function_call_output、reasoning_map 片段合并且 `reasoning_effort` 键转译至官方嵌套位）、`responses_to_chat_response`（message→content、reasoning.summary→reasoning_content、function_call→tool_calls、input_tokens_details.cached_tokens→cached_tokens）、`responses_sse_to_chat`（Responses 事件流→chat chunk 流，completed/incomplete/failed 终态 + usage 帧 + [DONE]，事件耗尽兜底补发）。③接入：`pool._build_provider` 分支、admin 协议白名单三处（POST/PUT providers + test_model 连通性测试走 ResponsesProvider）、probe_reasoning 对新协议自然跳过（与千帆同现状）。④回归 208→211 断言全绿（T30f chat 客户端→Responses 上游互转+计费 133：上游 payload 断言 input/instructions/max_output_tokens；T30g Responses 客户端→Responses 上游全链往返；T30h 上游 Responses 事件流→chat chunk 流式+决策日志 133）。README 命名全面修正（特性表/限制/端点表/上游适配表加 openai_responses 行）、断言数 208→211、start_gateway.cmd 对齐 v2.16.1。验证：回归 211 全绿；mock 上游新增 /responses 路径分支（非流式+事件流）；node --check 双面板全过；8651 浏览器实测三接口下拉顺序与官方名。生效说明：新协议路由需重启网关；面板下拉刷新即生效。
 

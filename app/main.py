@@ -224,6 +224,9 @@ async def _chat_handler(request: Request, auth: dict, forced_pool: str | None = 
         caller = "管理员"
     else:
         caller = key.get("name", "") if key else ""
+    # v2.16.2 缓存亲和：路由亲和按 key id 绑定（改 Key 名不打散亲和）；服务器密钥直连无
+    # key 记录 → None 不亲和。详见 pool._select_from_pool 的 affinity hook。
+    caller_key_id = (key.get("id") if key else None) or None
     if is_user_key:
         if not keyauth.is_pool_allowed(key, pool_name):
             raise HTTPException(status_code=403, detail=f"该 API Key 无权访问模型池 '{pool_name}'")
@@ -243,7 +246,7 @@ async def _chat_handler(request: Request, auth: dict, forced_pool: str | None = 
         try:
             stream, entry, steps = await pool.execute_stream_with_fallback(
                 pool_name, req, None, caller, required_json_output=required_json_output,
-                switch_role=switch_role)
+                switch_role=switch_role, caller_key_id=caller_key_id)
         except ContextOverflowPassThrough as e:
             return _overflow_passthrough_response(e)
         if stream is None:
@@ -275,7 +278,8 @@ async def _chat_handler(request: Request, auth: dict, forced_pool: str | None = 
     try:
         response, tokens, steps = await pool.execute_with_fallback(pool_name, req, None, caller,
                                                                    required_json_output=required_json_output,
-                                                                   switch_role=switch_role)
+                                                                   switch_role=switch_role,
+                                                                   caller_key_id=caller_key_id)
     except ContextOverflowPassThrough as e:
         return _overflow_passthrough_response(e)
     # === Issue 6 诊断日志（DEBUG 级别）===
@@ -497,6 +501,7 @@ async def embeddings_handler(request: Request, auth: dict = Depends(verify_key))
     key = auth.get("key")
     is_user_key = auth["kind"] == "key_user"
     caller = "管理员" if auth["kind"] == "server_admin" else (key.get("name", "") if key else "")
+    caller_key_id = (key.get("id") if key else None) or None  # v2.16.2 缓存亲和按 key id
     if is_user_key:
         if not keyauth.is_pool_allowed(key, pool_name):
             raise HTTPException(status_code=403, detail=f"该 API Key 无权访问模型池 '{pool_name}'")
@@ -504,7 +509,8 @@ async def embeddings_handler(request: Request, auth: dict = Depends(verify_key))
         if not ok:
             raise HTTPException(status_code=429, detail=f"API Key 用量已达限额: {reason}")
 
-    response, tokens, steps = await pool.execute_embedding_with_fallback(pool_name, req, None, caller)
+    response, tokens, steps = await pool.execute_embedding_with_fallback(pool_name, req, None, caller,
+                                                                         caller_key_id=caller_key_id)
     if response is None:
         _detail = pool.failure_detail(steps, has_images=False)
         logger.error(f"[调用失败-embedding] pool={pool_name} caller={caller!r} detail={_detail}")
@@ -550,6 +556,7 @@ async def rerank_handler(request: Request, auth: dict = Depends(verify_key)):
     key = auth.get("key")
     is_user_key = auth["kind"] == "key_user"
     caller = "管理员" if auth["kind"] == "server_admin" else (key.get("name", "") if key else "")
+    caller_key_id = (key.get("id") if key else None) or None  # v2.16.2 缓存亲和按 key id
     if is_user_key:
         if not keyauth.is_pool_allowed(key, pool_name):
             raise HTTPException(status_code=403, detail=f"该 API Key 无权访问模型池 '{pool_name}'")
@@ -557,7 +564,8 @@ async def rerank_handler(request: Request, auth: dict = Depends(verify_key)):
         if not ok:
             raise HTTPException(status_code=429, detail=f"API Key 用量已达限额: {reason}")
 
-    response, tokens, steps = await pool.execute_rerank_with_fallback(pool_name, req, None, caller)
+    response, tokens, steps = await pool.execute_rerank_with_fallback(pool_name, req, None, caller,
+                                                                      caller_key_id=caller_key_id)
     if response is None:
         _detail = pool.failure_detail(steps, has_images=False)
         logger.error(f"[调用失败-rerank] pool={pool_name} caller={caller!r} detail={_detail}")

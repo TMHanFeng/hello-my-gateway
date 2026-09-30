@@ -228,6 +228,23 @@ class PluginManager:
                 return c
         return None
 
+    def preferred_model(self, pool_name: str, key_id: str | None, candidates: list[str]) -> str | None:
+        """路由亲和 hook（v2.16.2）：第一个启用的亲和插件给出的优先条目 id，无则 None。
+        单插件抛错只损失其建议（忽略并继续问下一个），绝不影响选模主流程。"""
+        if not key_id or not candidates:
+            return None
+        for plugin in self._plugins.values():
+            try:
+                if not self.is_enabled(plugin.manifest.id):
+                    continue
+                got = plugin.preferred_model(pool_name, key_id, candidates)
+            except Exception:
+                logger.exception(f"[插件中心] 插件 {plugin.manifest.id} preferred_model 抛错（忽略）")
+                continue
+            if got:
+                return got
+        return None
+
     # ---------- 生命周期 ----------
 
     def startup(self, app) -> None:

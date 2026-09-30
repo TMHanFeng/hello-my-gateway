@@ -889,9 +889,10 @@ class ModelPool:
                                 has_images: bool = False, visiting: set | None = None,
                                 required_modality: str | None = None, required_json_output: bool = False,
                                 est_input: int = 0, switch_role: str = "",
-                                switch_seen: set | None = None):
+                                switch_seen: set | None = None, caller_key_id: str | None = None):
         exclude = exclude or set()
         visiting = visiting or set()
+        is_root = not visiting  # 根池调用（select_model 直入）；子池递归时 visiting 已含父池
         if pool_name in visiting:
             return None, [{"model": f"pool:{pool_name}", "reason": "cycle"}]
         visiting = visiting | {pool_name}
@@ -918,6 +919,46 @@ class ModelPool:
                     step["detail"] = detail
                 return None, [step]
             return None, [{"model": override_id, "reason": "single_override_not_found"}]
+
+        # v2.16.2 缓存亲和（插件 hook，问题：中转池轮询/排序路由打散同一调用方的连续请求，
+        # 上游提示词缓存每次冷启动）：同一 Key 在本池候选集上确定性优先同一模型条目。
+        # 粘性粒度是条目而非模型名——缓存跟随 上游账号×模型×前缀，同名模型挂多供应商时
+        # 只有条目级粘性能命中。仅根池问一次（子池递归不重复问）；Switch 定向请求旁路
+        # （亲和目标可能属另一侧，同 single_override 理由）；单模型锁定优先级更高（上面已 return）。
+        # 亲和只是优先：候选先按本请求的稳定约束预筛（模态/json/视觉，避免跨模态空耗），
+        # 完整可用性检查不过则记一条 affinity_unavailable 落回池内正常次序，恢复后自动回粘。
+        aff_steps: list = []
+        if is_root and caller_key_id and not switch_role:
+            aff_cand = []
+            for mid in self._collect_pool_models(pool_name):
+                e = self.registry.get(mid)
+                if e is None or mid in exclude:
+                    continue
+                if required_modality is not None:
+                    if e.modality != required_modality:
+                        continue
+                elif e.modality in ("embedding", "rerank"):
+                    continue
+                if required_json_output and not e.json_output:
+                    continue
+                if has_images and e.modality != "vision":
+                    continue
+                aff_cand.append(mid)
+            if len(aff_cand) >= 2:
+                pref = plugin_center.preferred_model(pool_name, caller_key_id, aff_cand)
+                entry = self.registry.get(pref or "")
+                if entry is not None:
+                    ok, reason, detail = await self._check_available(
+                        entry, estimated_tokens, has_images,
+                        required_modality=required_modality, required_json_output=required_json_output,
+                        est_input=est_input
+                    )
+                    if ok:
+                        return entry, [{"model": entry.id, "reason": "affinity_selected"}]
+                    step = {"model": entry.id, "reason": f"affinity_unavailable:{reason}"}
+                    if detail:
+                        step["detail"] = detail
+                    aff_steps.append(step)
 
         units = []
         broken_refs = []
@@ -958,7 +999,7 @@ class ModelPool:
                 units = units[idx:] + units[:idx]
                 self.round_robin[pool_name] = (idx + 1) % len(units)
 
-        steps = []
+        steps = list(aff_steps)
         # 引用失效显式记录：不再静默跳过（此前断裂引用会让 json 判定/选模无声失败）
         for ref in broken_refs:
             steps.append({"model": ref, "reason": "ref_not_found",
@@ -1003,7 +1044,7 @@ class ModelPool:
     async def select_model(self, pool_name: str, requested_model: str | None = None, estimated_tokens: int = 0,
                            exclude: set | None = None, has_images: bool = False,
                            required_modality: str | None = None, required_json_output: bool = False,
-                           est_input: int = 0, switch_role: str = ""):
+                           est_input: int = 0, switch_role: str = "", caller_key_id: str | None = None):
         exclude = exclude or set()
         steps = []
 
@@ -1033,7 +1074,7 @@ class ModelPool:
         return await self._select_from_pool(
             pool_name, estimated_tokens, exclude, has_images,
             required_modality=required_modality, required_json_output=required_json_output,
-            est_input=est_input, switch_role=switch_role
+            est_input=est_input, switch_role=switch_role, caller_key_id=caller_key_id
         )
 
     @asynccontextmanager
@@ -1427,7 +1468,8 @@ class ModelPool:
 
         return response, tokens_used
 
-    async def execute_embedding_with_fallback(self, pool_name: str, req, requested_model: str | None = None, caller: str = ""):
+    async def execute_embedding_with_fallback(self, pool_name: str, req, requested_model: str | None = None, caller: str = "",
+                                              caller_key_id: str | None = None):
         """embedding 专用：仅选 modality==embedding 的模型；禁用 fallback（chat 池不能兜底 embedding）。"""
         tried: set[str] = set()
         # EmbeddingRequest 无 messages 字段，需按 input 长度安全估算
@@ -1451,7 +1493,7 @@ class ModelPool:
 
         for _ in range(max_attempts):
             entry, steps = await self.select_model(pool_name, requested_model, estimated, exclude=tried,
-                                                   required_modality="embedding")
+                                                   required_modality="embedding", caller_key_id=caller_key_id)
             if steps:
                 actual_calls.extend(st for st in steps if st["reason"] != "already_tried")
             if entry is None:
@@ -1460,7 +1502,7 @@ class ModelPool:
             try:
                 response, tokens = await self.execute_embedding(entry, req)
                 last_reason = actual_calls[-1]["reason"] if actual_calls else ""
-                if last_reason in ("selected", "single_override_selected") and actual_calls[-1]["model"] == entry.id:
+                if last_reason in ("selected", "single_override_selected", "affinity_selected") and actual_calls[-1]["model"] == entry.id:
                     pass
                 else:
                     actual_calls.append({"model": entry.id, "reason": "selected"})
@@ -1506,7 +1548,8 @@ class ModelPool:
         await db.log_decision(pool_name, requested_model, None, estimated, actual_calls, caller)
         return None, 0, actual_calls
 
-    async def execute_rerank_with_fallback(self, pool_name: str, req, requested_model: str | None = None, caller: str = ""):
+    async def execute_rerank_with_fallback(self, pool_name: str, req, requested_model: str | None = None, caller: str = "",
+                                           caller_key_id: str | None = None):
         """rerank 专用：仅选 modality==rerank 的模型；禁用 fallback（chat 池不能兜底 rerank）。"""
         tried: set[str] = set()
         # RerankRequest 无 messages 字段，按 query + documents 长度安全估算
@@ -1520,7 +1563,7 @@ class ModelPool:
 
         for _ in range(max_attempts):
             entry, steps = await self.select_model(pool_name, requested_model, estimated, exclude=tried,
-                                                   required_modality="rerank")
+                                                   required_modality="rerank", caller_key_id=caller_key_id)
             if steps:
                 actual_calls.extend(st for st in steps if st["reason"] != "already_tried")
             if entry is None:
@@ -1529,7 +1572,7 @@ class ModelPool:
             try:
                 response, tokens = await self.execute_rerank(entry, req)
                 last_reason = actual_calls[-1]["reason"] if actual_calls else ""
-                if last_reason in ("selected", "single_override_selected") and actual_calls[-1]["model"] == entry.id:
+                if last_reason in ("selected", "single_override_selected", "affinity_selected") and actual_calls[-1]["model"] == entry.id:
                     pass
                 else:
                     actual_calls.append({"model": entry.id, "reason": "selected"})
@@ -1603,7 +1646,7 @@ class ModelPool:
 
     async def execute_with_fallback(self, pool_name: str, req, requested_model: str | None = None, caller: str = "",
                                     required_json_output: bool = False, allow_search_summary: bool = True,
-                                    switch_role: str = ""):
+                                    switch_role: str = "", caller_key_id: str | None = None):
         tried: set[str] = set()
         _hr_cache: dict = {}  # Headroom：本请求的压缩结果缓存（同请求多个勾选候选复用一次压缩）
         compressor = plugin_center.active_compressor()  # 已启用的压缩插件，未启用为 None（零开销旁路）
@@ -1627,11 +1670,12 @@ class ModelPool:
                 if not fb_name:
                     break
                 entry, steps = await self.select_model(fb_name, None, estimated, exclude=tried, has_images=has_images,
-                                                       required_json_output=required_json_output, est_input=est_input)
+                                                       required_json_output=required_json_output, est_input=est_input,
+                                                       caller_key_id=caller_key_id)
             else:
                 entry, steps = await self.select_model(pool_name, requested_model, estimated, exclude=tried, has_images=has_images,
                                                        required_json_output=required_json_output, est_input=est_input,
-                                                       switch_role=switch_role)
+                                                       switch_role=switch_role, caller_key_id=caller_key_id)
             route_ms = round((time.perf_counter() - _t_sel) * 1000, 1)
 
             if steps:
@@ -1655,7 +1699,7 @@ class ModelPool:
                 response, tokens = await self.execute(entry, req_use)
                 upstream_ms = round((time.perf_counter() - t0) * 1000, 1)
                 last_reason = actual_calls[-1]["reason"] if actual_calls else ""
-                if last_reason in ("selected", "single_override_selected") and actual_calls[-1]["model"] == entry.id:
+                if last_reason in ("selected", "single_override_selected", "affinity_selected") and actual_calls[-1]["model"] == entry.id:
                     if use_fallback:
                         actual_calls[-1]["reason"] = "fallback_selected"
                 else:
@@ -1816,7 +1860,7 @@ class ModelPool:
 
     async def execute_stream_with_fallback(self, pool_name: str, req, requested_model: str | None = None, caller: str = "",
                                            required_json_output: bool = False, allow_search_summary: bool = True,
-                                           switch_role: str = ""):
+                                           switch_role: str = "", caller_key_id: str | None = None):
         tried: set[str] = set()
         _hr_cache: dict = {}  # Headroom：本请求的压缩结果缓存（同请求多个勾选候选复用一次压缩）
         compressor = plugin_center.active_compressor()  # 已启用的压缩插件，未启用为 None（零开销旁路）
@@ -1838,11 +1882,12 @@ class ModelPool:
                 if not fb_name:
                     break
                 entry, steps = await self.select_model(fb_name, None, estimated, exclude=tried, has_images=has_images,
-                                                       required_json_output=required_json_output, est_input=est_input)
+                                                       required_json_output=required_json_output, est_input=est_input,
+                                                       caller_key_id=caller_key_id)
             else:
                 entry, steps = await self.select_model(pool_name, requested_model, estimated, exclude=tried, has_images=has_images,
                                                        required_json_output=required_json_output, est_input=est_input,
-                                                       switch_role=switch_role)
+                                                       switch_role=switch_role, caller_key_id=caller_key_id)
             if steps:
                 actual_calls.extend(s for s in steps if s["reason"] != "already_tried")
 
@@ -1860,7 +1905,7 @@ class ModelPool:
 
             try:
                 last_reason = actual_calls[-1]["reason"] if actual_calls else ""
-                if last_reason in ("selected", "single_override_selected") and actual_calls[-1]["model"] == entry.id:
+                if last_reason in ("selected", "single_override_selected", "affinity_selected") and actual_calls[-1]["model"] == entry.id:
                     if use_fallback:
                         actual_calls[-1]["reason"] = "fallback_selected"
                 else:

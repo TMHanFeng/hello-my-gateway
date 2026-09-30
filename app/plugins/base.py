@@ -159,6 +159,12 @@ class GatewayPlugin:
         """提供出站压缩能力的插件返回自身，否则 None（pool.py 据此旁路）。"""
         return None
 
+    def preferred_model(self, pool_name: str, key_id: str | None, candidates: list[str]) -> str | None:
+        """路由亲和 hook（v2.16.2）：返回该调用方在本池应优先使用的模型条目 id（须在
+        candidates 内），None = 不介入。选模层拿到后仍走完整可用性检查，目标不可用
+        自动落回池内正常次序（sequential/auto_order/load_balance），恢复后回粘。"""
+        return None
+
     # ---- 配置面（managed 域由管理器托管；dedicated 域由插件自管）----
     @property
     def router(self):

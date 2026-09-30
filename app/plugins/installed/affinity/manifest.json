@@ -1,0 +1,31 @@
+{
+  "id": "affinity",
+  "name": "缓存亲和路由",
+  "version": "1.0.0",
+  "description": "同一调用 Key 在同一池内始终优先路由到同一模型条目（无状态一致性哈希），提升上游提示词缓存命中率",
+  "author": "hello-my-gateway",
+  "icon": "🧲",
+  "kind": "builtin",
+  "order": 60,
+  "config_scope": "managed",
+  "default_enabled": false,
+  "config_schema": [
+    {
+      "key": "pools",
+      "type": "str",
+      "default": "",
+      "title": "生效池",
+      "desc": "逗号/分号分隔的池名清单，留空 = 全部池。auto_order 池不建议开启：亲和会覆盖其「优先消耗快到期配额」的排序语义"
+    },
+    {
+      "key": "virtual_nodes",
+      "type": "int",
+      "default": 40,
+      "min": 1,
+      "max": 500,
+      "title": "虚拟节点数",
+      "desc": "一致性哈希环上每个模型条目的虚拟节点数，越大 Key 分布越均匀（候选条目多时建议调大）"
+    }
+  ],
+  "ui_hint": "粘性对象是「模型条目」（供应商×模型×上游 Key）而非模型名——同名模型挂多个供应商时也会稳定取同一条目，这正是上游缓存的真实粒度。亲和只是优先：目标不可用（冷却/限流/高峰/配额尽/模态不符）自动落回池内正常次序，恢复后下一次请求自动回粘；管理员用服务器密钥直连不参与亲和。"
+}
