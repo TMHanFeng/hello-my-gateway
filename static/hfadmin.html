@@ -755,6 +755,15 @@ select { max-width: 100%; }
 .pc-desc{font-size:12.5px;opacity:.82;line-height:1.55;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
 .pc-meta{font-size:11.5px;opacity:.55}
 .pc-hint{font-size:12px;color:var(--teal);background:var(--panel-2);border-radius:8px;padding:6px 9px;line-height:1.5}
+.pc-pool-list{max-height:210px;overflow-y:auto;border:1px solid var(--panel-2);border-radius:8px;padding:6px 8px;display:flex;flex-direction:column;gap:2px}
+.pc-pool-item{display:flex;align-items:center;gap:8px;font-size:13px;padding:3px 4px;border-radius:6px;cursor:pointer}
+.pc-pool-item:hover{background:var(--panel-2)}
+.pc-pool-item input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--teal)}
+.pc-pool-item input:disabled{opacity:.35;cursor:not-allowed}
+.pc-pool-item span{opacity:.9}
+.pc-slider{display:flex;align-items:center;gap:10px}
+.pc-slider input[type=range]{flex:1;cursor:pointer;accent-color:var(--teal)}
+.pc-slider-val{min-width:34px;text-align:center;font-weight:600;font-variant-numeric:tabular-nums;background:var(--panel-2);border-radius:6px;padding:2px 7px;font-size:13px}
 .pc-actions{display:flex;gap:8px;margin-top:2px}
 .pc-add{align-items:center;justify-content:center;min-height:150px;border-style:dashed;cursor:pointer;opacity:.7;font-size:13.5px;gap:6px;text-align:center}
 .pc-add:hover{opacity:1}
@@ -4318,21 +4327,56 @@ async function openSwitchSettings() {
   pcOpen('overlay-pcswitch');
 }
 /* 通用插件设置：按 manifest config_schema 渲染表单；无 schema 回退 JSON 编辑 */
-function openGenericSettings(id) {
+async function openGenericSettings(id) {
   const p = PC_CACHE.find(x => x.id === id); if (!p) return;
   const schema = p.config_schema || [];
+  // ui=pools 字段需要池清单（勾选用）；取不到时该字段回退纯文本输入
+  let poolNames = null;
+  if (schema.some(f => f.ui === 'pools')) {
+    const pd = await api('/admin/pools');
+    poolNames = pd ? Object.keys(pd.pools || {}).sort() : [];
+  }
   let html = '<input type="hidden" id="pcf-pid" value="' + esc(id) + '">';
-  html += schema.length ? schema.map(f => pcField(f, (p.config || {})[f.key])).join('')
+  html += schema.length ? schema.map(f => pcField(f, (p.config || {})[f.key], poolNames)).join('')
     : '<div class="fg"><label>配置（JSON）</label><textarea id="pcf-raw" rows="7" style="width:100%;font-family:ui-monospace,monospace">'
       + esc(JSON.stringify(p.config || {}, null, 2)) + '</textarea></div>';
   document.getElementById('pcset-body').innerHTML = html;
   document.getElementById('pcset-title').textContent = (p.icon || '🧩') + ' ' + p.name + ' · 插件设置';
   pcOpen('overlay-pcset');
 }
-function pcField(f, val) {
+/* ui=pools：「全部池」总闸——勾上即清空并禁用具体池勾选（存空串 = 全部池） */
+function pcPoolsAll(el) {
+  const wrap = el.closest('.pc-pool-list');
+  if (wrap) wrap.querySelectorAll('input[data-pcf-pool]').forEach(c => { c.checked = false; c.disabled = el.checked; });
+}
+function pcPoolsValue(key) {
+  const wrap = document.getElementById('pcf-' + key + '-list');
+  if (!wrap) return '';
+  const all = wrap.querySelector('input[data-pcf-all]');
+  if (all && all.checked) return '';
+  return [...wrap.querySelectorAll('input[data-pcf-pool]:checked')].map(c => c.getAttribute('data-pcf-pool')).join(',');
+}
+function pcField(f, val, poolNames) {
   const id = 'pcf-' + esc(f.key);
   let inp;
-  if (f.type === 'bool') inp = '<label class="hr-switch"><input type="checkbox" id="' + id + '" ' + (val ? 'checked' : '') + '><span class="hr-track"></span></label>';
+  if (f.ui === 'pools') {
+    // 池清单勾选（config 存逗号分隔串，空 = 全部池）；池清单取不到时回退文本输入
+    if (poolNames === null) {
+      inp = '<input type="text" id="' + id + '" value="' + esc(val !== undefined && val !== null ? val : '') + '" placeholder="留空 = 全部池，多个池用逗号分隔">';
+    } else {
+      const sel = new Set(String(val === undefined || val === null ? '' : val).split(/[,;，；\s]+/).filter(Boolean));
+      const all = !sel.size;
+      inp = '<div class="pc-pool-list" id="' + id + '-list">'
+        + '<label class="pc-pool-item"><input type="checkbox" data-pcf-all ' + (all ? 'checked' : '') + ' onchange="pcPoolsAll(this)"><span>🌐 全部池（默认）</span></label>'
+        + poolNames.map(n => '<label class="pc-pool-item"><input type="checkbox" data-pcf-pool="' + esc(n) + '" ' + (sel.has(n) ? 'checked' : '') + (all ? ' disabled' : '') + '><span>' + esc(n) + '</span></label>').join('')
+        + '</div>';
+    }
+  } else if (f.ui === 'slider') {
+    const min = f.min !== undefined ? f.min : 0, max = f.max !== undefined ? f.max : 100, step = f.step || 1;
+    const cur = val !== undefined && val !== null ? val : (f.default !== undefined ? f.default : min);
+    inp = '<div class="pc-slider"><input type="range" id="' + id + '" min="' + min + '" max="' + max + '" step="' + step + '" value="' + cur
+      + '" oninput="document.getElementById(\'' + id + '-val\').textContent=this.value"><span class="pc-slider-val" id="' + id + '-val">' + cur + '</span></div>';
+  } else if (f.type === 'bool') inp = '<label class="hr-switch"><input type="checkbox" id="' + id + '" ' + (val ? 'checked' : '') + '><span class="hr-track"></span></label>';
   else if (f.type === 'enum') inp = '<select id="' + id + '">' + (f.options || []).map(o => '<option value="' + esc(o.value) + '" ' + (val === o.value ? 'selected' : '') + '>' + esc(o.label || o.value) + '</option>').join('') + '</select>';
   else inp = '<input type="' + (f.type === 'int' || f.type === 'float' ? 'number' : 'text') + '" id="' + id + '" value="'
     + esc(val !== undefined && val !== null ? val : (f.default !== undefined ? f.default : '')) + '">';
@@ -4346,6 +4390,7 @@ async function savePluginConfig() {
   if (schema.length) {
     body = {};
     schema.forEach(f => {
+      if (f.ui === 'pools') { body[f.key] = pcPoolsValue(f.key); return; }
       const el = document.getElementById('pcf-' + f.key); if (!el) return;
       body[f.key] = f.type === 'bool' ? el.checked
         : (f.type === 'int' ? (parseInt(el.value, 10) || 0)
