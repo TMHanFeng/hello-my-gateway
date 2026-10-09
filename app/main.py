@@ -2,8 +2,9 @@ import os
 import time
 import json
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request, HTTPException, Depends
+from fastapi import FastAPI, Request, HTTPException, Depends, Response
 from fastapi.responses import StreamingResponse, RedirectResponse, HTMLResponse, JSONResponse
+from fastapi.middleware.gzip import GZipMiddleware
 from pydantic import ValidationError
 from app.core.models import ChatCompletionRequest, EmbeddingRequest, RerankRequest
 from app.gateway.pool import ModelPool, ContextOverflowPassThrough
@@ -62,6 +63,9 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Model Gateway", lifespan=lifespan)
+# #47 面板提速：gzip 压缩大响应（双面板 HTML ~271KB → ~60KB；管理 API JSON 同样受益），
+# 本地 CPU 开销微秒级，远程访问传输量降 ~78%
+app.add_middleware(GZipMiddleware, minimum_size=2048)
 app.include_router(admin_router)
 app.include_router(plugins_router)
 pool = ModelPool()
@@ -187,12 +191,6 @@ async def _chat_handler(request: Request, auth: dict, forced_pool: str | None = 
     # responses 入站在端点层已归一为 chat：跳过 anthropic 嗅探（防 anthropic-version 头误判二次转换）
     is_anthropic = False if inbound_format == "responses" else is_anthropic_request(dict(request.headers), body)
     if is_anthropic:
-        # Anthropic 格式暂不支持工具调用（tool_use 转换未实现）：显式拒绝而非静默降级
-        if body.get("tools") or body.get("tool_choice"):
-            raise HTTPException(
-                status_code=400,
-                detail="Anthropic 格式暂不支持工具调用（tool_use 转换未实现），请使用 OpenAI 格式",
-            )
         body = anthropic_to_openai(body)
 
     try:
@@ -686,12 +684,12 @@ async def version_info():
 
 
 # hfadmin 页面缓存（v2.11.42）：169KB read_text 是同步阻塞 IO，原先每次刷新都在事件循环内全量重读；
-# 改 mtime 缓存——文件未变时零 IO，手工改 HTML 后自动失效（no-cache 响应头语义不变）
-_hfadmin_html_cache = {"mtime": None, "html": ""}
+# 改 mtime 缓存——文件未变时零 IO，手工改 HTML 后自动失效；ETag 随内容一并缓存（#47：304 协商免重下）
+_hfadmin_html_cache = {"mtime": None, "html": "", "etag": ""}
 
 
 @app.get("/hfadmin", response_class=HTMLResponse)
-async def hfadmin_page():
+async def hfadmin_page(request: Request):
     """HF 科技感管理面板：与 /admin 共用同一套后端 API（verify_admin 认证），
     页面本身无需认证（与原 /admin 一致），所有 /admin/* API 均受 Bearer 保护。"""
     try:
@@ -699,11 +697,19 @@ async def hfadmin_page():
     except OSError:
         mtime = None
     if _hfadmin_html_cache["html"] == "" or mtime != _hfadmin_html_cache["mtime"]:
+        import hashlib
         _hfadmin_html_cache["html"] = (STATIC_DIR / "hfadmin.html").read_text(encoding="utf-8")
         _hfadmin_html_cache["mtime"] = mtime
-    # no-cache：面板迭代频繁，禁止浏览器拿旧 HTML（曾因缓存旧版导致"加载慢"的 canvas 全屏重绘长期滞留）
+        _hfadmin_html_cache["etag"] = '"' + hashlib.md5(
+            _hfadmin_html_cache["html"].replace("__GATEWAY_VERSION__", get_gateway_version()).encode("utf-8")
+        ).hexdigest()[:20] + '"'
+    # no-cache：每次都需向服务器再验证，但内容未变时走 304 零传输（#47：曾因缓存旧版导致"加载慢"的
+    # canvas 全屏重绘长期滞留，故不用长缓存而用 ETag 协商——新鲜性与传输量兼得）
+    etag = _hfadmin_html_cache["etag"]
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers={"ETag": etag, "Cache-Control": "no-cache"})
     return HTMLResponse(content=_hfadmin_html_cache["html"].replace("__GATEWAY_VERSION__", get_gateway_version()),
-                        headers={"Cache-Control": "no-cache"})
+                        headers={"Cache-Control": "no-cache", "ETag": etag})
 
 
 # ── 插件中心装配：扫描 installed/ 目录、挂载插件路由、恢复启用态（Switch 路由在此动态注册，排在所有固定路径之后）──

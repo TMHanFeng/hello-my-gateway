@@ -855,6 +855,45 @@ async def expire_one_time(model_name: str):
         await _commit(db)
 
 
+async def clear_one_time_expired(model_name: str) -> bool:
+    """#46：额度调高后复位粘滞 expired（expire_one_time 的逆操作，仅翻转 1→0）。"""
+    async with _maybe_lock():
+        db = await _get_conn()
+        cursor = await db.execute(
+            "UPDATE one_time_state SET expired = 0 WHERE model_name = ? AND expired = 1",
+            (model_name,),
+        )
+        await _commit(db)
+        return cursor.rowcount > 0
+
+
+async def get_admin_hourly_usage(start_ts: float, end_ts: float) -> dict:
+    """#51：管理员（服务器密钥）调用的按小时聚合（北京时间）。
+
+    服务器密钥无 api_keys 行（authenticate 返回 key=None），计费热路径不为其入账；
+    数据源改用 decision_log（caller='管理员'，actual_tokens 失败为 0）——调用与
+    token 均有账，仅缺按 Key 聚合的出口，本函数补齐该口径。"""
+    async with _maybe_lock():
+        db = await _get_conn()
+        cursor = await db.execute(
+            "SELECT CAST(strftime('%H', ts, 'unixepoch', '+8 hours') AS INTEGER) AS h, "
+            "SUM(COALESCE(actual_tokens, 0)) AS used "
+            "FROM decision_log WHERE caller = '管理员' AND ts >= ? AND ts < ? GROUP BY h",
+            (start_ts, end_ts))
+        return {r["h"]: int(r["used"] or 0) for r in await cursor.fetchall()}
+
+
+async def delete_one_time_state(model_name: str):
+    """删除模型的 one_time 状态行（模型删除时清理，防同名重建带旧 expired 粘滞位）。"""
+    async with _maybe_lock():
+        db = await _get_conn()
+        await db.execute(
+            "DELETE FROM one_time_state WHERE model_name = ?",
+            (model_name,),
+        )
+        await _commit(db)
+
+
 async def init_5h_state(model_name: str):
     async with _maybe_lock():
         db = await _get_conn()

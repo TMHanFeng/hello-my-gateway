@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends, Request
+from fastapi import APIRouter, HTTPException, Depends, Request, Response
 from fastapi.responses import HTMLResponse
 from pathlib import Path
 import asyncio
@@ -88,21 +88,28 @@ from app.admin.deps import verify_admin  # noqa: E402,F401
 
 # 面板页面缓存（v2.11.42）：148KB read_text 是同步阻塞 IO，原先每次刷新都在事件循环内全量重读；
 # 改 mtime 缓存——文件未变时零 IO，手工改 HTML 后自动失效（no-cache 响应头语义不变）
-_admin_html_cache = {"mtime": None, "html": ""}
+_admin_html_cache = {"mtime": None, "html": "", "etag": ""}
 
 
 @router.get("/", response_class=HTMLResponse)
-async def admin_page():
+async def admin_page(request: Request):
     try:
         mtime = FRONTEND_PATH.stat().st_mtime
     except OSError:
         mtime = None
     if _admin_html_cache["html"] == "" or mtime != _admin_html_cache["mtime"]:
+        import hashlib
         _admin_html_cache["html"] = FRONTEND_PATH.read_text(encoding="utf-8")
         _admin_html_cache["mtime"] = mtime
-    # no-cache：面板迭代频繁，禁止浏览器拿旧 HTML（同 /hfadmin）
+        _admin_html_cache["etag"] = '"' + hashlib.md5(
+            _admin_html_cache["html"].replace("__GATEWAY_VERSION__", get_gateway_version()).encode("utf-8")
+        ).hexdigest()[:20] + '"'
+    # no-cache：每次再验证但内容未变走 304 零传输（#47，同 /hfadmin 的 ETag 协商）
+    etag = _admin_html_cache["etag"]
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers={"ETag": etag, "Cache-Control": "no-cache"})
     return HTMLResponse(content=_admin_html_cache["html"].replace("__GATEWAY_VERSION__", get_gateway_version()),
-                        headers={"Cache-Control": "no-cache"})
+                        headers={"Cache-Control": "no-cache", "ETag": etag})
 
 
 @router.get("/models")
@@ -407,6 +414,7 @@ async def add_model(request: Request, _=Depends(verify_admin)):
     config["models"] = models
     save_config(config)
     restart_scheduler()
+    _sync_pool()  # #46A：模型新增热生效（与其他改配置端点对齐，前端不再依赖补调 /admin/reload）
 
     # v2.15.3 起新增模型不再自动探测思考档位（含缓存自动套用）：
     # 探测只在面板「重新探测」按钮人工触发（POST /admin/reasoning/probe），结论只进缓存、
@@ -591,6 +599,13 @@ async def update_model(model_id: str, request: Request, _=Depends(verify_admin))
         models[idx].pop("smart_estimate", None)
         models[idx].pop("headroom", None)  # 压缩只对聊天出站 messages 有意义
 
+    # #46D 跨类型字段剥离：gift 专属/一次性专属字段不残留在其他 token_type 上（防误导配置）
+    if models[idx].get("token_type") != "gift":
+        models[idx].pop("gift_grant_cap", None)
+    if models[idx].get("token_type") != "one_time":
+        for _k in ("max_tokens", "ttl_seconds", "expire_date"):
+            models[idx].pop(_k, None)
+
     # v2.12.3 搜索 AI 总结：非千帆网页搜索协议显式剥离，避免切换协议后配置残留
     # （隐藏的表单控件仍会被 FormData 提交旧值，所以清理必须放在服务端）
     if _proto_new == "qianfan_web_search":
@@ -600,9 +615,22 @@ async def update_model(model_id: str, request: Request, _=Depends(verify_admin))
         models[idx].pop("summary_pool", None)
         models[idx].pop("summary_length", None)
 
+    # #46 额度调整自动复位粘滞 expired：pool.py 预检中 expired 先于额度判断短路，
+    # 用户调高 max_tokens 至超过当前已用后自动翻转 1→0，让模型立即恢复可用
+    if models[idx].get("token_type") == "one_time" and int(models[idx].get("max_tokens") or 0) > 0:
+        state = await db.get_one_time_state(model_id)
+        if state and state.get("expired") and int(state["used_tokens"]) < int(models[idx]["max_tokens"]):
+            flipped = await db.clear_one_time_expired(model_id)
+            if flipped:
+                logging.getLogger(__name__).info(
+                    f"[#46] 额度调整自动复位 expired: model={model_id} "
+                    f"used={state['used_tokens']} new_max={models[idx]['max_tokens']}"
+                )
+
     config["models"] = models
     save_config(config)
     restart_scheduler()
+    _sync_pool()
     return {"ok": True, "model": models[idx]}
 
 
@@ -628,6 +656,11 @@ async def delete_model(model_id: str, _=Depends(verify_admin)):
     save_config(config)
     restart_scheduler()
     _sync_pool()
+    # #46：删除模型时同步清理 one_time 状态行（防同名重建带旧 expired 粘滞位）；行可能不存在，静默失败
+    try:
+        await db.delete_one_time_state(model_id)
+    except Exception:
+        pass
     return {"ok": True}
 
 
@@ -690,6 +723,7 @@ async def reorder_providers(request: Request, _=Depends(verify_admin)):
     config["providers"] = [by_id[pid] for pid in new_order]
     save_config(config)
     restart_scheduler()
+    _sync_pool()  # #47：供应商排序落库即热生效（与其他改配置端点对齐）
     return {"ok": True}
 
 @router.put("/providers/{provider_id:path}")
@@ -1558,11 +1592,17 @@ async def key_usage_history(key_id: int, date: str = "", _=Depends(verify_admin)
     from app.core import database as db
     from datetime import datetime
     from zoneinfo import ZoneInfo
+    if not date:
+        date = datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat()
+    if key_id == 0:
+        # #51 管理员（服务器密钥）伪 Key：无 api_keys 行，按 decision_log caller='管理员' 小时聚合（同形状返回）
+        day_start = datetime.strptime(date, "%Y-%m-%d").replace(tzinfo=ZoneInfo("Asia/Shanghai"))
+        hourly = await db.get_admin_hourly_usage(day_start.timestamp(), day_start.timestamp() + 86400)
+        hours = [{"hour": h, "used": int(hourly.get(h, 0))} for h in range(24)]
+        return {"key_id": 0, "date": date, "hours": hours, "total": sum(x["used"] for x in hours)}
     rec = await db.get_api_key_by_id(key_id)
     if not rec:
         raise HTTPException(status_code=404, detail=f"API Key #{key_id} 不存在")
-    if not date:
-        date = datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat()
     hourly = await db.get_hourly_usage(key_id, date)
     hours = [{"hour": h, "used": hourly.get(f"{h:02d}", 0)} for h in range(24)]
     return {"key_id": key_id, "date": date, "hours": hours, "total": sum(x["used"] for x in hours)}
@@ -1572,11 +1612,43 @@ async def key_usage_history(key_id: int, date: str = "", _=Depends(verify_admin)
 async def key_recent_calls(key_id: int, limit: int = 50, _=Depends(verify_admin)):
     """某 API Key 最近调用记录（v2.12.6：decision_log 按 caller=Key 名过滤，供用量历史面板展示）。"""
     from app.core import database as db
+    if key_id == 0:
+        # #51 管理员（服务器密钥）伪 Key：decision_log 里 caller 固定为「管理员」
+        rows = await db.get_decisions(limit=min(limit, 50), caller="管理员")
+        return {"key_id": 0, "key_name": "管理员（服务器密钥）", "calls": rows}
     rec = await db.get_api_key_by_id(key_id)
     if not rec:
         raise HTTPException(status_code=404, detail=f"API Key #{key_id} 不存在")
     rows = await db.get_decisions(limit=min(limit, 50), caller=rec["name"])
     return {"key_id": key_id, "key_name": rec["name"], "calls": rows}
+
+
+@router.get("/ui_groups")
+async def ui_groups_get(_=Depends(verify_admin)):
+    """#54 分组收纳服务端同步：面板分组数据（providerGroups/poolGroups/settings）存 config.ui_groups，
+    所有设备/浏览器共享（原仅存浏览器 localStorage，跨设备/跨源天然隔离——手机看不到电脑配的分组）。
+    返回空 dict 表示未配置（前端回退 localStorage 并在首次保存时迁移上移）。"""
+    config = load_config()
+    g = config.get("ui_groups")
+    return {"ui_groups": g if isinstance(g, dict) else {}}
+
+
+@router.put("/ui_groups")
+async def ui_groups_put(request: Request, _=Depends(verify_admin)):
+    """保存分组数据（整对象覆盖；纯 UI 收纳数据，不影响路由/配额，无需 _sync_pool）。"""
+    import json as _json
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+    if len(_json.dumps(body, ensure_ascii=False)) > 65536:
+        raise HTTPException(status_code=400, detail="分组数据过大（上限 64KB）")
+    config = load_config()
+    config["ui_groups"] = body
+    save_config(config)
+    return {"ok": True}
 
 
 @router.get("/headroom")

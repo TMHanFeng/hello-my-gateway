@@ -1973,6 +1973,103 @@ def main():
         # 收尾：停用插件（deep_clean 兜底再清 config 残留）
         httpx.post(f"{BASE}/admin/plugins/affinity/disable", headers=ADMIN, timeout=15)
 
+        # ===== T32（v2.17.0 #46 批1）：one_time expired 粘滞位自动复位 + 模型端点热生效 + 跨类型字段剥离 =====
+        # T4 已让 echo-once 走到 used=266/expired=1；这里重置为 used=150/expired=1 模拟"额度耗尽置位后"的粘滞态
+        db_exec("INSERT OR REPLACE INTO one_time_state (model_name, used_tokens, created_at, expired) "
+                "VALUES ('zzbt/echo-once', 150, 0, 1)")
+        time.sleep(5.5)  # 等 5s 配额预检缓存过期（T4 后本早已过期，此处保守等待）
+        r = chat("zzonce", content="hi")
+        check("T32a expired粘滞位拒绝(503)", r.status_code == 503, r.status_code)
+        # PUT 调高总额度 + 顺手带上跨类型字段 gift_grant_cap：应自动复位 expired、剥离无关字段、热生效
+        r = httpx.put(f"{BASE}/admin/models/zzbt/echo-once", headers=ADMIN,
+                      json={"max_tokens": 100000, "gift_grant_cap": 5000000}, timeout=15)
+        check("T32b0 PUT调高额度保存", r.status_code == 200, r.text[:80])
+        _st32 = db_exec("SELECT used_tokens, expired FROM one_time_state WHERE model_name='zzbt/echo-once'").fetchone()
+        check("T32b1 expired自动复位(1→0,无需改库)", _st32 and _st32[1] == 0, tuple(_st32) if _st32 else None)
+        r = chat("zzonce", content="hi")
+        check("T32b2 调高后立即恢复路由(200,PUT自带_sync_pool热生效)", r.status_code == 200, r.status_code)
+        _m32 = next((x for x in httpx.get(f"{BASE}/admin/models", headers=ADMIN, timeout=15).json()["models"]
+                     if x.get("id") == "zzbt/echo-once"), {})
+        check("T32c 跨类型剥离(gift_grant_cap不残留)", "gift_grant_cap" not in _m32, _m32.get("gift_grant_cap"))
+        r = httpx.delete(f"{BASE}/admin/models/zzbt/echo-once", headers=ADMIN, timeout=15)
+        _cnt32 = db_exec("SELECT COUNT(*) FROM one_time_state WHERE model_name='zzbt/echo-once'").fetchone()
+        check("T32d 删除模型清one_time状态行(防同名重建带旧expired)",
+              r.status_code == 200 and _cnt32[0] == 0, (r.status_code, tuple(_cnt32)))
+
+        # ===== T33（v2.18.0 #45 批2）：Anthropic Messages 工具调用全链（非流式/历史往返/流式）=====
+        _tools33 = [{"name": "get_weather", "description": "查天气",
+                     "input_schema": {"type": "object", "properties": {"city": {"type": "string"}}}}]
+        _ah33 = {**ADMIN, "anthropic-version": "2023-06-01", "content-type": "application/json"}
+        captured_bodies.clear()
+        r = httpx.post(f"{BASE}/v1/messages", headers=_ah33, timeout=60, json={
+            "model": "zztool", "max_tokens": 500, "tools": _tools33, "tool_choice": {"type": "any"},
+            "messages": [{"role": "user", "content": "北京天气"}]})
+        _j33 = r.json()
+        _tu33 = next((b for b in (_j33.get("content") or []) if isinstance(b, dict) and b.get("type") == "tool_use"), None)
+        check("T33a 非流式200+tool_use块(name/input正确)",
+              r.status_code == 200 and _tu33 and _tu33.get("name") == "get_weather"
+              and _tu33.get("input") == {"city": "北京"}, (r.status_code, _j33.get("content")))
+        check("T33a2 stop_reason=tool_use", _j33.get("stop_reason") == "tool_use", _j33.get("stop_reason"))
+        _b33 = captured_bodies[-1]
+        _fn33 = ((_b33.get("tools") or [{}])[0].get("function") or {})
+        check("T33a3 上游收到OpenAI形状tools+tool_choice(any→required)",
+              _fn33.get("name") == "get_weather"
+              and ((_fn33.get("parameters") or {}).get("properties") or {}).get("city", {}).get("type") == "string"
+              and _b33.get("tool_choice") == "required",
+              (_b33.get("tools"), _b33.get("tool_choice")))
+        # 历史往返：assistant tool_use / user tool_result → 上游应收到 tool_calls + role:tool 消息
+        r = httpx.post(f"{BASE}/v1/messages", headers=_ah33, timeout=60, json={
+            "model": "zztool", "max_tokens": 500, "tools": _tools33,
+            "messages": [
+                {"role": "user", "content": "北京天气"},
+                {"role": "assistant", "content": [
+                    {"type": "tool_use", "id": "tu1", "name": "get_weather", "input": {"city": "北京"}}]},
+                {"role": "user", "content": [
+                    {"type": "tool_result", "tool_use_id": "tu1", "content": "晴 25 度"},
+                    {"type": "text", "text": "谢谢"}]},
+            ]})
+        _b33 = captured_bodies[-1]
+        _ms33 = _b33.get("messages") or []
+        _asst33 = next((m for m in _ms33 if m.get("role") == "assistant" and m.get("tool_calls")), None)
+        _toolm33 = next((m for m in _ms33 if m.get("role") == "tool"), None)
+        check("T33b 历史assistant→tool_calls(id/arguments正确)",
+              r.status_code == 200 and _asst33 and _asst33["tool_calls"][0]["id"] == "tu1"
+              and json.loads(_asst33["tool_calls"][0]["function"]["arguments"]) == {"city": "北京"},
+              [m.get("role") for m in _ms33])
+        check("T33b2 tool_result→role:tool消息(tool_call_id/content)",
+              _toolm33 and _toolm33.get("tool_call_id") == "tu1" and _toolm33.get("content") == "晴 25 度", _toolm33)
+        _ti33 = [m.get("role") for m in _ms33]
+        check("T33b3 tool消息紧跟assistant、剩余text后随user",
+              "tool" in _ti33 and "assistant" in _ti33
+              and _ti33.index("tool") == _ti33.index("assistant") + 1 and "user" in _ti33, _ti33)
+        # 流式：mock-toolcall 增量 tool_calls → Anthropic content_block_start/input_json_delta 事件流
+        r = httpx.post(f"{BASE}/v1/messages", headers=_ah33, timeout=60, json={
+            "model": "zztool", "max_tokens": 500, "stream": True, "tools": _tools33,
+            "messages": [{"role": "user", "content": "北京天气"}]})
+        _t33 = r.text
+        check("T33c 流式200", r.status_code == 200, r.status_code)
+        check("T33c2 content_block_start(tool_use,id/name)",
+              '"type": "tool_use"' in _t33 and '"call_t1"' in _t33 and '"get_weather"' in _t33, _t33[:150])
+        check("T33c3 input_json_delta增量", '"input_json_delta"' in _t33, "")
+        check("T33c4 message_delta(stop_reason=tool_use)+message_stop收尾",
+              '"stop_reason": "tool_use"' in _t33 and "message_stop" in _t33, "")
+
+        # ===== T34（v2.18.3 #51 批6）：管理员（服务器密钥）用量可见（伪 Key #0，decision_log 口径）=====
+        r = httpx.get(f"{BASE}/admin/keys/0/usage", headers=ADMIN, timeout=15)
+        _u34 = r.json() if r.status_code == 200 else {}
+        check("T34a 管理员用量历史200+24小时桶",
+              r.status_code == 200 and len(_u34.get("hours") or []) == 24,
+              (r.status_code, len(_u34.get("hours") or [])))
+        check("T34b 管理员当日有token账(total>0)", (_u34.get("total") or 0) > 0, _u34.get("total"))
+        r = httpx.get(f"{BASE}/admin/keys/0/calls", headers=ADMIN, timeout=15)
+        _c34 = r.json() if r.status_code == 200 else {}
+        check("T34c 管理员最近调用200+key_name正确",
+              r.status_code == 200 and "管理员" in (_c34.get("key_name") or "")
+              and len(_c34.get("calls") or []) > 0,
+              (r.status_code, _c34.get("key_name"), len(_c34.get("calls") or [])))
+        r = httpx.get(f"{BASE}/admin/keys/999999/usage", headers=ADMIN, timeout=15)
+        check("T34d 不存在的Key仍404(回归)", r.status_code == 404, r.status_code)
+
     finally:
         try:
             deep_clean()

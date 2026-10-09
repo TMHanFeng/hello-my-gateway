@@ -90,7 +90,7 @@ data/ 运行时数据（gateway.db、探测缓存、dev pid），与代码隔离
 
 | 🧠 统一思考控制 | 🧪 计费回归安全网 | 📐 智能估算超时 |
 |:---|:---|:---|
-| `reasoning_effort` 六档 → 按模型 `reasoning_map` 换算上游思考参数；思考内容统一回传 `reasoning_content` / `thinking` | 218 断言计费回归套件（`test_billing_regression.py`）：流式/非流式/一次性/RPM 触顶/安全阀/并发入账零丢失，任何改动先跑套件再上线 | `smart_estimate` 模型按 token 量动态计算超时（吞吐 EMA 校准），样本不足自动回退固定值 |
+| `reasoning_effort` 六档 → 按模型 `reasoning_map` 换算上游思考参数；思考内容统一回传 `reasoning_content` / `thinking` | 238 断言计费回归套件（`test_billing_regression.py`）：流式/非流式/一次性/RPM 触顶/安全阀/并发入账零丢失，任何改动先跑套件再上线 | `smart_estimate` 模型按 token 量动态计算超时（吞吐 EMA 校准），样本不足自动回退固定值 |
 
 | 📡 Embedding / Rerank | 🔑 用户密钥管理 | 📄 JSON 输出路由 |
 |:---|:---|:---|
@@ -171,7 +171,7 @@ python -m app.main
 >
 > 💡 **Ubuntu / Linux**：`python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt && python3 -m app.main`，或直接 `./start_gateway.sh`（自动选 venv/系统解释器；停止 `./stop_gateway.sh`）。代码本身跨平台：运行时目录（data/ logs/ backup/）首次启动自动创建，路径处理与日志滚动均适配 POSIX 文件系统。回归套件同样可在 Linux 运行：`python tests/test_billing_regression.py`。
 >
-> 🧪 **改动计费相关代码后**：`python tests/test_billing_regression.py` 运行 218 断言计费回归套件（自动在 8651 起隔离实例 + mock 上游，不触碰生产端口），全绿再上线。
+> 🧪 **改动计费相关代码后**：`python tests/test_billing_regression.py` 运行 238 断言计费回归套件（自动在 8651 起隔离实例 + mock 上游，不触碰生产端口），全绿再上线。
 
 ---
 
@@ -219,7 +219,7 @@ hello-my-gateway/
 │   ├── index.html                # 传统管理后台（/admin）
 │   └── hfadmin.html              # 科技感管理面板（/hfadmin）
 ├── tests/
-│   └── test_billing_regression.py # 计费回归套件（218 断言，隔离实例 + mock 上游）
+│   └── test_billing_regression.py # 计费回归套件（238 断言，隔离实例 + mock 上游）
 ├── start_gateway.cmd             # Windows 启动入口（自动选解释器，幂等）
 ├── stop_gateway.cmd              # 停止入口（身份核验，只停本仓库网关）
 ├── start_gateway.sh              # Linux/macOS 启动入口（语义同 .cmd：选解释器 + 已运行自检）
@@ -247,7 +247,7 @@ hello-my-gateway/
 
 ### Anthropic Messages 格式调用
 
-客户端可用 Anthropic SDK 直接调用（`/v1/messages` 或 `/v1/chat/completions` 均可），网关自动转换：
+客户端可用 Anthropic SDK 直接调用（`/v1/messages` 或 `/v1/chat/completions` 均可），网关自动转换；v2.16.4 起支持完整工具调用（tools 定义、tool_use/tool_result 历史往返、出站 tool_use 块与流式 input_json_delta），Claude Code 类客户端可直接接入：
 
 | 方向 | 处理 |
 |:---|:---|
@@ -515,7 +515,7 @@ Anthropic 适配器自动完成：
 | 端点 | 方法 | 说明 |
 |:---|:---:|:---|
 | `/v1/chat/completions` | POST | 对话（支持 `stream`，OpenAI Compatible 与 Anthropic 格式均可） |
-| `/v1/messages` | POST | Anthropic 格式对话（同 `/v1/chat/completions`） |
+| `/v1/messages` | POST | Anthropic 格式对话（同 `/v1/chat/completions`；v2.16.4 起支持 `tools`/`tool_choice`/`tool_use`/`tool_result` 全量工具调用，含流式 `input_json_delta`） |
 | `/v1/responses` | POST | OpenAI Responses 格式对话（v2.16.0，含工具调用与 `previous_response_id` 状态化，见上文专节） |
 | `/v1/responses/{id}` | GET / DELETE | 检索 / 删除已存档的 Responses（`store=true` 时；创建 Key 本人或管理员） |
 | `/v1/embeddings` | POST | OpenAI 兼容 embedding（仅路由到模态=embedding 的模型，响应透传上游） |
@@ -643,6 +643,8 @@ SQLite（`gateway.db`）持久化以下表：
 ## 📜 版本
 
 ### 最新
+
+**`v2.16.4`** — **问题清单大修（12 项一次修复）：#45-#48/#50-#56 + #46 三项验证期新发现**。①**#45 Anthropic 完整工具调用**（/v1/messages 摘 400 门，format_adapter 补四段转换：入站 tools 定义 input_schema→function.parameters、消息内 tool_use/tool_result 历史往返→tool_calls/role:tool、出站 tool_use 块、流式 input_json_delta——Claude Code 类客户端可用；#34 随之关闭）。②**#46 配额包**：expired 粘滞位自动复位（调高 max_tokens>已用量即救回，clear_one_time_expired+复位日志）+ 46A 模型 POST/PUT 补 _sync_pool 热生效（连带消除 46B 注册表不新鲜重新置位）+ 46D 按 token_type 剥离跨类型字段 + 删除模型清状态行。③**#47+#48 提速包**：GZip 中间件（面板 HTML 271KB→77KB 降 72%，API JSON 同受益）+ 双面板 ETag/304 零传输 + 补 providers/reorder 的 _sync_pool 后删双面板全部 31 处冗余 /admin/reload（注册表重建 2→1）；根因修正入册（N+1 与逐候选探测均不成立，真凶传输量与前端串行）。④**#52+#53 图表包**：用量曲线补 Fritsch–Carlson 切线限幅（原实现漏限幅致爬坡/回落形态越界至 -259，非"Bezier 平滑"）+ 时间档位扩为 24h/3天/7天/30天（3d 按 6h 桶、7d/30d 按日）。⑤**#50+#55 前端小件**：节省统计按钮随 headroom 启停显隐（异常保持显示防误藏）+ 拖拽自动滚动自实现上下 1/4 视口检测区（原生边距不可调；监听捕获阶段兼容池内条目 stopPropagation）。⑥**#51 管理员用量可见**：伪 Key #0 特判按 decision_log caller='管理员' 小时聚合（不动计费热路径），密钥页固定「管理员（服务器密钥）」行。⑦**#54+#56 分组包**：分组数据上移 config.json（GET/PUT /admin/ui_groups，启动同步+保存镜像+本地静默迁移，手机跨端可见）+ 添加供应商弹窗可选入组。⑧自测修补：loadKeyUsage 的 !usageKeyId falsy 判空早退伪 Key #0、拖拽监听改捕获阶段。**核销四项**：valve_pct=0（T13e 断言证为"停用模型"有意设计）、daily_token_limit 三态（全后端一致 0=不限）、gift_grant_cap 优先级（不参与耗尽判定）、#49 分组拖拽（复核已实现）。回归 **218→238** 全绿（T32 配额复位/T33 工具调用全链含上游 payload 断言/T34 管理员用量）；8660 实测 gzip/304、跨端分组（手机 390px）、四档图表、拖拽滚动 112/155px。挂账区见 docs/问题待修复.md（批量加池/max_tokens 拆字段等六项）。生效说明：后端部分需重启网关；面板行为刷新即见。
 
 **`v2.16.3`** — **#44 追加——缓存亲和设置表单升级（池清单勾选 + 滑杆）+ 修复回显 bug**：①**通用插件设置渲染器扩展**（双面板同步，manifest config_schema 新增 `ui` 渲染标记，其他插件可直接复用）：`ui:"pools"` 字段渲染为**池清单勾选**（`/admin/pools` 拉取按名排序，首项「🌐 全部池（默认）」总闸——勾选即清空并禁用具体池勾选，存量逗号串配置正确回显勾选态，清单接口取不到回退文本输入）；`ui:"slider"` 字段渲染为**可拖拽滑杆**（manifest min/max/step 驱动，右侧实时数字徽标随拖动更新）。②affinity 插件 manifest v1.1.0：pools 加 `ui:"pools"`，virtual_nodes 加 `ui:"slider"`（边界 10-200 步进 10，默认 40 不变，标题「虚拟节点数（分布均匀度）」，说明文案解释只影响均衡度/修改会重排一次落点）。③配套样式（勾选列表限高滚动、滑杆行布局）。④**修复实施中发现的回显 bug**：池清单解析三目方向写反（`val==null ? val : ''`），已保存的非空池清单重开设置时会错误显示为「全部池」——修正为空值兜底空串。验证：双面板 `node --check` 过；8651 浏览器实测（22 池勾选清单渲染/全部池总闸联动/勾选 auto+arkpro+滑杆 80 保存落库/重开正确回显/真按钮还原默认，API 权威核对 config 往返一致）。
 

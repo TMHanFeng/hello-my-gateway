@@ -572,7 +572,7 @@ body {
         <button class="btn btn-sm" id="stat-dim-tokens" onclick="setStatDim('tokens')">Token 用量</button>
         <button class="btn btn-ghost btn-sm" onclick="grpStatsOpen()">📊 分组查看</button>
       </div>
-        <button class="btn btn-ghost btn-sm" onclick="showHeadroomStats()">🪴 节省统计</button>
+        <button class="btn btn-ghost btn-sm" id="btn-hr-stats" onclick="showHeadroomStats()">🪴 节省统计</button>
         <button class="btn btn-ghost btn-sm" onclick="loadStats()">手动刷新</button>
     </div>
     <div id="stats-grid" class="stats-grid"></div>
@@ -792,10 +792,16 @@ body {
 <div class="overlay" id="overlay-usage">
   <div class="modal" style="width:780px;max-width:96vw">
     <h3 id="usage-key-title">API Key 用量历史</h3>
+    <div class="btn-row" style="margin:2px 0 10px">
+      <button type="button" class="btn btn-sm btn-amber" id="usage-r-24h" onclick="setUsageRange('24h')">24小时</button>
+      <button type="button" class="btn btn-sm btn-ghost" id="usage-r-3d" onclick="setUsageRange('3d')">近3天</button>
+      <button type="button" class="btn btn-sm btn-ghost" id="usage-r-7d" onclick="setUsageRange('7d')">近7天</button>
+      <button type="button" class="btn btn-sm btn-ghost" id="usage-r-30d" onclick="setUsageRange('30d')">近一个月</button>
+    </div>
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
       <span id="usage-range-label" class="mono" style="font-size:13px;font-weight:600;color:var(--teal)">近 24 小时</span>
       <span style="flex:1"></span>
-      <span style="font-size:13px;color:var(--muted)">当日总量：<b id="usage-total" class="mono" style="color:var(--text)">0</b></span>
+      <span style="font-size:13px;color:var(--muted)"><span id="usage-total-cap">当日总量</span>：<b id="usage-total" class="mono" style="color:var(--text)">0</b></span>
     </div>
     <div id="usage-hours"></div>
     <div id="usage-calls"></div>
@@ -896,7 +902,7 @@ body {
       <div id="once-fields">
         <div class="f2">
           <div class="fg"><label>时区</label><input value="Asia/Shanghai（北京时间，固定）" disabled></div>
-          <div class="fg"><label>一次性·最大 Token</label><input name="max_tokens" type="number" value="0"></div>
+          <div class="fg"><label>一次性·最大 Token（一次性模型的总额度上限，0=不限）</label><input name="max_tokens" type="number" value="0"></div>
         </div>
         <div class="f2">
           <div class="fg"><label>一次性·存活时长（秒）</label><input name="ttl_seconds" type="number" value="0"></div>
@@ -932,6 +938,7 @@ body {
       <div class="fg"><label>协议</label><select name="protocol"><option value="openai_responses">OpenAI Responses</option><option value="openai" selected>OpenAI Compatible</option><option value="anthropic">Anthropic</option><option value="qianfan_search">千帆搜索</option><option value="qianfan_web_search">千帆网页搜索</option></select></div>
       <div class="fg"><label>Base URL（该供应商下所有模型共享）</label><input name="base_url" required placeholder="https://api.openai.com/v1"></div>
       <div class="fg"><label>API Key（该供应商下所有模型共享）</label><input name="api_key" required placeholder="sk-..."></div>
+      <div class="fg" id="prov-group-fg" style="display:none"><label>加入分组（可选）</label><select id="prov-join-group"></select><span class="th-hint">分组收纳启用时可直接入组；「＋ 新建分组…」创建新分组并加入</span></div>
       <div class="fg">
         <label>代理地址（可选）</label>
         <div style="display:flex;gap:6px;align-items:center">
@@ -1442,7 +1449,7 @@ async function savePoolOrder(poolName, container) {
   const ids = [...container.querySelectorAll('.pool-item')].map(n => n.dataset.id);
   renumber(container);
   const ok = await api(poolPath(poolName), { method: 'PUT', body: JSON.stringify({ model_ids: ids }) });
-  if (ok) { api('/admin/reload', { method: 'POST' }); toast('优先级已更新'); }
+  if (ok) { toast('优先级已更新'); }
 }
 
 function bindDrag() {
@@ -1502,7 +1509,7 @@ async function savePoolCardOrder(list) {
   const allOthers = Object.keys(poolLookup || {}).filter(n => n !== 'auto' && n !== '兜底池');
   const names = domNames.concat(allOthers.filter(n => !domNames.includes(n)));
   const ok = await api('/admin/pools/reorder', { method: 'PUT', body: JSON.stringify({ pool_names: names }) });
-  if (ok) { await api('/admin/reload', { method: 'POST' }); toast('池顺序已更新'); }
+  if (ok) { toast('池顺序已更新'); }
   loadPools();
 }
 
@@ -1629,7 +1636,21 @@ function bindProviderDrag() {
 /* ═══════════ 分组收纳（#38）+ 用量分组查看（#39）═══════════ */
 const GRP_KEY = 'gw_groups';
 function grpData() { try { return JSON.parse(localStorage.getItem(GRP_KEY)) || {}; } catch (e) { return {}; } }
-function grpSave(d) { localStorage.setItem(GRP_KEY, JSON.stringify(d)); }
+function grpSave(d) { localStorage.setItem(GRP_KEY, JSON.stringify(d)); api('/admin/ui_groups', { method: 'PUT', body: JSON.stringify(d) }); }   // #54 每次保存镜像服务端（全端共享）
+/* #54 分组跨端同步：分组数据上移服务端（config.ui_groups），localStorage 仅作缓存与迁移来源。
+   启动规则：服务端有数据 → 服务端为准写回本地；服务端空 + 本地有 → 本地静默上传（一次性迁移）。
+   此后每次 grpSave 均镜像写服务端，任何设备的改动全端共享。同步失败不阻塞面板（回退本地）。 */
+async function gwGroupsBoot() {
+  try {
+    const d = await api('/admin/ui_groups');
+    if (!d) return;
+    const sv = d.ui_groups || {};
+    const has = o => Object.keys(o).some(k => k !== 'settings' && Array.isArray(o[k]) && o[k].length)
+      || (o.settings && (o.settings.models || o.settings.pools));
+    if (has(sv)) localStorage.setItem(GRP_KEY, JSON.stringify(sv));
+    else if (has(grpData())) api('/admin/ui_groups', { method: 'PUT', body: JSON.stringify(grpData()) });
+  } catch (e) { /* 分组同步失败不阻塞 */ }
+}
 function grpSettings() { return Object.assign({ models: false, pools: false }, grpData().settings || {}); }
 function grpList(kind) {
   const d = grpData();
@@ -1857,7 +1878,7 @@ async function addToPool(name) {
   if (ids.includes(id)) { toast('该接口已在池中', true); return; }
   ids.push(id);
   const ok = await api(poolPath(name), { method: 'PUT', body: JSON.stringify({ model_ids: ids }) });
-  if (ok) { await api('/admin/reload', { method: 'POST' }); toast('已加入池 ' + name); loadPools(); }
+  if (ok) { toast('已加入池 ' + name); loadPools(); }
 }
 
 async function removeFromPool(name, id) {
@@ -1867,7 +1888,7 @@ async function removeFromPool(name, id) {
   if (!pool) { toast('池 "' + name + '" 不存在，请刷新页面重试', true); return; }
   const ids = (pool.model_ids || []).filter(x => x !== id);
   const ok = await api(poolPath(name), { method: 'PUT', body: JSON.stringify({ model_ids: ids }) });
-  if (ok) { await api('/admin/reload', { method: 'POST' }); toast('已移出池 ' + name); loadPools(); }
+  if (ok) { toast('已移出池 ' + name); loadPools(); }
 }
 
 function collectModels(pools, name, seen, out) {
@@ -1901,13 +1922,13 @@ function showAddPool() {
   const name = prompt('请输入新模型池名称（如 deepseek-v4-flash）：');
   if (!name || !name.trim()) return;
   api('/admin/pools', { method: 'POST', body: JSON.stringify({ name: name.trim(), model_ids: [] }) })
-    .then(ok => { if (ok) { api('/admin/reload', { method: 'POST' }).then(() => { toast('已创建池 ' + name.trim()); loadPools(); }); } });
+    .then(ok => { if (ok) { toast('已创建池 ' + name.trim()); loadPools(); } });
 }
 
 async function delPool(name) {
   if (!confirm('确定删除模型池 "' + name + '" 吗？池内接口不会被删除。')) return;
   const ok = await api(poolPath(name), { method: 'DELETE' });
-  if (ok) { await api('/admin/reload', { method: 'POST' }); toast('已删除池 ' + name); loadPools(); }
+  if (ok) { toast('已删除池 ' + name); loadPools(); }
 }
 
 async function renamePool(name) {
@@ -1925,7 +1946,6 @@ async function toggleAutoOrder(name, enabled) {
   const hadLb = !!p.load_balance;
   const ok = await api(poolPath(name), { method: 'PUT', body: JSON.stringify({ model_ids: p.model_ids, auto_order: enabled, load_balance: enabled ? false : undefined }) });
   if (ok) {
-    await api('/admin/reload', { method: 'POST' });
     toast(enabled ? '池 ' + name + ' 已开启自动择优' : '池 ' + name + ' 已关闭自动择优');
     if (enabled && hadLb) toast('负载均衡已自动关闭（与自动择优互斥）');
     loadPools();
@@ -1939,7 +1959,6 @@ async function toggleLoadBalance(name, enabled) {
   const hadAo = !!p.auto_order;
   const ok = await api(poolPath(name), { method: 'PUT', body: JSON.stringify({ model_ids: p.model_ids, load_balance: enabled, auto_order: enabled ? false : undefined }) });
   if (ok) {
-    await api('/admin/reload', { method: 'POST' });
     toast(enabled ? '池 ' + name + ' 已开启负载均衡' : '池 ' + name + ' 已关闭负载均衡');
     if (enabled && hadAo) toast('自动择优已自动关闭（与负载均衡互斥）');
     loadPools();
@@ -1953,7 +1972,6 @@ async function togglePoolSwitch(name, enabled) {
   if (!p) { toast('池 "' + name + '" 不存在，请刷新页面重试', true); return; }
   const ok = await api(poolPath(name), { method: 'PUT', body: JSON.stringify({ model_ids: p.model_ids, switch_enabled: enabled }) });
   if (ok) {
-    await api('/admin/reload', { method: 'POST' });
     toast(enabled ? '池 ' + name + ' 已开启 Switch 切换' : '池 ' + name + ' 已关闭 Switch 切换');
   }
   loadPools();  // 失败也重拉：勾选回弹为服务端真实状态
@@ -1964,7 +1982,7 @@ async function setSlowThreshold(name, val) {
   const data = await api('/admin/pools');
   if (!data || !data.pools[name]) return;
   const ok = await api(poolPath(name), { method: 'PUT', body: JSON.stringify({ model_ids: data.pools[name].model_ids, slow_latency_threshold: v }) });
-  if (ok) { await api('/admin/reload', { method: 'POST' }); toast(v === 0 ? '池 ' + name + ' 延迟阈值：不限制' : '池 ' + name + ' 延迟阈值：' + v + 'ms'); loadPools(); }
+  if (ok) { toast(v === 0 ? '池 ' + name + ' 延迟阈值：不限制' : '池 ' + name + ' 延迟阈值：' + v + 'ms'); loadPools(); }
 }
 // 根据当前阈值更新下方提示文字 + 预设按钮高亮
 function updateThHint(name, val) {
@@ -1999,7 +2017,6 @@ async function saveFallbackTargets() {
   const ok = await api('/admin/pools/fallback_targets', { method: 'PUT', body: JSON.stringify({ pool_names: checked }) });
   if (ok) {
     closeModal('overlay-fallback-targets');
-    await api('/admin/reload', { method: 'POST' });
     toast('兜底对象已更新（' + checked.length + ' 个池）');
     loadPools();
   }
@@ -2794,6 +2811,7 @@ function showAddProvider() {
   document.getElementById('prov-modal-title').textContent = '添加供应商';
   document.getElementById('pform').reset();
   document.getElementById('prov-id').disabled = false;
+  provJoinGroupRender();
   document.getElementById('prov-overlay').classList.add('show');
 }
 
@@ -2839,6 +2857,7 @@ async function editProvider(id) {
   if (!p) return;
   editingProviderId = id;
   document.getElementById('prov-modal-title').textContent = '编辑供应商';
+  const _pgf = document.getElementById('prov-group-fg'); if (_pgf) _pgf.style.display = 'none';   // #56 入组仅限新增流程
   const f = document.getElementById('pform');
   f.id.value = p.id; f.name.value = p.name; f.protocol.value = p.protocol;
   f.base_url.value = p.base_url; f.api_key.value = p.api_key; f.proxy_url.value = p.proxy_url || '';
@@ -2852,14 +2871,44 @@ async function editProvider(id) {
 
 function closeProvModal() { document.getElementById('prov-overlay').classList.remove('show'); }
 
+/* #56 添加供应商时可选加入分组：仅分组收纳启用时显示下拉（不加入/现有分组/新建） */
+function provJoinGroupRender() {
+  const fg = document.getElementById('prov-group-fg');
+  if (!fg) return;
+  const on = grpSettings().models;
+  fg.style.display = on ? '' : 'none';
+  if (!on) return;
+  const sel = document.getElementById('prov-join-group');
+  sel.innerHTML = '<option value="">不加入分组</option>' +
+    grpList('providerGroups').map(g => '<option value="' + esc(g.id) + '">' + esc(g.name) + '（' + (g.members || []).length + '）</option>').join('') +
+    '<option value="__new__">＋ 新建分组…</option>';
+  sel.value = '';
+}
+function provJoinGroupApply(newId) {
+  const sel = document.getElementById('prov-join-group');
+  const gid = sel && sel.value;
+  if (!gid || !newId) return;
+  if (gid === '__new__') {
+    const nn = prompt('新的分组名称：');
+    if (!nn || !nn.trim()) return;
+    const d = grpData();
+    if (!Array.isArray(d.providerGroups)) d.providerGroups = [];
+    if (d.providerGroups.some(g => g.name === nn.trim())) { toast('同名分组已存在', true); return; }
+    d.providerGroups.push({ id: 'g' + Date.now().toString(36), name: nn.trim(), collapsed: false, members: [newId] });
+    grpSave(d); loadModels(); loadPools();
+  } else {
+    grpToggleMember('providerGroups', newId, gid, true);   // 内部已 grpSave + 重渲
+  }
+}
+
 async function submitProvider(e) {
   e.preventDefault();
   const body = Object.fromEntries(new FormData(document.getElementById('pform')).entries());
-  let ok;
+  let ok, newProv;
   if (editingProviderId) ok = await api('/admin/providers/' + encodeURIComponent(editingProviderId).replace(/%2F/g, '/'), { method: 'PUT', body: JSON.stringify(body) });
-  else ok = await api('/admin/providers', { method: 'POST', body: JSON.stringify(body) });
+  else { newProv = await api('/admin/providers', { method: 'POST', body: JSON.stringify(body) }); ok = newProv; }
   if (!ok) return;
-  await api('/admin/reload', { method: 'POST' });
+  if (newProv && newProv.provider) provJoinGroupApply(newProv.provider.id);   // #56 新增供应商按选择入组
   closeProvModal(); toast(editingProviderId ? '供应商已更新' : '供应商已添加');
   loadModels();
 }
@@ -2868,7 +2917,6 @@ async function delProvider(id) {
   if (!confirm('确定删除供应商 "' + id + '" 吗？（其下不能仍有模型）')) return;
   const ok = await api('/admin/providers/' + encodeURIComponent(id).replace(/%2F/g, '/'), { method: 'DELETE' });
   if (!ok) return;
-  await api('/admin/reload', { method: 'POST' });
   toast('供应商已删除'); loadModels();
 }
 
@@ -3012,7 +3060,6 @@ async function submitModel(e) {
   if (editingId) ok = await api('/admin/models/' + encodeURIComponent(editingId).replace(/%2F/g, '/'), { method: 'PUT', body: JSON.stringify(body) });
   else ok = await api('/admin/models', { method: 'POST', body: JSON.stringify(body) });
   if (!ok) return;
-  await api('/admin/reload', { method: 'POST' });
   closeModal();
   toast(editingId ? '模型已更新' : '模型已添加');
   loadModels();
@@ -3116,7 +3163,6 @@ async function delModel(id) {
   if (!confirm('确定删除模型 "' + id + '" 吗？将同时从所有池中移除。')) return;
   const ok = await api('/admin/models/' + encodeURIComponent(id).replace(/%2F/g, '/'), { method: 'DELETE' });
   if (!ok) return;
-  await api('/admin/reload', { method: 'POST' });
   toast('模型已删除'); loadModels();
 }
 
@@ -3165,8 +3211,9 @@ async function testConnectivity() {
 }
 
 setInterval(() => { document.getElementById('clock').textContent = new Date().toLocaleTimeString('zh-CN', { hour12: false }); }, 1000);
-loadModels();
+gwGroupsBoot().finally(() => loadModels());   // #54 先同步服务端分组再首渲
 refreshHeadroomGate();
+refreshHrStatsBtn();   // #50 统计页节省统计入口显隐（一次请求缓存）
 
 /* ── API 密钥管理 ── */
 let keyPoolCache = [];
@@ -3231,7 +3278,21 @@ async function loadKeys() {
         <div>创建时间 <b>${new Date(k.created_at * 1000).toLocaleString('zh-CN', { hour12: false })}</b></div>
       </div>
     </div>`).join('') || '<div class="hint">暂无 API 密钥，点击右上角创建。</div>';
-  setInnerIfChanged(el, keyHtml);
+  // #51 管理员（服务器密钥）固定行：decision_log 口径的用量历史（伪 Key #0）
+  const adminCard = `
+    <div class="card" style="border-style:dashed">
+      <div class="card-head">
+        <div>
+          <div class="card-title">管理员（服务器密钥） <span class="mono" style="color:var(--muted);font-size:12px">#0</span></div>
+          <div class="card-sub" style="font-family:var(--mono);font-size:11.5px">config.json server.api_key · 无限额 · 用量按调用记录口径（decision_log）</div>
+        </div>
+        <div class="btn-row">
+          <span class="badge b-paid">管理员</span>
+          <button class="btn btn-ghost btn-sm" onclick="showKeyUsage(0)">用量历史</button>
+        </div>
+      </div>
+    </div>`;
+  setInnerIfChanged(el, adminCard + keyHtml);
 }
 let editingKeyId = null;
 function renderPoolCheckboxes(checkedArr) {
@@ -3367,6 +3428,16 @@ async function delKey(id) {
 /* ── 用量历史（1h 粒度，可切换日期，默认今天）── */
 let usageKeyId = null;
 let usageDate = null;
+let usageRange = '24h';   // #53 档位：24h(默认)/3d/7d/30d，页面级状态不跨会话记忆
+const USAGE_RANGES = { '24h': { nDays: 2, title: '近 24 小时' }, '3d': { nDays: 3, title: '近 3 天' }, '7d': { nDays: 7, title: '近 7 天' }, '30d': { nDays: 30, title: '近一个月' } };
+function setUsageRange(r) {   // #53 档位切换：选中态描边 + 重拉数据重绘
+  usageRange = USAGE_RANGES[r] ? r : '24h';
+  ['24h', '3d', '7d', '30d'].forEach(x => {
+    const b = document.getElementById('usage-r-' + x);
+    if (b) { b.classList.toggle('btn-amber', x === usageRange); b.classList.toggle('btn-ghost', x !== usageRange); }
+  });
+  loadKeyUsage();
+}
 function usageDateStr() {
   if (usageDate) return usageDate;
   const d = new Date();
@@ -3382,11 +3453,25 @@ function shiftUsageDate(delta) {
 async function showKeyUsage(id) {
   usageKeyId = id;
   usageDate = null;
-  document.getElementById('usage-key-title').textContent = 'API Key #' + id + ' · 用量历史（近 24 小时）';
+  document.getElementById('usage-key-title').textContent = (id === 0 ? '管理员（服务器密钥）' : 'API Key #' + id) + ' · 用量历史（' + (USAGE_RANGES[usageRange] || USAGE_RANGES['24h']).title + '）';
   document.getElementById('overlay-usage').classList.add('show');
   loadKeyUsage();
 }
 function closeKeyUsage() { document.getElementById('overlay-usage').classList.remove('show'); }
+/* #50 统计页「🪴 节省统计」入口显隐：headroom 插件停用（GET /admin/headroom enabled=false）时隐藏。
+   一次请求缓存结果，不重复请求；接口异常保持显示（防 API 故障误藏功能）；保存设置后强制刷新 */
+let __hrStatsOn = null;   // null=未探测（默认显示）
+function applyHrStatsBtn() {
+  const b = document.getElementById('btn-hr-stats');
+  if (b) b.style.display = __hrStatsOn === false ? 'none' : '';
+}
+async function refreshHrStatsBtn(force) {
+  if (__hrStatsOn !== null && !force) { applyHrStatsBtn(); return; }
+  const d = await api('/admin/headroom');
+  if (!d) return;   // 接口异常：保持当前显隐（未探测时默认显示）
+  __hrStatsOn = !!d.enabled;
+  applyHrStatsBtn();
+}
 /* Headroom 选配插件：节省统计（非必装；config.json headroom.enabled 总开关，勾选模型接单时才压缩） */
 async function showHeadroomStats() {
   const d = await api('/admin/headroom/stats?days=7');
@@ -3483,7 +3568,7 @@ async function saveHeadroomSettings(ev) {
     kompress_enabled: document.getElementById('hr-kompress').checked,
   };
   const d = await api('/admin/headroom', { method: 'POST', body: JSON.stringify(body) });
-  if (d) { toast('Headroom 设置已保存并热生效'); loadHeadroomSettings(); }
+  if (d) { toast('Headroom 设置已保存并热生效'); loadHeadroomSettings(); refreshHrStatsBtn(true); }   // #50 保存后按新 enabled 刷新统计页入口显隐
 }
 /* 模式选项卡高亮：选中的单选卡描边 */
 function applyHrModeHighlight() {
@@ -3497,32 +3582,61 @@ async function loadKeyUsage() {
   const el = document.getElementById('usage-hours');
   const rangeEl = document.getElementById('usage-range-label');
   const totalEl = document.getElementById('usage-total');
-  if (!usageKeyId) return;
+  if (usageKeyId === null || usageKeyId === undefined) return;   // #51 伪 Key #0 非 falsy 判空（原 !usageKeyId 会把管理员行直接早退）
   el.innerHTML = '<div class="hint">加载中...</div>';
   totalEl.textContent = '…';
   const fmtDay = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  const rg = USAGE_RANGES[usageRange] || USAGE_RANGES['24h'];
   const now = new Date();
-  const yst = new Date(now.getTime() - 24 * 3600 * 1000);
-  const [td, yd] = await Promise.all([
-    api('/admin/keys/' + usageKeyId + '/usage?date=' + fmtDay(now)),
-    api('/admin/keys/' + usageKeyId + '/usage?date=' + fmtDay(yst)),
-  ]);
-  if (!td || !yd) return;
-  const curH = now.getHours();
+  // #53 按档位并行取所需日表（24h=今+昨、3d/7d/30d=前 N-1 天+今天）；后端对无数据日期也返回全 0 桶
+  const dayList = [];
+  for (let i = rg.nDays - 1; i >= 0; i--) dayList.push(new Date(now.getFullYear(), now.getMonth(), now.getDate() - i));
+  const tables = await Promise.all(dayList.map(dt => api('/admin/keys/' + usageKeyId + '/usage?date=' + fmtDay(dt))));
+  if (tables.some(t => !t)) return;
+  document.getElementById('usage-key-title').textContent = (usageKeyId === 0 ? '管理员（服务器密钥）' : 'API Key #' + usageKeyId) + ' · 用量历史（' + rg.title + '）';
   const pts = [];
-  for (let o = -23; o <= 0; o++) {
-    const h = ((curH + o) % 24 + 24) % 24;
-    const isToday = curH + o >= 0;
-    pts.push({ h, used: (isToday ? td : yd).hours[h].used, yst: !isToday });
+  let rangeTotal = 0;
+  if (usageRange === '3d') {          // 近 3 天：每张日表按 6 小时桶聚合 → 12 点
+    dayList.forEach((dt, di) => {
+      for (let b = 0; b < 4; b++) {
+        let used = 0;
+        for (let h = b * 6; h < b * 6 + 6; h++) used += tables[di].hours[h].used;
+        rangeTotal += used;
+        pts.push({ used, dim: di < dayList.length - 1, label: b === 0 ? fmtDay(dt).slice(5) : String(b * 6).padStart(2, '0') + '时',
+          tipTxt: fmtDay(dt).slice(5) + ' ' + String(b * 6).padStart(2, '0') + ':00–' + String(b * 6 + 6).padStart(2, '0') + ':00' });
+      }
+    });
+  } else if (usageRange === '7d' || usageRange === '30d') {   // 近 7 天/近一个月：每自然日 1 点
+    dayList.forEach((dt, di) => {
+      const used = tables[di].hours.reduce((s, x) => s + x.used, 0);
+      rangeTotal += used;
+      pts.push({ used, dim: di < dayList.length - 1, label: fmtDay(dt).slice(5), tipTxt: fmtDay(dt) });
+    });
+  } else {                            // 24小时（默认）：滚动 24 个小时点（昨 now+1 时 ～ 今 now 时）
+    const td = tables[1], yd = tables[0], curH = now.getHours();
+    for (let o = -23; o <= 0; o++) {
+      const h = ((curH + o) % 24 + 24) % 24;
+      const isToday = curH + o >= 0;
+      pts.push({ used: (isToday ? td : yd).hours[h].used, dim: !isToday,
+        label: (isToday ? '今' : '昨') + String(h).padStart(2, '0') + '时',
+        tipTxt: (isToday ? '今日' : '昨日') + String(h).padStart(2, '0') + ':00' });
+    }
   }
-  totalEl.textContent = td.hours.reduce((s, x) => s + x.used, 0).toLocaleString();
-  rangeEl.textContent = '近 24 小时（' + fmtDay(yst).slice(5) + ' ' + String((curH + 1) % 24).padStart(2, '0') + ':00 ～ ' + fmtDay(now).slice(5) + ' ' + String(curH).padStart(2, '0') + ':00）';
+  const capEl = document.getElementById('usage-total-cap');
+  if (capEl) capEl.textContent = usageRange === '24h' ? '当日总量' : rg.title + '总量';
+  if (usageRange === '24h') {
+    totalEl.textContent = tables[1].hours.reduce((s, x) => s + x.used, 0).toLocaleString();
+    rangeEl.textContent = '近 24 小时（' + fmtDay(dayList[0]).slice(5) + ' ' + String((now.getHours() + 1) % 24).padStart(2, '0') + ':00 ～ ' + fmtDay(dayList[1]).slice(5) + ' ' + String(now.getHours()).padStart(2, '0') + ':00）';
+  } else {
+    totalEl.textContent = rangeTotal.toLocaleString();
+    rangeEl.textContent = rg.title + '（' + fmtDay(dayList[0]).slice(5) + ' ～ ' + fmtDay(dayList[dayList.length - 1]).slice(5) + '）';
+  }
   const W = Math.max(320, Math.min(760, el.clientWidth || 720)), H = 190, L = 52, R = 14, T = 16, B = 30, n = pts.length;  // 宽度随容器自适应（手机端 1:1 渲染，字体不缩放）
   const max = Math.max(1, ...pts.map(p => p.used));
   const X = i => L + i * (W - L - R) / (n - 1);
   const Y = v => H - B - v / max * (H - T - B);
-  // 单调三次插值（Fritsch–Carlson）：平滑且严格不过冲——曲线不会越过相邻数据点
-  // 范围（更不会出现 0 以下的负用量），比 Catmull-Rom 更适合这种尖刺型计量数据
+  // 单调三次插值（Fritsch–Carlson 完整版：含切线限幅 |tg|≤3·min(相邻斜率)，杜绝越界/负值）
+  // 平滑且严格不过冲——曲线不会越过相邻数据点范围（更不会出现 0 以下的负用量），比 Catmull-Rom 更适合这种尖刺型计量数据
   const dpx = [], mp = [];
   for (let i = 0; i < n - 1; i++) {
     const dx = X(i + 1) - X(i);
@@ -3530,7 +3644,12 @@ async function loadKeyUsage() {
     mp.push((Y(pts[i + 1].used) - Y(pts[i].used)) / dx);
   }
   const tg = [mp[0]];
-  for (let i = 1; i < n - 1; i++) tg.push(mp[i - 1] * mp[i] <= 0 ? 0 : (mp[i - 1] + mp[i]) / 2);
+  for (let i = 1; i < n - 1; i++) {
+    if (mp[i - 1] * mp[i] <= 0) { tg.push(0); continue; }   // 极值点：切线置 0
+    const lim = 3 * Math.min(Math.abs(mp[i - 1]), Math.abs(mp[i]));   // 限幅：|tg| ≤ 3·min(相邻斜率)
+    const avg = (mp[i - 1] + mp[i]) / 2;
+    tg.push(Math.sign(avg) * Math.min(Math.abs(avg), lim));
+  }
   tg.push(mp[n - 2]);
   let path = 'M ' + X(0).toFixed(1) + ' ' + Y(pts[0].used).toFixed(1);
   for (let i = 0; i < n - 1; i++) {
@@ -3545,7 +3664,8 @@ async function loadKeyUsage() {
   }).join('');
   svg += `<path d="${path}" fill="none" stroke="var(--teal)" stroke-width="2.2" stroke-linecap="round"/>`;
   svg += pts.map((p, i) => `<circle cx="${X(i).toFixed(1)}" cy="${Y(p.used).toFixed(1)}" r="2.2" fill="var(--teal)"/>`).join('');  // 悬浮数据由下方自定义 tip 呈现（原生 title 延迟大且与 tip 重复）
-  svg += pts.map((p, i) => (i % 4 === 0 || i === n - 1) ? `<text x="${X(i).toFixed(1)}" y="${H - 10}" text-anchor="middle" font-size="10" fill="${p.yst ? 'var(--muted)' : 'var(--teal)'}">${p.yst ? '昨' : '今'}${String(p.h).padStart(2, '0')}时</text>` : '').join('');
+  const tickEvery = usageRange === '24h' ? 4 : usageRange === '30d' ? 3 : 1;   // 24h 每 4 点一标，30 天每 3 点一标，12/7 点全标
+  svg += pts.map((p, i) => (i % tickEvery === 0 || i === n - 1) ? `<text x="${X(i).toFixed(1)}" y="${H - 10}" text-anchor="middle" font-size="10" fill="${p.dim ? 'var(--muted)' : 'var(--teal)'}">${p.label}</text>` : '').join('');
   el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto">${svg}</svg>`;
   // 悬浮交互：竖向参考线 + 数据提示框（鼠标/触屏移动即显示具体数值）
   el.style.position = 'relative';
@@ -3567,7 +3687,7 @@ async function loadKeyUsage() {
     guide.setAttribute('y1', T); guide.setAttribute('y2', H - B);
     guide.setAttribute('visibility', 'visible');
     dots.forEach((d, j) => d.setAttribute('r', j === i ? 4 : 2.2));
-    tip.innerHTML = `${p.yst ? '昨日' : '今日'}<b>${String(p.h).padStart(2, '0')}:00</b> 用量 <b style="color:var(--teal)">${p.used.toLocaleString()}</b> tok`;
+    tip.innerHTML = `<b>${p.tipTxt}</b> 用量 <b style="color:var(--teal)">${p.used.toLocaleString()}</b> tok`;
     tip.style.left = Math.max(0, Math.min(X(i) * (rct.width / W) - 60, rct.width - 140)) + 'px';
     tip.style.top = Math.max(0, Y(p.used) * (rct.height / H) - 38) + 'px';
     tip.style.display = 'block';
@@ -3602,6 +3722,22 @@ async function loadKeyUsage() {
     } else { cel.innerHTML = ''; }
   }
 }
+
+/* #55 拖拽自动滚动：原生 HTML5 拖拽的边缘滚动检测区过小（浏览器内置~40px 不可调），
+   自实现上下 1/4 视口检测区，dragover 驱动按深入程度滚动；非拖拽期间零开销 */
+(function () {
+  let dragging = false;
+  document.addEventListener('dragstart', () => { dragging = true; }, true);   // 捕获阶段：池内条目的 dragstart 会 stopPropagation，冒泡到不了 document（#55 自测发现）
+  document.addEventListener('dragend', () => { dragging = false; }, true);
+  document.addEventListener('dragover', e => {
+    if (!dragging) return;
+    const zone = innerHeight / 4;   // 上下各 1/4 视口
+    let d = 0;
+    if (e.clientY < zone) d = -Math.ceil((zone - e.clientY) / 6);
+    else if (e.clientY > innerHeight - zone) d = Math.ceil((e.clientY - (innerHeight - zone)) / 6);
+    if (d) scrollBy(0, d);
+  });
+})();
 </script>
 <script>
 /* ═══════════ 插件中心（v2.14.0）═══════════ */
