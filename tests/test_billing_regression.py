@@ -2,7 +2,7 @@
 """计费回归套件(问题24 不变量固化)+ 思考/估算回归。
 
 用法:python test_billing_regression.py
-- 自行启动隔离实例(端口 8651,共享 data/gateway.db,结束清理测试数据),不影响 8650 生产。
+- 自行启动隔离实例(端口 8678,共享 data/gateway.db,结束清理测试数据),不影响 8650 生产。
 - mock 上游(127.0.0.1:8125):流式 SSE / 非流式 JSON,usage 可控,记录收到的请求体。
 - 全部断言通过 exit 0;任何失败 exit 1(优化阶段必须全绿才继续)。
 """
@@ -20,7 +20,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import httpx
 
-BASE = "http://127.0.0.1:8651"
+BASE = "http://127.0.0.1:8678"
 MOCK_PORT = 8125
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # 本文件在 tests/ 下，REPO 取仓库根
 sys.path.insert(0, REPO)  # 使测试进程可直接 import app.*（脚本方式运行时 sys.path[0] 是 tests/）
@@ -50,6 +50,18 @@ class MockHandler(BaseHTTPRequestHandler):
         if str(body.get("model", "")).startswith("mock-bad400"):
             out_b = json.dumps({"error": {"code": "InternalError.Algo.InvalidParameter",
                                           "message": "[height:1 or width:1 must be larger than 10]"}}).encode()
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(out_b)))
+            self.end_headers()
+            self.wfile.write(out_b)
+            return
+        # T35（2026-10-09 书生 image/jpg 694 连拒）：上游对图片 MIME 严格校验的 400（书生真实报错形状）
+        if str(body.get("model", "")).startswith("mock-imgbad"):
+            out_b = json.dumps({"type": "error",
+                                "error": {"type": "invalid_request_error",
+                                          "message": "inline image type is not supported: image/jpg"},
+                                "request_id": "req_mock_imgbad"}, ensure_ascii=False).encode()
             self.send_response(400)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(out_b)))
@@ -283,6 +295,9 @@ TEST_MODELS = [
     # T15（问题30）确定性缺陷 400：池内两个候选，第一个必 400，验证不切换不冷却
     {"id": "zzbt/bad400-a", "name": "mock-bad400-a", "provider_id": "zzmock", "modality": "text", "is_free": True},
     {"id": "zzbt/bad400-b", "name": "mock-bad400-b", "provider_id": "zzmock", "modality": "text", "is_free": True},
+    # T35（书生 image/jpg）图片格式不支持 400：可切换类——归一化后兜底池能接住，而非按请求缺陷直接透传
+    {"id": "zzbt/imgbad-a", "name": "mock-imgbad-a", "provider_id": "zzmock", "modality": "text", "is_free": True},
+    {"id": "zzbt/imgok-b", "name": "mock-echo-imgok", "provider_id": "zzmock", "modality": "text", "is_free": True},
     # T17 本地模型（local 令牌类型：不计费不限量仅记录）+ 切换窗口透传
     {"id": "zzbt/echo-local", "name": "mock-echo-local", "provider_id": "zzmock", "modality": "text", "is_free": True, "token_type": "local"},
     {"id": "zzbt/switch-a", "name": "mock-switching-a", "provider_id": "zzmock", "modality": "text", "is_free": True},
@@ -482,6 +497,10 @@ def main():
     c["pools"]["zzqfws2"] = {"model_ids": ["zzbt/echo-qfws2"], "strategy": "sequential"}
     c["pools"]["zzsump"] = {"model_ids": ["zzbt/echo-sum"], "strategy": "sequential"}
     c["pools"]["zzbad"] = {"model_ids": ["zzbt/bad400-a", "zzbt/bad400-b"], "strategy": "sequential"}
+    # T35：zzimgbad 带兜底池（图片格式 400 换候选后接住）；zzimgonly 无兜底（整链失败透传原文）
+    c["pools"]["zzimgbad"] = {"model_ids": ["zzbt/imgbad-a"], "strategy": "sequential", "fallback_pool": "zzimgok"}
+    c["pools"]["zzimgok"] = {"model_ids": ["zzbt/imgok-b"], "strategy": "sequential"}
+    c["pools"]["zzimgonly"] = {"model_ids": ["zzbt/imgbad-a"], "strategy": "sequential"}
     c["pools"]["zzlocal"] = {"model_ids": ["zzbt/echo-local"], "strategy": "sequential"}
     c["pools"]["zzswitch"] = {"model_ids": ["zzbt/switch-a", "zzbt/switch-b"], "strategy": "sequential"}
     # T24 Switch 切换池：switch_enabled 直接写 config（管理端校验在 l 组单独验证）
@@ -515,25 +534,35 @@ def main():
     json.dump(c, open(os.path.join(REPO, "config.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=2)
 
     # 启动隔离实例
-    # 端口预清理：8651 若被遗留实例占用，新进程会绑定失败，测试将静默打到旧代码
-    # （教训：v2.11.19 前 T11 曾因旧实例占口一直测到旧实现）
-    try:
+    # 端口预清理（v2.16.5 安全化）：先 taskkill 再复扫，仍存活者=外部进程——
+    # 报错中止而非误杀（教训：无差别强杀会杀掉 TV 助手类 node 代理，其守护数分钟内
+    # 重占回归端口，套件请求全打到代理返回非 JSON，断言连挂——2026-10-09 实证）
+    def _port_listeners(port):
+        out = []
         if os.name == "nt":
             _ns = subprocess.run(["netstat", "-ano"], capture_output=True).stdout.decode("utf-8", "ignore")
             for _ln in _ns.splitlines():
-                if ":8651" in _ln and "LISTENING" in _ln.upper():
-                    _pid = _ln.split()[-1]
-                    subprocess.run(["taskkill", "/PID", _pid, "/F"], capture_output=True)
+                if f":{port}" in _ln and "LISTENING" in _ln.upper():
+                    out.append(_ln.split()[-1])
+        return out
+    try:
+        if os.name == "nt":
+            for _pid in _port_listeners(8678):
+                subprocess.run(["taskkill", "/PID", _pid, "/F"], capture_output=True)
         else:
             # Linux/macOS：fuser 按端口清理（psmisc；缺失则跳过——干净环境本就无占用）
-            subprocess.run(["fuser", "-k", "8651/tcp"], capture_output=True)
+            subprocess.run(["fuser", "-k", "8678/tcp"], capture_output=True)
     except FileNotFoundError:
         pass                            # 清理工具缺失不阻塞套件：干净环境端口本就空闲
     time.sleep(1)
-    env = dict(os.environ, MODEL_GATEWAY_PORT="8651")
+    _left = _port_listeners(8678)
+    if _left:
+        print(f"[suite] 回归端口 8678 仍被非本套件进程占用 PID={','.join(_left)}，中止（不误杀外部进程，请处理占用后重跑）", flush=True)
+        sys.exit(1)
+    env = dict(os.environ, MODEL_GATEWAY_PORT="8678")
     os.makedirs(os.path.join(REPO, "logs"), exist_ok=True)  # 全新克隆无 logs/，子进程 stdout 落盘前先建
     proc = subprocess.Popen([sys.executable, "-m", "app.main"], cwd=REPO, env=env,
-                            stdout=open(os.path.join(REPO, "logs", "regression_8651.log"), "ab"),
+                            stdout=open(os.path.join(REPO, "logs", "regression_8678.log"), "ab"),
                             stderr=subprocess.STDOUT)
     try:
         up = False
@@ -546,7 +575,7 @@ def main():
             except Exception:
                 pass
         if not up:
-            raise RuntimeError("8651 实例未启动")
+            raise RuntimeError("8678 实例未启动")
         httpx.post(f"{BASE}/admin/reload", headers=ADMIN, timeout=30)
         time.sleep(0.5)
 
@@ -2069,6 +2098,44 @@ def main():
               (r.status_code, _c34.get("key_name"), len(_c34.get("calls") or [])))
         r = httpx.get(f"{BASE}/admin/keys/999999/usage", headers=ADMIN, timeout=15)
         check("T34d 不存在的Key仍404(回归)", r.status_code == 404, r.status_code)
+
+        # ===== T35（v2.16.5）：图片 MIME 归一化 + 图片格式不支持改判可切换（书生 image/jpg 同款根治）=====
+        # 根因：客户端内联图片 MIME 写成非标准 image/jpg，网关原样透传给严格校验的 Anthropic 兼容
+        # 上游（书生 /v1/messages）→ 400 invalid_request_error → 命中请求缺陷分类 → 不切兜底直接透传。
+        # 修复：①两个协议转换出口归一化 image/jpg→image/jpeg；②"图片格式不支持"从缺陷类改为
+        # 可切换类（不冷却换候选直至兜底池，整链失败才透传原文）。
+        from app.core.format_adapter import normalize_image_media_type
+        check("T35a MIME归一化(jpg→jpeg/空缺省png/大小写容错)",
+              normalize_image_media_type("image/jpg") == "image/jpeg"
+              and normalize_image_media_type("") == "image/png"
+              and normalize_image_media_type(" image/JPG ") == "image/jpeg", None)
+        from app.providers.anthropic_provider import AnthropicProvider
+        _ap = AnthropicProvider.__new__(AnthropicProvider)  # 跳过 __init__：_convert_content 不用 httpx client
+        _orig_part = {"type": "image", "source": {"type": "base64", "media_type": "image/jpg", "data": "QQ=="}}
+        _blocks = _ap._convert_content([
+            {"type": "image_url", "image_url": {"url": "data:image/jpg;base64,QQ=="}},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,QQ=="}},
+            _orig_part,
+        ])
+        check("T35b OpenAI→Anthropic 出口归一化 jpg 且保留 png",
+              _blocks[0]["source"]["media_type"] == "image/jpeg"
+              and _blocks[1]["source"]["media_type"] == "image/png", str(_blocks)[:200])
+        check("T35c 直发 Anthropic 图片块改写且不动原请求对象",
+              _blocks[2]["source"]["media_type"] == "image/jpeg"
+              and _orig_part["source"]["media_type"] == "image/jpg", str(_blocks[2])[:150])
+        r = chat("zzimgbad", content="hi")
+        check("T35d 图片格式400换候选后兜底池接住(200)", r.status_code == 200
+              and "答案" in ((r.json().get("choices") or [{}])[0].get("message", {}).get("content") or ""),
+              r.status_code)
+        _steps35 = reject_steps("zzimgbad")
+        check("T35e 决策记录image_format_unsupported(不冷却)+兜底选中",
+              any(x.get("reason") == "image_format_unsupported"
+                  and (x.get("detail") or {}).get("no_cooldown") for x in _steps35)
+              and any(x.get("reason") == "fallback_selected" for x in _steps35),
+              [x.get("reason") for x in _steps35])
+        r = chat("zzimgonly", content="hi")
+        check("T35f 整链失败仍透传上游400原文", r.status_code == 400
+              and "inline image type is not supported" in r.text, (r.status_code, r.text[:150]))
 
     finally:
         try:

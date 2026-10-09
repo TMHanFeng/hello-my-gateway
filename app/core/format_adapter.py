@@ -33,6 +33,16 @@ _STOP_REASON_MAP = {
 }
 
 
+def normalize_image_media_type(media_type, default: str = "image/png") -> str:
+    """归一化图片 MIME 类型。image/jpg 是客户端常见非标准写法（标准为 image/jpeg），
+    严格校验的 Anthropic 兼容上游（如书生 /v1/messages）会 400 拒收，两个协议转换
+    出口（anthropic_to_openai / AnthropicProvider._convert_content）统一改写。"""
+    mt = str(media_type or "").strip().lower()
+    if mt == "image/jpg":
+        return "image/jpeg"
+    return mt or default
+
+
 def is_anthropic_request(headers: dict, body: dict) -> bool:
     """判断请求是否为 Anthropic Messages 格式（任一特征命中即 True）。"""
     # 1. anthropic-version 头（键名大小写不敏感）
@@ -80,7 +90,7 @@ def _block_to_openai(block) -> dict | None:
             if stype == "base64":
                 data = source.get("data")
                 if isinstance(data, str):
-                    media = source.get("media_type") or "image/png"
+                    media = normalize_image_media_type(source.get("media_type"))
                     return {
                         "type": "image_url",
                         "image_url": {"url": f"data:{media};base64,{data}"},

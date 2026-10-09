@@ -4,6 +4,7 @@ import uuid
 import json
 from typing import AsyncGenerator
 from app.core.models import ChatCompletionRequest, ChatCompletionResponse, UsageInfo, Choice, ChoiceMessage
+from app.core.format_adapter import normalize_image_media_type
 from .openai_provider import RateLimitError
 from app.core import reasoning
 
@@ -43,7 +44,7 @@ class AnthropicProvider:
                 url = part.get("image_url", {}).get("url", "")
                 if url.startswith("data:"):
                     header, _, b64 = url.partition(",")
-                    media_type = header[len("data:"):].split(";")[0] or "image/png"
+                    media_type = normalize_image_media_type(header[len("data:"):].split(";")[0])
                     blocks.append({
                         "type": "image",
                         "source": {"type": "base64", "media_type": media_type, "data": b64},
@@ -51,7 +52,15 @@ class AnthropicProvider:
                 else:
                     blocks.append({"type": "image", "source": {"type": "url", "url": url}})
             elif ptype == "image":
-                blocks.append(part)
+                # 客户端直发 Anthropic 图片块时同样归一化 image/jpg（浅拷贝改写，不动原请求对象）
+                src = part.get("source")
+                if (isinstance(src, dict) and src.get("type") == "base64"
+                        and str(src.get("media_type", "")).strip().lower() == "image/jpg"):
+                    fixed = dict(part)
+                    fixed["source"] = dict(src, media_type="image/jpeg")
+                    blocks.append(fixed)
+                else:
+                    blocks.append(part)
         return blocks
 
     def _convert_message(self, msg):

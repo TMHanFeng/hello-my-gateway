@@ -214,6 +214,23 @@ def _is_request_defect_error(e: Exception) -> bool:
                                    "must be larger than 10", "invalid image", "broken image stream"))
 
 
+def _is_image_unsupported_error(e: Exception) -> bool:
+    """判定 400 是否为上游不支持该图片格式（书生 "inline image type is not supported: image/jpg"、
+    Anthropic "image media type ... is not supported" 同类）。
+
+    与请求缺陷不同：请求本身合法，差别在上游能力——宽松上游/兜底池可能接受同一张图。
+    应不冷却、换下一候选直至兜底池，整链失败才透传原文。须在 _is_request_defect_error
+    之前判定（此类报错体同含 invalid_request_error，会被缺陷分类先截胡）。"""
+    text = str(e).lower()
+    resp = getattr(e, "response", None)
+    if resp is not None:
+        try:
+            text += " " + (resp.text or "").lower()
+        except Exception:
+            pass
+    return "image" in text and "not supported" in text
+
+
 def _upstream_error_body(e: Exception) -> str:
     """取上游错误响应体原文；取不到时退化为异常消息"""
     resp = getattr(e, "response", None)
@@ -1754,6 +1771,24 @@ class ModelPool:
                     if override_id and not use_fallback and not switch_role:
                         use_fallback = True
                     continue
+                # 图片格式上游不认（2026-10-09 书生 image/jpg 694 连拒）：可切换类 400——
+                # 不冷却换下一候选直至兜底池，宽松上游可能接受同一图片；整链失败借道
+                # last_overflow 透传原文。须在缺陷分类之前判定（同含 invalid_request_error）
+                if status == 400 and _is_image_unsupported_error(e):
+                    last_overflow = e
+                    last_failure_overflow = True
+                    logger.warning(
+                        f"[图片格式不支持] pool={pool_name} model={entry.id} caller={caller!r} "
+                        f"status=400 不冷却，换下一候选 | {str(e)[:180]}"
+                    )
+                    actual_calls.append({
+                        "model": entry.id,
+                        "reason": "image_format_unsupported",
+                        "detail": {"status": 400, "no_cooldown": True, "error": str(e)[:500]},
+                    })
+                    if override_id and not use_fallback and not switch_role:
+                        use_fallback = True
+                    continue
                 # 问题30（v2.12.3）：确定性请求缺陷 400——请求本身有问题，不冷却不切换，
                 # 结束重试并借道 last_overflow 通道把上游 400 原样透传给客户端
                 if status == 400 and _is_request_defect_error(e):
@@ -1988,6 +2023,22 @@ class ModelPool:
                     actual_calls.append({
                         "model": entry.id,
                         "reason": "context_overflow",
+                        "detail": {"status": 400, "no_cooldown": True, "error": str(e)[:500]},
+                    })
+                    if override_id and not use_fallback and not switch_role:
+                        use_fallback = True
+                    continue
+                # 图片格式上游不认——同非流式分支：不冷却换下一候选直至兜底池，整链失败透传原文
+                if status == 400 and _is_image_unsupported_error(e):
+                    last_overflow = e
+                    last_failure_overflow = True
+                    logger.warning(
+                        f"[图片格式不支持-流式] pool={pool_name} model={entry.id} caller={caller!r} "
+                        f"status=400 不冷却，换下一候选 | {str(e)[:180]}"
+                    )
+                    actual_calls.append({
+                        "model": entry.id,
+                        "reason": "image_format_unsupported",
                         "detail": {"status": 400, "no_cooldown": True, "error": str(e)[:500]},
                     })
                     if override_id and not use_fallback and not switch_role:
