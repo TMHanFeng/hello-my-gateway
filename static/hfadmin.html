@@ -246,6 +246,19 @@ main { max-width: 1240px; margin: 0 auto; padding: 40px 24px 90px; }
 .grp-set-row input { margin-top:3px; }
 .grp-set-hint { display:block; font-size:12px; color:var(--muted); margin-top:2px; }
 .grp-note { font-size:12px; color:var(--muted); margin:10px 0 14px; line-height:1.7; }
+/* v2.22.2 分组管理：设置弹窗内调整分组名称与展示顺序（模型管理/模型池两列同构） */
+.grp-mgmt-head { font-size:13px; font-weight:650; margin:14px 0 2px; }
+.grp-mgmt-title { font-size:11.5px; color:var(--muted); font-weight:600; margin:8px 0 2px; }
+.grp-mgmt-row { display:flex; align-items:center; gap:8px; padding:5px 2px; border-bottom:1px solid var(--line); font-size:12.5px; }
+.grp-mgmt-row:last-child { border-bottom:none; }
+.grp-mgmt-ops { display:inline-flex; gap:3px; flex:none; }
+.grp-mgmt-ops button { border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer; font-size:11px; line-height:1.5; padding:1px 8px; border-radius:6px; }
+.grp-mgmt-ops button:hover:not(:disabled) { color:var(--teal); border-color:var(--teal); }
+.grp-mgmt-ops button:disabled { opacity:.35; cursor:default; }
+.grp-mgmt-name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer; }
+.grp-mgmt-name:hover { color:var(--teal); }
+.grp-mgmt-count { font-size:11px; font-family:var(--mono); color:var(--muted); flex:none; }
+.grp-mgmt-empty { font-size:12px; color:var(--muted); padding:6px 2px; }
 .gs-seg { display:inline-flex; gap:4px; flex-wrap:wrap; }
 .gs-seg button { padding:5px 12px; font-size:12px; border-radius:8px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer; }
 .gs-seg button.active { background:var(--teal); border-color:var(--teal); color:#fff; font-weight:600; }
@@ -1145,7 +1158,7 @@ select { max-width: 100%; }
         <label class="opt"><input type="checkbox" name="json_output" id="f-json-output"><span><b>支持 JSON 格式输出</b>请求带 response_format(json) 时只路由到勾选的模型</span></label>
         <label class="opt"><input type="checkbox" name="smart_estimate" id="f-smart-estimate" onchange="onSmartToggle()"><span><b>智能估算超时</b>按 token 量动态计算总超时，忽略手动秒数</span></label>
         <label class="opt"><input type="checkbox" name="headroom" id="f-headroom"><span><b>Headroom 上下文压缩</b>实验性选配：该模型接单时自动压缩出站大块工具输出省 token（服务端需装 headroom-ai，未装自动旁路）</span></label>
-        <label class="opt" style="position:relative;padding-right:36px"><input type="checkbox" name="cost_enabled" id="f-cost-enabled"><span><b>缓存 Token 计费统计</b>记录该模型调用的缓存命中 / 未命中 / 输出 token，用量统计卡片出现「预估费用」入口，可自定义三者价格与高峰期时段</span><button type="button" class="cost-gear" title="直接打开设置与计费界面：配置单价与高峰期分段计价" onclick="openCostSettings(event)">⚙</button></label>
+        <label class="opt" style="position:relative;padding-right:36px"><input type="checkbox" name="cost_enabled" id="f-cost-enabled"><span><b>缓存 Token 计费统计</b>记录该模型调用的缓存命中 / 未命中 / 输出 token，用量统计卡片出现「预估费用」入口（付费模型固定显示该入口），可自定义三者价格与高峰期时段</span><button type="button" class="cost-gear" title="直接打开设置与计费界面：配置单价与高峰期分段计价" onclick="openCostSettings(event)">⚙</button></label>
       </div>
       <div id="smart-live" class="hidden" style="font-size:12px;color:var(--muted);margin-bottom:13px;line-height:1.6"></div>
       <div class="fg" id="reasoning-map-fg"><label>思考映射 reasoning_map（JSON，可选）：统一档位 off/minimal/low/medium/high/max → 透传上游的请求体片段；留空 = 不注入（embedding/rerank 模型不适用）</label><textarea name="reasoning_map" rows="5" placeholder='{"off": {"thinking": {"type": "disabled"}}, "medium": {"thinking": {"type": "enabled"}}, "max": {"thinking": {"type": "enabled"}}}'></textarea><div id="reasoning-probe-strip" style="margin-top:6px"></div></div>
@@ -2980,6 +2993,8 @@ function grpOpenSettings() {
           <span>启用「模型管理」分组收纳<span class="grp-set-hint">供应商卡片按自定义分组折叠展示；跨组拖拽即改变归属，全局排序照常持久化</span></span></label>
         <label class="grp-set-row"><input type="checkbox" id="grp-set-pools">
           <span>启用「模型池」分组收纳<span class="grp-set-hint">池卡片按自定义分组折叠展示（auto 池与兜底池固定在分组区外首尾）；跨组拖拽即改变归属</span></span></label>
+        <div class="grp-mgmt-head">分组名称与展示顺序<span class="grp-set-hint">↑↓ 调整展示顺序、点击名称重命名——改动即时同步到「模型管理」与「模型池」两页</span></div>
+        <div id="grp-mgmt"></div>
         <div class="grp-note">分组数据保存在本浏览器（localStorage），不影响调用、配额与后端排序持久化。「📊 分组查看」在用量统计页随时可用。</div>
         <div style="text-align:right"><button class="btn btn-ghost btn-sm" onclick="document.getElementById('grp-settings-mask').style.display='none'">关闭</button></div>
       </div>`;
@@ -2991,6 +3006,7 @@ function grpOpenSettings() {
   const s = grpSettings();
   document.getElementById('grp-set-models').checked = s.models;
   document.getElementById('grp-set-pools').checked = s.pools;
+  grpMgmtRender();
   mask.style.display = 'flex';
 }
 function grpSetToggle(key, val) {
@@ -2998,6 +3014,38 @@ function grpSetToggle(key, val) {
   d.settings = Object.assign({ models: false, pools: false }, d.settings || {});
   d.settings[key] = val; grpSave(d);
   loadModels(); loadPools();
+}
+
+/* v2.22.2 分组管理：设置弹窗内调整分组名称与展示顺序——↑↓ 换位即改 grpWrapHtml 渲染序，
+   点击名称重命名（复用主页面 grpRename），每次改动 grpSave 镜像服务端并重渲两页 */
+const GRP_MGMT_KINDS = [['providerGroups', '模型管理'], ['poolGroups', '模型池']];
+function grpMgmtRender() {
+  const box = document.getElementById('grp-mgmt');
+  if (!box) return;
+  box.innerHTML = GRP_MGMT_KINDS.map(([kind, label]) => {
+    const gs = grpData()[kind] || [];   // 只读展示：不落空数组（避免未启用收纳时打开弹窗就写服务端）
+    return `<div class="grp-mgmt-title">「${label}」分组（${gs.length}）</div>` + (gs.length ? gs.map((g, i) => `
+      <div class="grp-mgmt-row">
+        <span class="grp-mgmt-ops">
+          <button title="上移（展示顺序前移）"${i === 0 ? ' disabled' : ''} onclick="grpMgmtMove('${kind}','${esc(g.id)}',-1)">↑</button>
+          <button title="下移（展示顺序后移）"${i === gs.length - 1 ? ' disabled' : ''} onclick="grpMgmtMove('${kind}','${esc(g.id)}',1)">↓</button>
+        </span>
+        <span class="grp-mgmt-name" title="点击重命名" onclick="grpMgmtRename('${kind}','${esc(g.id)}')">${esc(g.name)}</span>
+        <span class="grp-mgmt-count">${(g.members || []).length} 成员</span>
+      </div>`).join('') : '<div class="grp-mgmt-empty">暂无分组——启用收纳后点卡片 📂 创建</div>');
+  }).join('');
+}
+function grpMgmtMove(kind, gid, dir) {
+  const d = grpData(); const gs = d[kind];
+  if (!Array.isArray(gs)) return;
+  const i = gs.findIndex(x => x.id === gid); const j = i + dir;
+  if (i < 0 || j < 0 || j >= gs.length) return;
+  [gs[i], gs[j]] = [gs[j], gs[i]];
+  grpSave(d); grpMgmtRender(); loadModels(); loadPools();
+}
+function grpMgmtRename(kind, gid) {
+  grpRename(kind, gid);   // 复用主页面重命名（prompt 校验 + 保存 + 重渲两页）
+  grpMgmtRender();
 }
 
 /* #39 用量分组查看：维度（供应商/模型/模型池/用户Key）× 口径（Token/次数）× 时间段（今日/近7天/近30天） */
@@ -3198,8 +3246,8 @@ async function loadStats() {
       : windowModel ? `<span class="badge b-5h" title="每日 ${m.refresh_time} 刷新窗口">${m.refresh_time}窗口</span>`
       : '<span class="badge b-ghost">每日</span>';
     const freeBadge = m.is_free ? '<span class="badge b-free">免费</span>' : '<span class="badge b-paid">付费</span>';
-    // 缓存计费预估入口：仅勾选了 cost_enabled 的模型显示（点击打开费用弹窗，价格/高峰期在其内配置）
-    const costBtn = m.cost_enabled
+    // 缓存计费预估入口：付费模型恒显示（v2.22.1 起付费默认启用计费统计；未勾选时弹窗明细区有开启提示），免费模型勾选 cost_enabled 才显示
+    const costBtn = (m.cost_enabled || !m.is_free)
       ? '<button type="button" class="badge b-cost" data-mid="' + esc(m.id) + '" onclick="showCostEst(this.dataset.mid)" title="缓存命中/未命中/输出 token 明细与费用预估">💰 预估费用</button>'
       : '';
     let refresh = m.token_type === 'one_time' ? '不刷新'
@@ -3511,7 +3559,8 @@ function paidTitle(x) {
     + (x._peak ? '；该模型启用了高峰分段计价，高峰部分未计入本排序（明细见「💰 预估费用」弹窗）' : '');
 }
 function paidCostBtn(x) {
-  return x.m.cost_enabled
+  // 付费视图全为付费模型 → 恒显示（未勾选计费统计时点开弹窗可配置单价，明细区提示需勾选后才记账）
+  return (x.m.cost_enabled || !x.m.is_free)
     ? '<button type="button" class="badge b-cost" data-mid="' + esc(x.m.id) + '" onclick="showCostEst(this.dataset.mid)" title="缓存命中/未命中/输出 token 明细与费用预估">💰 预估费用</button>'
     : '';
 }
