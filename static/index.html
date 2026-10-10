@@ -111,7 +111,6 @@ body {
 .grp-set-hint { display:block; font-size:12px; color:var(--muted); margin-top:2px; }
 .grp-note { font-size:12px; color:var(--muted); margin:10px 0 14px; line-height:1.7; }
 /* v2.22.2 分组管理：设置弹窗内调整分组名称与展示顺序（模型管理/模型池两列同构） */
-.grp-mgmt-head { font-size:13px; font-weight:600; margin:14px 0 2px; }
 .grp-mgmt-title { font-size:11.5px; color:var(--muted); font-weight:600; margin:8px 0 2px; }
 .grp-mgmt-row { display:flex; align-items:center; gap:8px; padding:5px 2px; border-bottom:1px solid var(--line); font-size:12.5px; }
 .grp-mgmt-row:last-child { border-bottom:none; }
@@ -123,6 +122,10 @@ body {
 .grp-mgmt-name:hover { color:var(--teal); }
 .grp-mgmt-count { font-size:11px; font-family:var(--mono); color:var(--muted); flex:none; }
 .grp-mgmt-empty { font-size:12px; color:var(--muted); padding:6px 2px; }
+.grp-row-cog { margin-left:auto; flex:none; align-self:center; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer; font-size:11.5px; line-height:1.6; padding:2px 9px; border-radius:7px; }
+.grp-row-cog:hover, .grp-row-cog.open { color:var(--teal); border-color:var(--teal); }
+.grp-mgmt-box { border:1px dashed var(--line); border-radius:8px; padding:0 10px 2px; margin:-4px 0 8px; }
+.grp-mgmt-ops button.grp-mgmt-del:hover { color:var(--red); border-color:var(--red); }
 .gs-seg-row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:10px; font-size:12.5px; }
 .gs-seg-label { color:var(--muted); font-size:12px; min-width:40px; flex:none; }
 .gs-seg { display:inline-flex; gap:4px; flex-wrap:wrap; }
@@ -337,6 +340,16 @@ body {
 .stat-group-head .sg-drag:active { cursor: grabbing; }
 .stat-group.dragging { opacity: .4; }
 .stat-group-body { padding: 2px 12px 12px; }
+/* v2.22.3 外层系统组：按供应商/按模型池视图嵌进分组收纳的自定义组（组序=分组收纳序，组头显示组内今日 token） */
+.stat-ogroup { grid-column: 1 / -1; border: 1px dashed var(--line-hi); border-radius: 10px; background: rgba(255,255,255,.015); }
+.stat-ogroup-head { display: flex; align-items: center; gap: 8px; padding: 9px 12px; cursor: pointer; user-select: none; }
+.stat-ogroup-head .sog-caret { font-size: 11px; color: var(--muted); transition: transform .2s; }
+.stat-ogroup.collapsed .sog-caret { transform: rotate(-90deg); }
+.stat-ogroup.collapsed .stat-ogroup-body { display: none; }
+.stat-ogroup-head .sog-name { font-weight: 700; font-size: 13.5px; color: var(--text); }
+.stat-ogroup-head .sog-count { font-size: 11px; color: var(--muted); background: rgba(255,255,255,.06); border-radius: 8px; padding: 1px 7px; }
+.stat-ogroup-head .sog-total { font-size: 11.5px; color: var(--muted); font-family: var(--mono); }
+.stat-ogroup-body { padding: 4px 9px 9px; display: grid; grid-template-columns: 1fr; gap: 10px; }
 
 .num-big { font-family: var(--mono); font-weight: 600; font-size: 14px; }
 .chip { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-family: var(--mono); }
@@ -592,7 +605,7 @@ body {
 
   <div id="tab-stats" class="hidden">
     <div class="toolbar">
-      <div class="hint" title="按计费量=使用占比降序（分母=可用上限 k×上限）；按供应商/按模型池=分组展示，组头可折叠、⠿ 拖拽调序；按付费量=仅付费模型，有单价的按累计预估费用降序、未设单价的按累计 token 排在其后。">配额使用情况，每 5 秒自动刷新。配了刷新时间的模型按「当前窗口用量」统计与排序。</div>
+      <div class="hint" title="按计费量=使用占比降序（分母=可用上限 k×上限）；按供应商/按模型池=分组展示并嵌进「分组收纳」的系统组（外层组序与收纳一致、组头显示组内今日 token），内层组头可折叠、⠿ 拖拽调序；按付费量=仅付费模型，有单价的按累计预估费用降序、未设单价的按累计 token 排在其后。">配额使用情况，每 5 秒自动刷新。配了刷新时间的模型按「当前窗口用量」统计与排序。</div>
       <div class="btn-row" style="margin-left:auto">
         <button class="btn btn-sm btn-amber" id="stat-dim-billing" onclick="setStatDim('billing')">按计费量</button>
         <button class="btn btn-sm" id="stat-dim-provider" onclick="setStatDim('provider')">按供应商</button>
@@ -1811,11 +1824,13 @@ function grpOpenSettings() {
       <div class="grp-modal">
         <div class="grp-modal-title">⚙️ 分组收纳设置</div>
         <label class="grp-set-row"><input type="checkbox" id="grp-set-models">
-          <span>启用「模型管理」分组收纳<span class="grp-set-hint">供应商卡片按自定义分组折叠展示；跨组拖拽即改变归属，全局排序照常持久化</span></span></label>
+          <span>启用「模型管理」分组收纳<span class="grp-set-hint">供应商卡片按自定义分组折叠展示；跨组拖拽即改变归属，全局排序照常持久化</span></span>
+          <button type="button" class="grp-row-cog" data-kind="providerGroups" title="管理「模型管理」分组：排序 / 重命名 / 删除" onclick="event.preventDefault();grpMgmtToggle('providerGroups')">⚙️ 管理</button></label>
+        <div class="grp-mgmt-box" id="grp-mgmt-providerGroups" hidden></div>
         <label class="grp-set-row"><input type="checkbox" id="grp-set-pools">
-          <span>启用「模型池」分组收纳<span class="grp-set-hint">池卡片按自定义分组折叠展示（auto 池与兜底池固定在分组区外首尾）；跨组拖拽即改变归属</span></span></label>
-        <div class="grp-mgmt-head">分组名称与展示顺序<span class="grp-set-hint">↑↓ 调整展示顺序、点击名称重命名——改动即时同步到「模型管理」与「模型池」两页</span></div>
-        <div id="grp-mgmt"></div>
+          <span>启用「模型池」分组收纳<span class="grp-set-hint">池卡片按自定义分组折叠展示（auto 池与兜底池固定在分组区外首尾）；跨组拖拽即改变归属</span></span>
+          <button type="button" class="grp-row-cog" data-kind="poolGroups" title="管理「模型池」分组：排序 / 重命名 / 删除" onclick="event.preventDefault();grpMgmtToggle('poolGroups')">⚙️ 管理</button></label>
+        <div class="grp-mgmt-box" id="grp-mgmt-poolGroups" hidden></div>
         <div class="grp-note">分组数据保存在本浏览器（localStorage），不影响调用、配额与后端排序持久化。「📊 分组查看」在用量统计页随时可用。</div>
         <div style="text-align:right"><button class="btn btn-ghost btn-sm" onclick="document.getElementById('grp-settings-mask').style.display='none'">关闭</button></div>
       </div>`;
@@ -1837,24 +1852,34 @@ function grpSetToggle(key, val) {
   loadModels(); loadPools();
 }
 
-/* v2.22.2 分组管理：设置弹窗内调整分组名称与展示顺序——↑↓ 换位即改 grpWrapHtml 渲染序，
-   点击名称重命名（复用主页面 grpRename），每次改动 grpSave 镜像服务端并重渲两页 */
+/* v2.22.2 分组管理 / v2.22.4 每开关行「⚙️ 管理」入口+删除：点开关行右缘按钮展开该维度的分组列表——
+   ↑↓ 换位即改渲染序、点击名称重命名（复用主页面 grpRename）、🗑 删除分组（仅拆组：成员卡片回到未分组，
+   模型/池本身不动），每次改动 grpSave 镜像服务端并重渲两页；开关状态与分组数据独立，关收纳仍可管理删组 */
 const GRP_MGMT_KINDS = [['providerGroups', '模型管理'], ['poolGroups', '模型池']];
+let _grpMgmtOpen = '';
+function grpMgmtToggle(kind) {
+  _grpMgmtOpen = _grpMgmtOpen === kind ? '' : kind;
+  grpMgmtRender();
+}
 function grpMgmtRender() {
-  const box = document.getElementById('grp-mgmt');
-  if (!box) return;
-  box.innerHTML = GRP_MGMT_KINDS.map(([kind, label]) => {
+  document.querySelectorAll('.grp-row-cog').forEach(b => b.classList.toggle('open', b.dataset.kind === _grpMgmtOpen));
+  GRP_MGMT_KINDS.forEach(([kind, label]) => {
+    const box = document.getElementById('grp-mgmt-' + kind);
+    if (!box) return;
+    if (_grpMgmtOpen !== kind) { box.hidden = true; box.innerHTML = ''; return; }
     const gs = grpData()[kind] || [];   // 只读展示：不落空数组（避免未启用收纳时打开弹窗就写服务端）
-    return `<div class="grp-mgmt-title">「${label}」分组（${gs.length}）</div>` + (gs.length ? gs.map((g, i) => `
+    box.hidden = false;
+    box.innerHTML = `<div class="grp-mgmt-title">「${label}」分组（${gs.length}）</div>` + (gs.length ? gs.map((g, i) => `
       <div class="grp-mgmt-row">
         <span class="grp-mgmt-ops">
           <button title="上移（展示顺序前移）"${i === 0 ? ' disabled' : ''} onclick="grpMgmtMove('${kind}','${esc(g.id)}',-1)">↑</button>
           <button title="下移（展示顺序后移）"${i === gs.length - 1 ? ' disabled' : ''} onclick="grpMgmtMove('${kind}','${esc(g.id)}',1)">↓</button>
+          <button class="grp-mgmt-del" title="删除分组（成员卡片回到未分组，不影响模型/池本身）" onclick="grpMgmtDelete('${kind}','${esc(g.id)}')">🗑</button>
         </span>
         <span class="grp-mgmt-name" title="点击重命名" onclick="grpMgmtRename('${kind}','${esc(g.id)}')">${esc(g.name)}</span>
         <span class="grp-mgmt-count">${(g.members || []).length} 成员</span>
       </div>`).join('') : '<div class="grp-mgmt-empty">暂无分组——启用收纳后点卡片 📂 创建</div>');
-  }).join('');
+  });
 }
 function grpMgmtMove(kind, gid, dir) {
   const d = grpData(); const gs = d[kind];
@@ -1867,6 +1892,14 @@ function grpMgmtMove(kind, gid, dir) {
 function grpMgmtRename(kind, gid) {
   grpRename(kind, gid);   // 复用主页面重命名（prompt 校验 + 保存 + 重渲两页）
   grpMgmtRender();
+}
+function grpMgmtDelete(kind, gid) {
+  const d = grpData(); const gs = d[kind];
+  const g = Array.isArray(gs) ? gs.find(x => x.id === gid) : null;
+  if (!g) return;
+  if (!confirm(`删除分组「${g.name}」？组内 ${(g.members || []).length} 个成员卡片将回到未分组（模型/池本身不受影响）。`)) return;
+  d[kind] = gs.filter(x => x.id !== gid);
+  grpSave(d); grpMgmtRender(); loadModels(); loadPools();
 }
 
 /* #39 用量分组查看：维度（供应商/模型/模型池/用户Key）× 口径（Token/次数）× 时间段（今日/近7天/近30天） */
@@ -2182,6 +2215,7 @@ function statGrpOf(kind) {
   if (!d[kind] || typeof d[kind] !== 'object') d[kind] = { order: [], collapsed: {} };
   if (!Array.isArray(d[kind].order)) d[kind].order = [];
   if (!d[kind].collapsed || typeof d[kind].collapsed !== 'object') d[kind].collapsed = {};
+  if (!d[kind].ocollapsed || typeof d[kind].ocollapsed !== 'object') d[kind].ocollapsed = {};   // v2.22.3 外层系统组折叠态
   d[kind].kind = kind;   // 标记来源维度，statGrpSaveAll 按它合并
   return d[kind];
 }
@@ -2413,13 +2447,13 @@ function statRenderFlat(grid, items) {
     return;
   }
   const seen = new Set();
-  items.forEach((x, i) => { const el = statCardEnsure(prev, grid, x, i); el.style.order = i; seen.add(x.id); });
+  items.forEach((x, i) => { const el = statCardEnsure(prev, grid, x, i); el.style.order = i; seen.add(x.m.id); });
   Object.keys(prev).forEach(id => { if (!seen.has(id)) prev[id].remove(); });
 }
 
 /* 卡片增量：已有则逐字段更新，没有则落卡即设 fill 宽（v2.11.44 修既有 bug：增量新增的卡片宽度原无人设置） */
 function statCardEnsure(prev, body, x, i) {
-  let el = prev[x.id];
+  let el = prev[x.m.id];
   if (el) { statUpdateCard(el, x); return el; }
   const tmp = document.createElement('div');
   tmp.innerHTML = statCardHTML(x, i);
@@ -2493,6 +2527,12 @@ function statUpdateCard(el, x) {
 
 /* 按供应商/按模型池分组视图：组内=使用占比降序；组间序=拖拽持久化(gw_statgrp.order) > 组今日用量 > 名称；
    组头点击折叠（持久化）、⠿ 手柄拖拽调序。卡片复用平铺视图的增量更新。 */
+/* 按供应商/按模型池分组视图：组内=使用占比降序；组间序=拖拽持久化(gw_statgrp.order) > 组今日用量 > 名称；
+   组头点击折叠（持久化）、⠿ 手柄拖拽调序。卡片复用平铺视图的增量更新。
+   v2.22.3 外层系统组：内层组再按「分组收纳」的自定义组（providerGroups/poolGroups）嵌套——
+   外层序=ui_groups 数组序（与分组收纳设置/模型管理页联动，不提供拖拽），外层组头=组名+模型数+组内今日 token 合计；
+   未归入任何系统组的内层组落「未分组」垫底；无任何系统组时保持原平铺（不多套一层壳）。
+   v2.22.4 外层嵌套随「分组收纳」开关联动：对应开关关闭（或该维度已无分组）即不套系统组壳，只留内层组。 */
 function statRenderGrouped(grid, items) {
   if (!items.length) { grid.innerHTML = '<div class="hint">暂无模型。</div>'; return; }
   const st = statGrpOf(statDim);
@@ -2505,19 +2545,47 @@ function statRenderGrouped(grid, items) {
   });
   const pos = k => { const i = st.order.indexOf(k); return i === -1 ? 9999 : i; };
   groups.sort((a, b) => (pos(a.key) - pos(b.key)) || (b.total - a.total) || a.label.localeCompare(b.label));
+  /* 外层系统组定义：okey='o:'+收纳组 id；成员键=供应商 id（p:<id>）或池名（q:<name>）。
+     独立模型（i:<protocol>）与未入池（q:__none__）无成员键 → 恒落「未分组」外层。 */
+  const okind = statDim === 'provider' ? 'providerGroups' : 'poolGroups';
+  const outerOn = grpSettings()[statDim === 'provider' ? 'models' : 'pools'];   // v2.22.4：外层系统组随收纳开关，关闭即回内层平铺
+  const odefs = outerOn ? (grpData()[okind] || []) : [];
+  const outerOf = {};
+  odefs.forEach(g => (g.members || []).forEach(mm => { if (!outerOf[mm]) outerOf[mm] = 'o:' + g.id; }));
+  const hasOuter = odefs.length > 0;
+  const okeyOf = g => {
+    if (!hasOuter) return '';
+    const mk = (String(g.key).startsWith('p:') ? g.key.slice(2)
+      : (String(g.key).startsWith('q:') && g.key !== 'q:__none__') ? g.key.slice(2) : '');
+    return outerOf[mk] || 'o:__ungrouped__';
+  };
+  // 外层装配：按 ui_groups 序排系统组（未分组恒垫底），各系统组体内层按既定排序挂入
+  const outers = [], omap = {};
+  if (hasOuter) {
+    odefs.forEach((g, i) => { omap['o:' + g.id] = { okey: 'o:' + g.id, olabel: g.name, oi: i, groups: [], total: 0, count: 0 }; outers.push(omap['o:' + g.id]); });
+    omap['o:__ungrouped__'] = { okey: 'o:__ungrouped__', olabel: '未分组', oi: odefs.length, groups: [], total: 0, count: 0 };
+    outers.push(omap['o:__ungrouped__']);
+  }
+  groups.forEach(g => {
+    if (!hasOuter) return;
+    const o = omap[okeyOf(g)];
+    o.groups.push(g); o.total += g.total; o.count += g.items.length;
+  });
   const prev = {};
   [...grid.querySelectorAll('.stat-card')].forEach(el => { prev[el.dataset.modelId] = el; });
-  const seenCards = new Set(), seenKeys = new Set();
-  groups.forEach((g, gi) => {
-    let sec = grid.querySelector('.stat-group[data-gkey="' + CSS.escape(g.key) + '"]');
+  const seenCards = new Set(), seenKeys = new Set(), seenOkeys = new Set();
+  const renderInner = (g, gi, container) => {
+    let sec = container.querySelector(':scope > .stat-group[data-gkey="' + CSS.escape(g.key) + '"]')
+      || grid.querySelector('.stat-group[data-gkey="' + CSS.escape(g.key) + '"]');
     if (!sec) {
       sec = document.createElement('div');
       sec.className = 'stat-group';
       sec.dataset.gkey = g.key;
       sec.innerHTML = '<div class="stat-group-head" title="点击折叠 / 展开；⠿ 拖拽调整分组顺序"><span class="sg-caret">▼</span><span class="sg-name"></span><span class="sg-count"></span><span class="sg-total"></span><span class="sg-drag" title="拖拽调整分组顺序">⠿</span></div><div class="stat-group-body stats-grid"></div>';
-      grid.appendChild(sec);
       statGrpBind(sec);
     }
+    if (sec.parentElement !== container) container.appendChild(sec);   // 归属外层变化（收纳调整）：搬运
+    else if (hasOuter && container.children[gi] !== sec) container.insertBefore(sec, container.children[gi]);   // 同外层内调序
     if (!!st.collapsed[g.key] !== sec.classList.contains('collapsed')) sec.classList.toggle('collapsed', !!st.collapsed[g.key]);
     sec.style.order = gi;
     setStatTxt(sec, '.sg-name', g.label);
@@ -2525,16 +2593,46 @@ function statRenderGrouped(grid, items) {
     setStatTxt(sec, '.sg-total', '今日 ' + fmtTok(g.total) + ' tok');
     const body = sec.querySelector('.stat-group-body');
     g.items.forEach((x, i) => {
-      let el = prev[x.id];
+      let el = prev[x.m.id];
       if (el && el.parentElement !== body) body.appendChild(el);   // 归属组变化：搬运（入场动画重放一次，可接受）
       el = statCardEnsure(prev, body, x, i);
       el.style.order = i;
-      seenCards.add(x.id);
+      seenCards.add(x.m.id);
     });
     seenKeys.add(g.key);
-  });
+  };
+  if (!hasOuter) {
+    groups.forEach((g, gi) => renderInner(g, gi, grid));
+  } else {
+    outers.forEach(o => {
+      if (!o.groups.length) return;   // 空系统组不渲染（无模型的收纳组在统计页无意义）
+      let osec = grid.querySelector(':scope > .stat-ogroup[data-okey="' + CSS.escape(o.okey) + '"]');
+      if (!osec) {
+        osec = document.createElement('div');
+        osec.className = 'stat-ogroup';
+        osec.dataset.okey = o.okey;
+        osec.innerHTML = '<div class="stat-ogroup-head" title="分组收纳系统组：组序与「分组收纳」一致（在其设置弹窗中调整）；点击折叠 / 展开"><span class="sog-caret">▼</span><span class="sog-name"></span><span class="sog-count"></span><span class="sog-total"></span></div><div class="stat-ogroup-body"></div>';
+        osec.querySelector('.stat-ogroup-head').addEventListener('click', () => {
+          osec.classList.toggle('collapsed');
+          const st2 = statGrpOf(statDim);
+          st2.ocollapsed[osec.dataset.okey] = osec.classList.contains('collapsed');
+          statGrpSaveAll(st2);
+        });
+        grid.appendChild(osec);
+      }
+      if (!!st.ocollapsed[o.okey] !== osec.classList.contains('collapsed')) osec.classList.toggle('collapsed', !!st.ocollapsed[o.okey]);
+      osec.style.order = o.oi;
+      setStatTxt(osec, '.sog-name', o.olabel);
+      setStatTxt(osec, '.sog-count', o.count + ' 模型');
+      setStatTxt(osec, '.sog-total', '今日 ' + fmtTok(o.total) + ' tok');
+      const obody = osec.querySelector('.stat-ogroup-body');
+      o.groups.forEach((g, gi) => renderInner(g, gi, obody));
+      seenOkeys.add(o.okey);
+    });
+  }
   Object.keys(prev).forEach(id => { if (!seenCards.has(id)) prev[id].remove(); });
   grid.querySelectorAll('.stat-group').forEach(sec => { if (!seenKeys.has(sec.dataset.gkey)) sec.remove(); });
+  grid.querySelectorAll(':scope > .stat-ogroup').forEach(sec => { if (!seenOkeys.has(sec.dataset.okey)) sec.remove(); });
 }
 
 /* 分组区段交互：组头点击折叠（持久化 gkey）；只有 ⠿ 手柄可发起拖拽（防选中卡片文字误拖）；
@@ -2573,10 +2671,11 @@ function statGrpBind(sec) {
   sec.addEventListener('dragover', e => {
     e.preventDefault();
     if (!_statDragSrc || sec === _statDragSrc) return;
+    if (_statDragSrc.parentElement !== sec.parentElement) return;   // v2.22.3 嵌套模式：仅同外层系统组内调序（跨外层=改收纳归属，去分组收纳页操作）
     const box = sec.getBoundingClientRect();
-    const grid = document.getElementById('stats-grid');
-    if (e.clientY < box.top + box.height / 2) grid.insertBefore(_statDragSrc, sec);
-    else grid.insertBefore(_statDragSrc, sec.nextSibling);
+    const par = sec.parentElement;
+    if (e.clientY < box.top + box.height / 2) par.insertBefore(_statDragSrc, sec);
+    else par.insertBefore(_statDragSrc, sec.nextSibling);
   });
 }
 

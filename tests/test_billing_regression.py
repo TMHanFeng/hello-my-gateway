@@ -2161,6 +2161,23 @@ def main():
               all(s in _idx for s in ("_priced", "total_tokens_all", "未设单价 · 按累计 token 排序"))
               and all(s in _hf for s in ("_priced", "total_tokens_all", "未设单价 · 按累计 token 排序")), None)
 
+        # ===== T37（v2.16.8 自 hellonew v2.22.3/v2.22.4 回移）：分组管理入口改版 + 统计外层系统组嵌套 =====
+        check("T37a 双面板开关行⚙️管理入口在位(每行cog+维度管理盒+🗑删除+confirm确认)",
+              all(s in _idx for s in ("grp-row-cog", "grpMgmtToggle", "grpMgmtDelete", "grpMgmtRename",
+                                      "grp-mgmt-providerGroups", "grp-mgmt-poolGroups", "grp-mgmt-del", "confirm("))
+              and all(s in _hf for s in ("grp-row-cog", "grpMgmtToggle", "grpMgmtDelete", "grpMgmtRename",
+                                         "grp-mgmt-providerGroups", "grp-mgmt-poolGroups", "grp-mgmt-del", "confirm(")), None)
+        check("T37b 统计外层系统组随收纳开关联动(outerOn门) + 嵌套元素在位(stat-ogroup/ocollapsed/未分组垫底)",
+              all(s in _idx for s in ("const outerOn = grpSettings()[statDim === 'provider' ? 'models' : 'pools'];",
+                                      "const odefs = outerOn ? (grpData()[okind] || []) : [];",
+                                      "stat-ogroup", "ocollapsed", "o:__ungrouped__", "stat-ogroup-body", "sog-total"))
+              and all(s in _hf for s in ("const outerOn = grpSettings()[statDim === 'provider' ? 'models' : 'pools'];",
+                                         "const odefs = outerOn ? (grpData()[okind] || []) : [];",
+                                         "stat-ogroup", "ocollapsed", "o:__ungrouped__", "stat-ogroup-body", "sog-total")), None)
+        check("T37c index统计卡片增量键修正为x.m.id(v2.22.0起x.id致5s整卡重建闪屏)",
+              "prev[x.id]" not in _idx and "seen.add(x.id)" not in _idx
+              and "statCardEnsure(prev, grid, x, i); el.style.order = i; seen.add(x.m.id)" in _idx, None)
+
     finally:
         try:
             deep_clean()
