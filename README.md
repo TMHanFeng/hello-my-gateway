@@ -90,7 +90,7 @@ data/ 运行时数据（gateway.db、探测缓存、dev pid），与代码隔离
 
 | 🧠 统一思考控制 | 🧪 计费回归安全网 | 📐 智能估算超时 |
 |:---|:---|:---|
-| `reasoning_effort` 六档 → 按模型 `reasoning_map` 换算上游思考参数；思考内容统一回传 `reasoning_content` / `thinking` | 238 断言计费回归套件（`test_billing_regression.py`）：流式/非流式/一次性/RPM 触顶/安全阀/并发入账零丢失，任何改动先跑套件再上线 | `smart_estimate` 模型按 token 量动态计算超时（吞吐 EMA 校准），样本不足自动回退固定值 |
+| `reasoning_effort` 六档 → 按模型 `reasoning_map` 换算上游思考参数；思考内容统一回传 `reasoning_content` / `thinking` | 248 断言计费回归套件（`test_billing_regression.py`）：流式/非流式/一次性/RPM 触顶/安全阀/并发入账零丢失，任何改动先跑套件再上线 | `smart_estimate` 模型按 token 量动态计算超时（吞吐 EMA 校准），样本不足自动回退固定值 |
 
 | 📡 Embedding / Rerank | 🔑 用户密钥管理 | 📄 JSON 输出路由 |
 |:---|:---|:---|
@@ -171,7 +171,7 @@ python -m app.main
 >
 > 💡 **Ubuntu / Linux**：`python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt && python3 -m app.main`，或直接 `./start_gateway.sh`（自动选 venv/系统解释器；停止 `./stop_gateway.sh`）。代码本身跨平台：运行时目录（data/ logs/ backup/）首次启动自动创建，路径处理与日志滚动均适配 POSIX 文件系统。回归套件同样可在 Linux 运行：`python tests/test_billing_regression.py`。
 >
-> 🧪 **改动计费相关代码后**：`python tests/test_billing_regression.py` 运行 238 断言计费回归套件（自动在 8651 起隔离实例 + mock 上游，不触碰生产端口），全绿再上线。
+> 🧪 **改动计费相关代码后**：`python tests/test_billing_regression.py` 运行 248 断言计费回归套件（自动在 8678 起隔离实例 + mock 上游，不触碰生产端口），全绿再上线。
 
 ---
 
@@ -219,7 +219,7 @@ hello-my-gateway/
 │   ├── index.html                # 传统管理后台（/admin）
 │   └── hfadmin.html              # 科技感管理面板（/hfadmin）
 ├── tests/
-│   └── test_billing_regression.py # 计费回归套件（238 断言，隔离实例 + mock 上游）
+│   └── test_billing_regression.py # 计费回归套件（248 断言，隔离实例 + mock 上游）
 ├── start_gateway.cmd             # Windows 启动入口（自动选解释器，幂等）
 ├── stop_gateway.cmd              # 停止入口（身份核验，只停本仓库网关）
 ├── start_gateway.sh              # Linux/macOS 启动入口（语义同 .cmd：选解释器 + 已运行自检）
@@ -644,7 +644,7 @@ SQLite（`gateway.db`）持久化以下表：
 
 ### 最新
 
-### 最新
+**`v2.16.6`** — **用量统计四视图重构 + 四项体验修正（自 hellonew v2.22.0/v2.22.1 回移）**：①统计页「计费量/调用次数/Token 用量」三选项改为「**按计费量/按供应商/按模型池/按付费量**」四视图（双面板同构）。按计费量=使用占比降序（分母=可用上限 k×上限，与卡片红/橙判定同源；并列按当日用量，未设限额垫底、余额返还制无上限视为已满排前）；按供应商/按模型池=分组展示（`provider_id`→/admin/providers 解析显示名，独立直连模型按协议归「独立模型」组；池取第一个收录该模型的全局池、用户专属池不参与、未入池单列），组头可折叠+⠿ 拖拽调序，均持久化 `localStorage.gw_statgrp`（**按维度合并写回**，provider/pool 两套互不覆盖，双面板共享），组内=计费量口径、组间默认=组今日用量降序（拖拽序优先）；按付费量=仅付费模型，有单价的按累计预估费用=（命中×价+未命中×价+输出×价）/1M 降序在前（平峰口径，高峰分段卡片注明仅费用弹窗计），未设单价按累计 token 垫后。②后端 /stats 扩展（+18 行纯增量，不动计费入账热路径）：`get_stats_snapshot` 新增 lifetime（model_daily_stats 全历史 SUM 次数/token）与 cache_totals（model_cache_stats 全历史 SUM 命中/未命中/输出）两聚合；get_stats 每模型透出 `total_requests_all / total_tokens_all / cost_tokens{calls,hit,miss,out} + provider_id`（原 `provider` 字段是协议名，供应商分组必需 provider_id）。③旧「调用次数/Token 用量」平铺视图移除（📊 分组查看弹窗兜底聚合口径）；卡片增量刷新完整保留（不闪屏、进度条过渡）；loadStats 加 `_statLoadSeq` 序号守卫（5s 定时器与切视图并发防错形卡片串形）；切视图清空网格重建（卡片形状不同）。四个实施坑随补丁原样带入：/stats 必须透出 provider_id（否则全落「独立模型」组）/持久化按维度合并写回/HTML5 拖拽 target 恒为可拖元素本身、手柄判定须 mousedown 打 dragOk 标记/渲染序号守卫。④**四项体验修正**：统计页提示语缩回一行（四视图口径挪悬停 title）、节省统计/手动刷新并入按钮行整簇贴右；「收费标注」切到付费自动勾选「缓存 Token 计费统计」+ 编辑付费模型且 config 从未写过该字段（undefined）时回填默认勾选（默认打开、显式关闭优先；该开关仅 hfadmin 表单有）；移除「不发 stream_options」表单选项三处（勾选框/编辑回填/保存提交，后端字段与注入逻辑保留——本仓 config 实测零模型勾选，行为不变）；新建模型两入口（添加模型/在供应商下添加）默认勾选「支持 JSON 格式输出」（编辑仍按已存值回填，回填更晚执行天然覆盖）。⑤回归 **244→248** 断言全绿（T36 四项：stats 累计口径全模型透出/cost_tokens=T26 精确累计 3次·命中80·未命中220·输出99/双面板四视图元素在位+旧维度按钮移除/付费排序口径在位）；双面板内联 JS node 语法检查过、f-nso 零残留。顺带修复：README「### 最新」标题在 v2.16.5 重复两行、回归提示仍写 8651（v2.16.5 已改 8678）。生效说明：后端字段需重启网关；面板刷新即见。
 
 **`v2.16.5`** — **图片 MIME 归一化 + 图片格式不支持改判可切换（书生 image/jpg 同款根治，自 hellonew v2.20.1 回移）**：①**根因**：客户端内联 base64 图片 MIME 写成非标准 `image/jpg`（标准为 `image/jpeg`），`AnthropicProvider._convert_content` 原样透传给严格校验的 Anthropic 兼容上游（书生 `/v1/messages`）→ 400 `invalid_request_error`；该报错体命中 #30「确定性请求缺陷」分类 → 不冷却不切换不走兜底池直接透传。②**修复一（归一化）**：`format_adapter.normalize_image_media_type`（`image/jpg`→`image/jpeg`，空值缺省 `image/png`，大小写/空白容错）接入两个协议转换出口——`anthropic_to_openai` 与 `AnthropicProvider._convert_content`（客户端直发 Anthropic 图片块分支浅拷贝改写不动原请求对象）。③**修复二（改判可切换）**：`pool.py` 新增 `_is_image_unsupported_error`（"image"+"not supported"），**置于缺陷分类之前判定**（同含 `invalid_request_error` 否则被截胡）——非流式/流式两路径统一改判：不冷却换下一候选直至兜底池，整链失败才借道透传原文，决策标签 `image_format_unsupported`；真缺陷类（InvalidParameter 等）行为不变（T15 全绿）。④回归 238→244 断言全绿（T35 六项：MIME 归一化/两出口改写且不动原对象/兜底池接住 200+决策标签/整链失败透传原文）。⑤回归基建：回归端口 8651→8678 + 预清理安全化（先杀后复扫，外部进程占用报错中止不误杀——2026-10-09 实证无差别强杀 TV 助手 node 代理后被守护重占致断言连挂）。生效说明：需**重启网关**。
 

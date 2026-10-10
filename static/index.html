@@ -272,6 +272,7 @@ body {
 
 /* ── 统计 ── */
 .stats-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+#tab-stats .btn-row .btn-sm { white-space: nowrap; }   /* 四视图按钮 5 字不换行 */
 .stat-card {
   background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
   padding: 18px 20px; position: relative; overflow: hidden;
@@ -310,6 +311,19 @@ body {
 .stat-refresh { font-size: 11px; color: var(--muted); font-family: var(--mono); }
 /* 并发负载小字（v2.11.44，仅 max_concurrency>0 的模型显示） */
 .stat-load { font-size: 11px; color: var(--muted); font-family: var(--mono); }
+/* 用量统计四视图：按供应商/按模型池分组（组头折叠 + ⠿ 拖拽调序，样式对齐模型页 grp-section） */
+.stat-group { grid-column: 1 / -1; border: 1px solid var(--line); border-radius: 10px; background: rgba(255,255,255,.02); }
+.stat-group-head { display: flex; align-items: center; gap: 8px; padding: 9px 12px; cursor: pointer; user-select: none; }
+.stat-group-head .sg-caret { font-size: 11px; color: var(--muted); transition: transform .2s; }
+.stat-group.collapsed .sg-caret { transform: rotate(-90deg); }
+.stat-group.collapsed .stat-group-body { display: none; }
+.stat-group-head .sg-name { font-weight: 600; font-size: 13px; color: var(--text); }
+.stat-group-head .sg-count { font-size: 11px; color: var(--muted); background: rgba(255,255,255,.06); border-radius: 8px; padding: 1px 7px; }
+.stat-group-head .sg-total { font-size: 11.5px; color: var(--muted); font-family: var(--mono); }
+.stat-group-head .sg-drag { margin-left: auto; cursor: grab; color: var(--muted); font-size: 14px; padding: 0 4px; letter-spacing: 1px; }
+.stat-group-head .sg-drag:active { cursor: grabbing; }
+.stat-group.dragging { opacity: .4; }
+.stat-group-body { padding: 2px 12px 12px; }
 
 .num-big { font-family: var(--mono); font-weight: 600; font-size: 14px; }
 .chip { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-family: var(--mono); }
@@ -565,15 +579,16 @@ body {
 
   <div id="tab-stats" class="hidden">
     <div class="toolbar">
-      <div class="hint">各模型配额使用情况，每 5 秒自动刷新。配了刷新时间的模型按「当前窗口用量」统计与排序，小字为自然日用量。</div>
+      <div class="hint" title="按计费量=使用占比降序（分母=可用上限 k×上限）；按供应商/按模型池=分组展示，组头可折叠、⠿ 拖拽调序；按付费量=仅付费模型，有单价的按累计预估费用降序、未设单价的按累计 token 排在其后。">配额使用情况，每 5 秒自动刷新。配了刷新时间的模型按「当前窗口用量」统计与排序。</div>
       <div class="btn-row" style="margin-left:auto">
-        <button class="btn btn-sm btn-amber" id="stat-dim-billing" onclick="setStatDim('billing')">计费量</button>
-        <button class="btn btn-sm" id="stat-dim-requests" onclick="setStatDim('requests')">调用次数</button>
-        <button class="btn btn-sm" id="stat-dim-tokens" onclick="setStatDim('tokens')">Token 用量</button>
+        <button class="btn btn-sm btn-amber" id="stat-dim-billing" onclick="setStatDim('billing')">按计费量</button>
+        <button class="btn btn-sm" id="stat-dim-provider" onclick="setStatDim('provider')">按供应商</button>
+        <button class="btn btn-sm" id="stat-dim-pool" onclick="setStatDim('pool')">按模型池</button>
+        <button class="btn btn-sm" id="stat-dim-paid" onclick="setStatDim('paid')">按付费量</button>
         <button class="btn btn-ghost btn-sm" onclick="grpStatsOpen()">📊 分组查看</button>
-      </div>
         <button class="btn btn-ghost btn-sm" id="btn-hr-stats" onclick="showHeadroomStats()">🪴 节省统计</button>
         <button class="btn btn-ghost btn-sm" onclick="loadStats()">手动刷新</button>
+      </div>
     </div>
     <div id="stats-grid" class="stats-grid"></div>
   </div>
@@ -913,7 +928,6 @@ body {
       <div class="opt-grid">
         <label class="opt"><input type="checkbox" name="json_output" id="f-json-output"><span><b>支持 JSON 格式输出</b>请求带 response_format(json) 时只路由到勾选的模型</span></label>
         <label class="opt"><input type="checkbox" name="smart_estimate" id="f-smart-estimate" onchange="onSmartToggle()"><span><b>智能估算超时</b>按 token 量动态计算总超时，忽略手动秒数</span></label>
-        <label class="opt"><input type="checkbox" name="no_stream_options" id="f-nso"><span><b>不发 stream_options</b>本地 vllm 等不认时勾选，该流将无 usage 统计</span></label>
         <label class="opt"><input type="checkbox" name="headroom" id="f-headroom"><span><b>Headroom 上下文压缩</b>实验性选配：该模型接单时自动压缩出站大块工具输出省 token（服务端需装 headroom-ai，未装自动旁路）</span></label>
       </div>
       <div id="smart-live" class="hidden" style="font-size:12px;color:var(--muted);margin-bottom:13px;line-height:1.6"></div>
@@ -2079,15 +2093,69 @@ async function clearSingleMode(name) {
 }
 
 function fmtDur(sec){sec=Math.max(0,Math.floor(sec||0));var h=Math.floor(sec/3600),m=Math.floor((sec%3600)/60);return h>0?(h+'h '+m+'m'):(m+'m')}
-function setStatDim(d){statDim=d;['billing','requests','tokens'].forEach(x=>{document.getElementById('stat-dim-'+x).classList.toggle('btn-amber',x===d);document.getElementById('stat-dim-'+x).classList.toggle('btn-ghost',x!==d)});loadStats();}
+function setStatDim(d){statDim=d;['billing','provider','pool','paid'].forEach(x=>{document.getElementById('stat-dim-'+x).classList.toggle('btn-amber',x===d);document.getElementById('stat-dim-'+x).classList.toggle('btn-ghost',x!==d)});loadStats();}
+
+/* ── 四视图元数据（供应商名单/池成员/模型价格配置）：TTL 懒取，双面板互不影响 ── */
+let _statMeta = { providers: null, pools: null, models: null, tProv: 0, tPools: 0, tModels: 0 };
+async function statMeta(kind) {
+  const now = Date.now();
+  if (kind === 'providers') {
+    if (!_statMeta.providers || now - _statMeta.tProv > 30000) {
+      const d = await api('/admin/providers');
+      if (d) { _statMeta.providers = d.providers || []; _statMeta.tProv = now; }
+    }
+    return _statMeta.providers || [];
+  }
+  if (kind === 'pools') {
+    if (!_statMeta.pools || now - _statMeta.tPools > 30000) {
+      const d = await api('/admin/pools');
+      if (d) { _statMeta.pools = d.pools || {}; _statMeta.tPools = now; }
+    }
+    return _statMeta.pools || {};
+  }
+  if (!_statMeta.models || now - _statMeta.tModels > 30000) {
+    const d = await api('/admin/models');
+    if (d) { _statMeta.models = d.models || []; _statMeta.tModels = now; }
+  }
+  return _statMeta.models || [];
+}
+
+/* ── 分组视图持久化（localStorage，双面板同源共享）：order=组顺序（gkey），collapsed=折叠态 ── */
+const STAT_GRP_KEY = 'gw_statgrp';
+function statGrpAll() { try { return JSON.parse(localStorage.getItem(STAT_GRP_KEY)) || {}; } catch (e) { return {}; } }
+function statGrpSaveAll(st) {
+  // st 为带 kind 标记的维度子对象：按维度合并回整对象（provider/pool 两套状态互不覆盖）
+  const d = statGrpAll();
+  if (st && st.kind) { const c = {}; Object.keys(st).forEach(k => { if (k !== 'kind') c[k] = st[k]; }); d[st.kind] = c; }
+  localStorage.setItem(STAT_GRP_KEY, JSON.stringify(d));
+}
+function statGrpOf(kind) {
+  const d = statGrpAll();
+  if (!d[kind] || typeof d[kind] !== 'object') d[kind] = { order: [], collapsed: {} };
+  if (!Array.isArray(d[kind].order)) d[kind].order = [];
+  if (!d[kind].collapsed || typeof d[kind].collapsed !== 'object') d[kind].collapsed = {};
+  d[kind].kind = kind;   // 标记来源维度，statGrpSaveAll 按它合并
+  return d[kind];
+}
+function fmtTok(n) { n = n || 0; return n >= 1e8 ? (n / 1e8).toFixed(2) + '亿' : n >= 1e4 ? (n / 1e4).toFixed(1) + '万' : n.toLocaleString(); }
+
+let _statLoadSeq = 0;   // 加载序号：5s 定时器与手动切视图并发时，旧加载在渲染前自行丢弃（防错形卡片注入）
 async function loadStats() {
+  const seq = ++_statLoadSeq;
   const data = await api('/stats');
+  if (seq !== _statLoadSeq) return;
   if (!data) {
     const g = document.getElementById('stats-grid');
     if (g && !g.children.length) g.innerHTML = '<div class="hint">加载失败，等待自动重试…</div>';
     return;
   }
   const grid = document.getElementById('stats-grid');
+  // 分组/付费视图需要供应商名单、池成员、价格配置（TTL 内复用；取失败退空值，视图仍可渲染）
+  let provs = [], poolsCfg = {}, cfgModels = [];
+  if (statDim === 'provider' || statDim === 'pool' || statDim === 'paid') {
+    [provs, poolsCfg, cfgModels] = await Promise.all([statMeta('providers'), statMeta('pools'), statMeta('models')]);
+  if (seq !== _statLoadSeq) return;
+  }
   const items = data.models
     .map(m => ({
       ...m,
@@ -2098,19 +2166,9 @@ async function loadStats() {
       // 自定义刷新窗口（非默认/00:00/24:00）：配额窗口≠自然日，主显窗口用量，小字补自然日用量
       _windowModel: m.token_type === 'daily' && m.refresh_time && !['00:00', '0:00', '24:00'].includes(m.refresh_time.trim()),
     }))
-    .sort((a, b) => {
-      // 剩余百分比越少越靠前（按有效上限 k×limit 口径，安全阀收得越紧越靠前）；
-      // 不限量（未设限额）固定在最后；k=0（停用）剩余为 0 排最前
-      const rem = x => {
-        if (x._limit <= 0) return x._gift ? -Infinity : Infinity;
-        if (x._valve <= 0) return 100;
-        return Math.max(0, 100 - Math.min(100, (x._used || 0) / (x._limit * x._valve / 100) * 100));
-      };
-      return rem(a) - rem(b);
-    })
     .map((m, i) => {
     const dim = statDim;
-    const isBilling = dim === 'billing';
+    const isBilling = dim !== 'paid';   // 按计费量/按供应商/按模型池共用计费卡片口径（进度条/红橙态/百分比）；付费视图单独成卡
     let used = m._used;
     let limit = m._limit;
               const giftPosted = (() => { const p = ((m.refresh_time || '00:00') + ':00').split(':').map(Number); const n = new Date(); return n.getHours() * 60 + n.getMinutes() >= (p[0] || 0) * 60 + (p[1] || 0); })();
@@ -2193,6 +2251,61 @@ async function loadStats() {
     return { m, used, limit, unit, numsTitle, limitText, pct, cls, pctText, billing, typeBadge, freeBadge, refresh, mark, limitNote, loadText };
   });
 
+  /* ── 视图排序/过滤 ──
+     按计费量：使用占比（分母=可用上限 k×limit，与卡片红/橙判定同源）降序，未设限额垫底、gift 无上限视为已满；
+     按供应商/按模型池：组内同口径降序，分组交给 statRender（组间序=拖拽持久化 > 组今日用量）；
+     按付费量：仅付费模型——有单价的按累计预估费用降序在前，未设单价的按累计 token 排在其后。 */
+  const usagePctOf = x => {
+    if (x._limit <= 0) return x._gift ? 200 : -1;
+    if (x._valve <= 0) return 200;
+    return Math.min(999, (x._used || 0) / (x._limit * x._valve / 100) * 100);
+  };
+  const byUsageDesc = (a, b) => (usagePctOf(b) - usagePctOf(a))
+    || ((b._used || 0) - (a._used || 0)) || String(a.m.id).localeCompare(String(b.m.id));
+
+  if (statDim === 'paid') {
+    const cfgOf = id => (cfgModels || []).find(c => c.id === id) || {};
+    const paid = items.filter(x => !x.m.is_free).map(x => {
+      const cfg = cfgOf(x.m.id);
+      const p = cfg.cost_prices || {};
+      const priced = (p.hit > 0 || p.miss > 0 || p.out > 0);
+      const ct = x.m.cost_tokens || {};
+      const cost = ((ct.hit || 0) * (p.hit || 0) + (ct.miss || 0) * (p.miss || 0) + (ct.out || 0) * (p.out || 0)) / 1e6;
+      return { ...x, _priced: priced, _cost: cost, _priceCfg: p, _peak: !!(cfg.cost_peak && cfg.cost_peak.enabled) };
+    });
+    paid.sort((a, b) => {
+      if (a._priced !== b._priced) return a._priced ? -1 : 1;   // 有单价在前
+      if (a._priced) return (b._cost - a._cost)                 // 单价组：累计费用降序（0 费用按累计 token）
+        || ((b.m.total_tokens_all || 0) - (a.m.total_tokens_all || 0));
+      return ((b.m.total_tokens_all || 0) - (a.m.total_tokens_all || 0))   // 无单价组：累计 token 降序
+        || String(a.m.id).localeCompare(String(b.m.id));
+    });
+    statRender(grid, paid);
+    return;
+  }
+
+  if (statDim === 'provider' || statDim === 'pool') {
+    // 供应商组：provider_id → 供应商名；独立模型（直连无供应商）按协议归「独立模型」组。
+    // 模型池组：取第一个收录该模型的全局池（用户专属池 owner_key_id 不参与分组）；未入池单列一组。
+    const provName = pid => { const p = (provs || []).find(z => z.id === pid); return (p && p.name) || pid || ''; };
+    const poolOf = {};
+    Object.keys(poolsCfg || {}).forEach(pn => {
+      if (poolsCfg[pn].owner_key_id) return;
+      (poolsCfg[pn].model_ids || []).forEach(id => { if (!String(id).startsWith('pool:') && !poolOf[id]) poolOf[id] = pn; });
+    });
+    items.forEach(x => {
+      if (statDim === 'provider') {
+        const pid = x.m.provider_id || '';
+        x._gkey = pid ? 'p:' + pid : 'i:' + (x.m.provider || 'openai');
+        x._glabel = pid ? provName(pid) : '独立模型 · ' + (x.m.provider || 'openai');
+      } else {
+        const pn = poolOf[x.m.id];
+        x._gkey = pn ? 'q:' + pn : 'q:__none__';
+        x._glabel = pn || '未入池';
+      }
+    });
+  }
+  items.sort(byUsageDesc);
   statRender(grid, items);
 }
 
@@ -2227,99 +2340,270 @@ function statCardHTML(x, i) {
     </div>`;
 }
 
+let _statRenderedDim = null;   // 当前已渲染视图：切换视图时重建 DOM（卡片形状不同，防增量更新串形）
+let _statDragSrc = null;       // 分组视图拖拽中的组区段
+
 function statRender(grid, items) {
   grid.querySelector('.spinner')?.remove();
-  // 增量刷新：复用既有卡片 DOM（不闪屏、不重放入场动画）；顺序用 CSS order 表达；进度条宽度走过渡动画
-  const prev = {};
-  [...grid.querySelectorAll('.stat-card')].forEach(el => { prev[el.dataset.modelId] = el; });
-  if (!items.length) { grid.innerHTML = '<div class="hint">暂无模型。</div>'; return; }
-  if (!Object.keys(prev).length) {
-    grid.innerHTML = items.map((x, i) => statCardHTML(x, i)).join('');
-  } else {
-    const ids = new Set(items.map(x => x.id));
-    Object.keys(prev).forEach(id => { if (!ids.has(id)) { prev[id].remove(); delete prev[id]; } });
-    items.forEach((x, i) => {
-      let el = prev[x.id];
-      if (!el) {
-        const tmp = document.createElement('div');
-        tmp.innerHTML = statCardHTML(x, i);
-        el = tmp.firstElementChild;
-        // v2.11.44 修既有 bug：增量新增的卡片 fill 宽度原来无人设置（data-pct 已相同被后续轮次跳过）——落卡即设宽
-        const nf = el.querySelector('.stat-fill');
-        if (nf) nf.style.width = x.pct + '%';
-        grid.appendChild(el);
-        return;
-      }
-      el.style.order = i;
-      el.className = 'stat-card ' + x.cls;
-      setStatTxt(el, '.stat-id', x.id);
-      setStatTxt(el, '.stat-name', x.name + ' · ' + x.billing);
-      const bd = el.querySelector('.stat-badges');
-      if (bd && bd.innerHTML !== x.freeBadge + x.typeBadge) bd.innerHTML = x.freeBadge + x.typeBadge;
-      setStatTxt(el, '.stat-used', x.used.toLocaleString());
-      setStatTxt(el, '.stat-limit', x.limitText);
-      setStatTxt(el, '.stat-unit', x.unit);
-      const nums = el.querySelector('.stat-nums');
-      if (nums && nums.getAttribute('title') !== x.numsTitle) nums.setAttribute('title', x.numsTitle);
-      const fill = el.querySelector('.stat-fill');
-      if (fill && fill.dataset.pct !== String(x.pct)) { fill.dataset.pct = x.pct; fill.style.width = x.pct + '%'; }
-      // 安全阀红线/红区/小字注记：增量分支必须三态（增/改/删），否则改 k 后旧卡片标线不动
-      const mark = el.querySelector('.stat-mark');
-      if (x.mark != null) {
-        if (mark) {
-          if (mark.dataset.k !== String(x.mark)) { mark.dataset.k = x.mark; mark.style.left = 'calc(' + x.mark + '% - 1px)'; }
-        } else {
-          const d = document.createElement('div');
-          d.className = 'stat-mark'; d.dataset.k = x.mark; d.style.left = 'calc(' + x.mark + '% - 1px)';
-          el.querySelector('.stat-bar').prepend(d);
-        }
-        const rz = el.querySelector('.stat-redzone');
-        if (rz) { if (rz.dataset.k !== String(x.mark)) { rz.dataset.k = x.mark; rz.style.left = x.mark + '%'; } }
-        else {
-          const d2 = document.createElement('div');
-          d2.className = 'stat-redzone'; d2.dataset.k = x.mark; d2.style.left = x.mark + '%';
-          el.querySelector('.stat-bar').prepend(d2);
-        }
-      } else if (mark) {
-        mark.remove();
-        el.querySelector('.stat-redzone')?.remove();
-      }
-      const noteEl = el.querySelector('.stat-limit-note');
-      if (x.limitNote) {
-        if (noteEl) { if (noteEl.textContent !== x.limitNote) noteEl.textContent = x.limitNote; }
-        else {
-          const sp = document.createElement('span');
-          sp.className = 'stat-limit-note'; sp.textContent = x.limitNote;
-          const un = el.querySelector('.stat-unit');
-          if (un) un.after(sp); else el.querySelector('.stat-nums').appendChild(sp);
-        }
-      } else if (noteEl) noteEl.remove();
-      const pctEl = el.querySelector('.stat-pct');
-      if (pctEl && pctEl.textContent !== x.pctText) pctEl.textContent = x.pctText;
-      const rf = el.querySelector('.stat-refresh');
-      if (rf && rf.innerHTML !== x.refresh) rf.innerHTML = x.refresh;
-      // 并发负载小字：三态（增/改/删），仅 max_concurrency>0 的模型有
-      const loadEl = el.querySelector('.stat-load');
-      if (x.loadText) {
-        if (loadEl) { if (loadEl.textContent !== x.loadText) loadEl.textContent = x.loadText; }
-        else {
-          const sp = document.createElement('span');
-          sp.className = 'stat-load'; sp.textContent = x.loadText;
-          const pf = el.querySelector('.stat-pct');
-          if (pf) pf.after(sp); else el.querySelector('.stat-meta')?.prepend(sp);
-        }
-      } else if (loadEl) loadEl.remove();
-    });
-    return;
-  }
-  requestAnimationFrame(() => requestAnimationFrame(() => {
-    grid.querySelectorAll('.stat-fill').forEach(f => { f.style.width = f.dataset.pct + '%'; });
-  }));
+  if (_statRenderedDim !== statDim) { grid.innerHTML = ''; _statRenderedDim = statDim; }
+  if (statDim === 'paid') return statRenderPaid(grid, items);
+  if (statDim === 'provider' || statDim === 'pool') return statRenderGrouped(grid, items);
+  statRenderFlat(grid, items);
 }
 
-function setStatTxt(root, sel, txt) {
-  const n = root.querySelector(sel);
-  if (n && n.textContent !== txt) n.textContent = txt;
+/* 按计费量平铺视图（分组视图的卡片同款）：增量刷新复用既有卡片 DOM（不闪屏、不重放入场动画），
+   顺序用 CSS order 表达；进度条宽度走过渡动画 */
+function statRenderFlat(grid, items) {
+  if (!items.length) { grid.innerHTML = '<div class="hint">暂无模型。</div>'; return; }
+  const prev = {};
+  [...grid.querySelectorAll('.stat-card')].forEach(el => { prev[el.dataset.modelId] = el; });
+  if (!Object.keys(prev).length) {
+    grid.innerHTML = items.map((x, i) => statCardHTML(x, i)).join('');
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      grid.querySelectorAll('.stat-fill').forEach(f => { f.style.width = f.dataset.pct + '%'; });
+    }));
+    return;
+  }
+  const seen = new Set();
+  items.forEach((x, i) => { const el = statCardEnsure(prev, grid, x, i); el.style.order = i; seen.add(x.id); });
+  Object.keys(prev).forEach(id => { if (!seen.has(id)) prev[id].remove(); });
+}
+
+/* 卡片增量：已有则逐字段更新，没有则落卡即设 fill 宽（v2.11.44 修既有 bug：增量新增的卡片宽度原无人设置） */
+function statCardEnsure(prev, body, x, i) {
+  let el = prev[x.id];
+  if (el) { statUpdateCard(el, x); return el; }
+  const tmp = document.createElement('div');
+  tmp.innerHTML = statCardHTML(x, i);
+  el = tmp.firstElementChild;
+  const nf = el.querySelector('.stat-fill');
+  if (nf) nf.style.width = x.pct + '%';
+  body.appendChild(el);
+  return el;
+}
+
+function statUpdateCard(el, x) {
+  el.className = 'stat-card ' + x.cls;
+  setStatTxt(el, '.stat-id', x.id);
+  setStatTxt(el, '.stat-name', x.name + ' · ' + x.billing);
+  const bd = el.querySelector('.stat-badges');
+  if (bd && bd.innerHTML !== x.freeBadge + x.typeBadge) bd.innerHTML = x.freeBadge + x.typeBadge;
+  setStatTxt(el, '.stat-used', x.used.toLocaleString());
+  setStatTxt(el, '.stat-limit', x.limitText);
+  setStatTxt(el, '.stat-unit', x.unit);
+  const nums = el.querySelector('.stat-nums');
+  if (nums && nums.getAttribute('title') !== x.numsTitle) nums.setAttribute('title', x.numsTitle);
+  const fill = el.querySelector('.stat-fill');
+  if (fill && fill.dataset.pct !== String(x.pct)) { fill.dataset.pct = x.pct; fill.style.width = x.pct + '%'; }
+  // 安全阀红线/红区/小字注记：增量分支必须三态（增/改/删），否则改 k 后旧卡片标线不动
+  const mark = el.querySelector('.stat-mark');
+  if (x.mark != null) {
+    if (mark) {
+      if (mark.dataset.k !== String(x.mark)) { mark.dataset.k = x.mark; mark.style.left = 'calc(' + x.mark + '% - 1px)'; }
+    } else {
+      const d = document.createElement('div');
+      d.className = 'stat-mark'; d.dataset.k = x.mark; d.style.left = 'calc(' + x.mark + '% - 1px)';
+      el.querySelector('.stat-bar').prepend(d);
+    }
+    const rz = el.querySelector('.stat-redzone');
+    if (rz) { if (rz.dataset.k !== String(x.mark)) { rz.dataset.k = x.mark; rz.style.left = x.mark + '%'; } }
+    else {
+      const d2 = document.createElement('div');
+      d2.className = 'stat-redzone'; d2.dataset.k = x.mark; d2.style.left = x.mark + '%';
+      el.querySelector('.stat-bar').prepend(d2);
+    }
+  } else if (mark) {
+    mark.remove();
+    el.querySelector('.stat-redzone')?.remove();
+  }
+  const noteEl = el.querySelector('.stat-limit-note');
+  if (x.limitNote) {
+    if (noteEl) { if (noteEl.textContent !== x.limitNote) noteEl.textContent = x.limitNote; }
+    else {
+      const sp = document.createElement('span');
+      sp.className = 'stat-limit-note'; sp.textContent = x.limitNote;
+      const un = el.querySelector('.stat-unit');
+      if (un) un.after(sp); else el.querySelector('.stat-nums').appendChild(sp);
+    }
+  } else if (noteEl) noteEl.remove();
+  const pctEl = el.querySelector('.stat-pct');
+  if (pctEl && pctEl.textContent !== x.pctText) pctEl.textContent = x.pctText;
+  const rf = el.querySelector('.stat-refresh');
+  if (rf && rf.innerHTML !== x.refresh) rf.innerHTML = x.refresh;
+  // 并发负载小字：三态（增/改/删），仅 max_concurrency>0 的模型有
+  const loadEl = el.querySelector('.stat-load');
+  if (x.loadText) {
+    if (loadEl) { if (loadEl.textContent !== x.loadText) loadEl.textContent = x.loadText; }
+    else {
+      const sp = document.createElement('span');
+      sp.className = 'stat-load'; sp.textContent = x.loadText;
+      const pf = el.querySelector('.stat-pct');
+      if (pf) pf.after(sp); else el.querySelector('.stat-meta')?.prepend(sp);
+    }
+  } else if (loadEl) loadEl.remove();
+}
+
+/* 按供应商/按模型池分组视图：组内=使用占比降序；组间序=拖拽持久化(gw_statgrp.order) > 组今日用量 > 名称；
+   组头点击折叠（持久化）、⠿ 手柄拖拽调序。卡片复用平铺视图的增量更新。 */
+function statRenderGrouped(grid, items) {
+  if (!items.length) { grid.innerHTML = '<div class="hint">暂无模型。</div>'; return; }
+  const st = statGrpOf(statDim);
+  const groups = [], gmap = {};
+  items.forEach(x => {
+    let g = gmap[x._gkey];
+    if (!g) { g = gmap[x._gkey] = { key: x._gkey, label: x._glabel, items: [], total: 0 }; groups.push(g); }
+    g.items.push(x);
+    g.total += (x.m.today_tokens || 0);
+  });
+  const pos = k => { const i = st.order.indexOf(k); return i === -1 ? 9999 : i; };
+  groups.sort((a, b) => (pos(a.key) - pos(b.key)) || (b.total - a.total) || a.label.localeCompare(b.label));
+  const prev = {};
+  [...grid.querySelectorAll('.stat-card')].forEach(el => { prev[el.dataset.modelId] = el; });
+  const seenCards = new Set(), seenKeys = new Set();
+  groups.forEach((g, gi) => {
+    let sec = grid.querySelector('.stat-group[data-gkey="' + CSS.escape(g.key) + '"]');
+    if (!sec) {
+      sec = document.createElement('div');
+      sec.className = 'stat-group';
+      sec.dataset.gkey = g.key;
+      sec.innerHTML = '<div class="stat-group-head" title="点击折叠 / 展开；⠿ 拖拽调整分组顺序"><span class="sg-caret">▼</span><span class="sg-name"></span><span class="sg-count"></span><span class="sg-total"></span><span class="sg-drag" title="拖拽调整分组顺序">⠿</span></div><div class="stat-group-body stats-grid"></div>';
+      grid.appendChild(sec);
+      statGrpBind(sec);
+    }
+    if (!!st.collapsed[g.key] !== sec.classList.contains('collapsed')) sec.classList.toggle('collapsed', !!st.collapsed[g.key]);
+    sec.style.order = gi;
+    setStatTxt(sec, '.sg-name', g.label);
+    setStatTxt(sec, '.sg-count', String(g.items.length));
+    setStatTxt(sec, '.sg-total', '今日 ' + fmtTok(g.total) + ' tok');
+    const body = sec.querySelector('.stat-group-body');
+    g.items.forEach((x, i) => {
+      let el = prev[x.id];
+      if (el && el.parentElement !== body) body.appendChild(el);   // 归属组变化：搬运（入场动画重放一次，可接受）
+      el = statCardEnsure(prev, body, x, i);
+      el.style.order = i;
+      seenCards.add(x.id);
+    });
+    seenKeys.add(g.key);
+  });
+  Object.keys(prev).forEach(id => { if (!seenCards.has(id)) prev[id].remove(); });
+  grid.querySelectorAll('.stat-group').forEach(sec => { if (!seenKeys.has(sec.dataset.gkey)) sec.remove(); });
+}
+
+/* 分组区段交互：组头点击折叠（持久化 gkey）；只有 ⠿ 手柄可发起拖拽（防选中卡片文字误拖）；
+   拖放为 DOM insertBefore 实时换位，dragend 立即回写 CSS order（布局跟 order 走，不等下轮刷新）并持久化 */
+function statGrpBind(sec) {
+  if (sec.dataset.dragBoundStat) return;
+  sec.dataset.dragBoundStat = '1';
+  sec.draggable = true;   // dragstart 的 target 恒为 draggable 元素本身，故以 mousedown 标记是否从 ⠿ 手柄发起
+  sec.querySelector('.stat-group-head').addEventListener('mousedown', e => {
+    sec.dataset.dragOk = e.target.closest('.sg-drag') ? '1' : '';
+  });
+  sec.querySelector('.stat-group-head').addEventListener('click', e => {
+    if (e.target.closest('.sg-drag')) return;
+    sec.classList.toggle('collapsed');
+    const st = statGrpOf(statDim);
+    st.collapsed[sec.dataset.gkey] = sec.classList.contains('collapsed');
+    statGrpSaveAll(st);
+  });
+  sec.addEventListener('dragstart', e => {
+    if (!sec.dataset.dragOk) { e.preventDefault(); return; }
+    delete sec.dataset.dragOk;
+    _statDragSrc = sec;
+    sec.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+  });
+  sec.addEventListener('dragend', () => {
+    sec.classList.remove('dragging');
+    _statDragSrc = null;
+    const grid = document.getElementById('stats-grid');
+    const secs = [...grid.querySelectorAll('.stat-group')];
+    secs.forEach((s2, i2) => { s2.style.order = i2; });
+    const st = statGrpOf(statDim);
+    st.order = secs.map(s2 => s2.dataset.gkey);
+    statGrpSaveAll(st);
+  });
+  sec.addEventListener('dragover', e => {
+    e.preventDefault();
+    if (!_statDragSrc || sec === _statDragSrc) return;
+    const box = sec.getBoundingClientRect();
+    const grid = document.getElementById('stats-grid');
+    if (e.clientY < box.top + box.height / 2) grid.insertBefore(_statDragSrc, sec);
+    else grid.insertBefore(_statDragSrc, sec.nextSibling);
+  });
+}
+
+/* 按付费量视图：仅付费模型。大数字=累计预估费用 ¥（平峰单价×累计缓存 token，高峰分段不计）或累计
+   token（未设单价）；条形=相对最大费用的比例（无上限语义，纯对比）。增量刷新同平铺视图口径。 */
+function paidBig(x) { return x._priced ? '¥' + x._cost.toFixed(4) : (x.m.total_tokens_all || 0).toLocaleString(); }
+function paidSub(x) {
+  if (!x._priced) return '未设单价 · 按累计 token 排序';
+  const p = x._priceCfg;
+  return '单价 命中 ' + p.hit + ' / 未命中 ' + p.miss + ' / 输出 ' + p.out + ' ¥/M' + (x._peak ? ' · 高峰未计入' : '');
+}
+function paidTitle(x) {
+  return '预估累计费用 =（缓存命中×单价 + 未命中×单价 + 输出×单价）/ 1M，按平峰单价计'
+    + (x._peak ? '；该模型启用了高峰分段计价，高峰部分未计入本排序（明细见 hfadmin 面板「预估费用」）' : '');
+}
+function statPaidCardHTML(x, i, pct) {
+  return `
+    <div class="stat-card" data-model-id="${esc(x.m.id)}" style="animation-delay:${Math.min(i * 45, 400)}ms;order:${i}">
+      <div class="stat-top">
+        <div>
+          <div class="stat-id">${esc(x.m.id)}</div>
+          <div class="stat-name">${esc(x.m.name)} · ${x.billing}</div>
+        </div>
+        <div class="stat-badges">${x.freeBadge}${x.typeBadge}</div>
+      </div>
+      <div class="stat-nums" title="${paidTitle(x)}">
+        <span class="stat-used">${paidBig(x)}</span>
+        <span class="stat-unit">${x._priced ? '元' : 'tokens'}</span>
+      </div>
+      <div class="stat-bar"><div class="stat-fill" data-pct="${pct}" style="width:0%"></div></div>
+      <div class="stat-meta">
+        <span class="stat-pct">${paidSub(x)}</span>
+        <span class="stat-refresh">累计 ${(x.m.total_tokens_all || 0).toLocaleString()} tok · ${(x.m.total_requests_all || 0).toLocaleString()} 次</span>
+      </div>
+    </div>`;
+}
+
+function statRenderPaid(grid, items) {
+  if (!items.length) { grid.innerHTML = '<div class="hint">没有付费模型——在模型编辑中把「免费/付费」标为付费的模型会出现在此视图。</div>'; return; }
+  const maxCost = Math.max(...items.filter(x => x._priced).map(x => x._cost), 0);
+  const prev = {};
+  [...grid.querySelectorAll('.stat-card')].forEach(el => { prev[el.dataset.modelId] = el; });
+  const seen = new Set();
+  items.forEach((x, i) => {
+    const pct = (x._priced && maxCost > 0) ? Math.max(2, Math.min(100, x._cost / maxCost * 100)) : 0;
+    let el = prev[x.m.id];
+    if (!el) {
+      const tmp = document.createElement('div');
+      tmp.innerHTML = statPaidCardHTML(x, i, pct);
+      el = tmp.firstElementChild;
+      const nf = el.querySelector('.stat-fill');
+      if (nf) nf.style.width = pct + '%';
+      grid.appendChild(el);
+    } else {
+      el.style.order = i;
+      el.className = 'stat-card';
+      setStatTxt(el, '.stat-id', x.m.id);
+      setStatTxt(el, '.stat-name', x.m.name + ' · ' + x.billing);
+      const bd = el.querySelector('.stat-badges');
+      if (bd && bd.innerHTML !== x.freeBadge + x.typeBadge) bd.innerHTML = x.freeBadge + x.typeBadge;
+      setStatTxt(el, '.stat-used', paidBig(x));
+      setStatTxt(el, '.stat-unit', x._priced ? '元' : 'tokens');
+      const nums = el.querySelector('.stat-nums');
+      if (nums && nums.getAttribute('title') !== paidTitle(x)) nums.setAttribute('title', paidTitle(x));
+      const fill = el.querySelector('.stat-fill');
+      if (fill && fill.dataset.pct !== String(pct)) { fill.dataset.pct = pct; fill.style.width = pct + '%'; }
+      setStatTxt(el, '.stat-pct', paidSub(x));
+      const note = '累计 ' + (x.m.total_tokens_all || 0).toLocaleString() + ' tok · ' + (x.m.total_requests_all || 0).toLocaleString() + ' 次';
+      const rf = el.querySelector('.stat-refresh');
+      if (rf && rf.textContent !== note) rf.textContent = note;
+      el.querySelectorAll('.stat-mark,.stat-redzone,.stat-limit-note,.stat-load').forEach(n => n.remove());
+    }
+    seen.add(x.m.id);
+  });
+  Object.keys(prev).forEach(id => { if (!seen.has(id)) prev[id].remove(); });
 }
 
 
@@ -2713,6 +2997,7 @@ function showAdd() {
   document.getElementById('modal-title').textContent = '添加模型';
   document.getElementById('mform').reset();
   document.getElementById('mform').gift_grant_cap.value = 5000000;
+  const _jdef = document.getElementById('f-json-output'); if (_jdef) _jdef.checked = true;   // 新建模型默认勾选 JSON 格式输出
   document.getElementById('f-model-id').disabled = false;
   renderReasoningStrip(null);
   populateProviderSelect('').then(() => { onBillingChange(); onProviderSelect(); });
@@ -2725,6 +3010,7 @@ async function showAddUnder(pid) {
   document.getElementById('modal-title').textContent = '在供应商下添加模型';
   document.getElementById('mform').reset();
   document.getElementById('mform').gift_grant_cap.value = 5000000;
+  const _jdef = document.getElementById('f-json-output'); if (_jdef) _jdef.checked = true;   // 新建模型默认勾选 JSON 格式输出
   document.getElementById('f-model-id').disabled = false;
   renderReasoningStrip(null);
   await populateProviderSelect(pid);
@@ -2982,7 +3268,6 @@ async function editModel(id) {
   f.tpm_limit.value = m.tpm_limit || 0; f.context_window.value = m.context_window || 0;
   f.timeout_seconds.value = (m.timeout_seconds == null ? 120 : m.timeout_seconds);
   const _se = document.getElementById('f-smart-estimate'); if (_se) _se.checked = !!m.smart_estimate;
-  const _nso = document.getElementById('f-nso'); if (_nso) _nso.checked = !!m.no_stream_options;
   const _hr = document.getElementById('f-headroom'); if (_hr) _hr.checked = !!m.headroom;
   hrSavedValue = !!m.headroom;   // 记住原值（停用 Headroom 插件期间保存模型不抹除该标记）
   f.max_concurrency.value = m.max_concurrency ?? 10; f.refresh_time.value = m.refresh_time || '';
@@ -3028,7 +3313,6 @@ async function submitModel(e) {
   body.is_free = body.is_free === 'true';
   body.json_output = document.getElementById('f-json-output') ? document.getElementById('f-json-output').checked : false;
   body.smart_estimate = document.getElementById('f-smart-estimate') ? document.getElementById('f-smart-estimate').checked : false;
-  body.no_stream_options = document.getElementById('f-nso') ? document.getElementById('f-nso').checked : false;
   body.headroom = hrMasterEnabled ? (document.getElementById('f-headroom') ? document.getElementById('f-headroom').checked : false) : hrSavedValue;   // 插件停用：保留原标记，不抹除
   // 自定义参数（extra_params）已废弃：显式提交空对象，避免 PUT 合并语义保留旧值
   body.extra_params = {};

@@ -2217,6 +2217,7 @@ class ModelPool:
                 "id": entry.id,
                 "name": entry.name,
                 "provider": entry.provider,
+                "provider_id": entry.provider_id,   # 按供应商分组视图用（entry.provider 是协议名，非供应商）
                 "token_type": entry.token_type,
                 "billing_mode": entry.billing_mode,
                 "is_free": entry.is_free,
@@ -2238,6 +2239,13 @@ class ModelPool:
             td = snap["stats"].get(entry.id, {}).get(today, {"request_count": 0, "total_tokens": 0})
             s["today_requests"] = td["request_count"]
             s["today_tokens"] = td["total_tokens"]
+            # 累计口径（按付费量视图排序用）：全历史次数/token + 缓存计费累计（单价在前端 cost_prices 配置）
+            lt = snap.get("lifetime", {}).get(entry.id) or {}
+            s["total_requests_all"] = int(lt.get("requests") or 0)
+            s["total_tokens_all"] = int(lt.get("tokens") or 0)
+            ct = snap.get("cache_totals", {}).get(entry.id) or {}
+            s["cost_tokens"] = {"calls": int(ct.get("calls") or 0), "hit": int(ct.get("hit") or 0),
+                                "miss": int(ct.get("miss") or 0), "out": int(ct.get("out") or 0)}
             if entry.token_type == "one_time":
                 state = snap["one_time"].get(entry.id)
                 if state:

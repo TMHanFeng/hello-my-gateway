@@ -2137,6 +2137,30 @@ def main():
         check("T35f 整链失败仍透传上游400原文", r.status_code == 400
               and "inline image type is not supported" in r.text, (r.status_code, r.text[:150]))
 
+        # ===== T36（v2.16.6 自 hellonew v2.22.0 回移）：用量统计四视图 /stats 累计口径 + 缓存计费聚合 + 双面板元素在位 =====
+        r = httpx.get(f"{BASE}/stats", headers=ADMIN, timeout=15)
+        _st36 = {m["id"]: m for m in (r.json().get("models") or [])}
+        _ec = _st36.get("zzbt/echo-cost", {})
+        check("T36a stats透出累计口径(全模型 total_tokens_all/total_requests_all，T26 模型累计>0)",
+              r.status_code == 200 and _st36
+              and all("total_tokens_all" in m and "total_requests_all" in m for m in _st36.values())
+              and (_ec.get("total_tokens_all") or 0) > 0 and (_ec.get("total_requests_all") or 0) > 0,
+              (r.status_code, _ec.get("total_tokens_all"), _ec.get("total_requests_all")))
+        check("T36b stats透出缓存计费聚合(cost_tokens=T26 累计 3次/命中80/未命中220/输出99)",
+              _ec.get("cost_tokens") == {"calls": 3, "hit": 80, "miss": 220, "out": 99}, _ec.get("cost_tokens"))
+        _idx = open(os.path.join(REPO, "static", "index.html"), encoding="utf-8").read()
+        _hf = open(os.path.join(REPO, "static", "hfadmin.html"), encoding="utf-8").read()
+        check("T36c 双面板四视图元素在位(四按钮/分组+付费渲染/拖拽持久化/旧维度按钮已移除)",
+              all(s in _idx for s in ("stat-dim-billing", "stat-dim-provider", "stat-dim-pool", "stat-dim-paid",
+                                      "statRenderGrouped", "statRenderPaid", "statGrpBind", "gw_statgrp"))
+              and all(s in _hf for s in ('data-dim="provider"', 'data-dim="pool"', 'data-dim="paid"',
+                                         "statRenderGrouped", "statRenderPaid", "statGrpBind"))
+              and "stat-dim-requests" not in _idx and "stat-dim-tokens" not in _idx
+              and 'data-dim="requests"' not in _hf and 'data-dim="tokens"' not in _hf, None)
+        check("T36d 付费视图排序口径在位(有单价按累计费用/未设单价按累计token垫后)",
+              all(s in _idx for s in ("_priced", "total_tokens_all", "未设单价 · 按累计 token 排序"))
+              and all(s in _hf for s in ("_priced", "total_tokens_all", "未设单价 · 按累计 token 排序")), None)
+
     finally:
         try:
             deep_clean()

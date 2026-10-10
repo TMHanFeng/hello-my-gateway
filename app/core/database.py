@@ -684,6 +684,8 @@ async def get_stats_snapshot(dates: list[str]) -> dict:
     - daily: token_usage 全表 + 跨窗口懒重置（与 get_daily_usage 同口径：
       last_reset_date != 逻辑日 的行 UPDATE used_tokens=0 并计 0，通常 0 行写）
     - stats: model_daily_stats WHERE date IN (...)（调用方传今/昨两天）
+    - lifetime: model_daily_stats 全历史 SUM（累计次数/累计 token，用量统计「按付费量」排序用）
+    - cache_totals: model_cache_stats 全历史 SUM（累计缓存命中/未命中/输出 token，费用估算基数）
     - one_time / rolling5h: 两张小状态表全量
     gift 的余额账本不进快照：get_gift_balance 的惰性补账/校准写 + 之后读 gift_state
     的"先结算后取值"顺序原样保留（pool.get_stats 对 gift 模型逐个结算）。"""
@@ -698,6 +700,11 @@ async def get_stats_snapshot(dates: list[str]) -> dict:
             dates)).fetchall()
         ot_rows = await (await db.execute("SELECT * FROM one_time_state")).fetchall()
         fh_rows = await (await db.execute("SELECT * FROM rolling5h_state")).fetchall()
+        lt_rows = await (await db.execute(
+            "SELECT model_name, SUM(request_count), SUM(total_tokens) FROM model_daily_stats GROUP BY model_name")).fetchall()
+        ct_rows = await (await db.execute(
+            "SELECT model_name, SUM(calls), SUM(hit_tokens), SUM(miss_tokens), SUM(out_tokens) "
+            "FROM model_cache_stats GROUP BY model_name")).fetchall()
         resets = []
         daily = {}
         for r in tu_rows:
@@ -720,6 +727,9 @@ async def get_stats_snapshot(dates: list[str]) -> dict:
         "stats": stats,
         "one_time": {r["model_name"]: dict(r) for r in ot_rows},
         "rolling5h": {r["model_name"]: dict(r) for r in fh_rows},
+        "lifetime": {r[0]: {"requests": int(r[1] or 0), "tokens": int(r[2] or 0)} for r in lt_rows},
+        "cache_totals": {r[0]: {"calls": int(r[1] or 0), "hit": int(r[2] or 0),
+                                "miss": int(r[3] or 0), "out": int(r[4] or 0)} for r in ct_rows},
     }
 
 
