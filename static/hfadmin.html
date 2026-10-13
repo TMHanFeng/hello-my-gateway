@@ -445,6 +445,10 @@ select { max-width: 100%; }
   box-shadow: var(--shadow-card);
   opacity: 0; transform: translateY(10px); animation: cardIn 420ms var(--ease-out) forwards;
 }
+/* 子池计费卡（v2.16.9 按模型池视图）：聚合卡与模型卡区分——虚线边框、淡紫底、无进度条 */
+.stat-card.stat-subcard { border-style: dashed; background: rgba(167, 139, 250, 0.08); }
+.stat-card.stat-subcard .stat-bar { display: none; }
+.stat-card.stat-subcard .stat-nums { margin: 12px 0 4px; }
 .stat-top { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
 .stat-id { font-family: var(--mono); font-size: 12.5px; font-weight: 600; word-break: break-all; }
 .stat-name { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
@@ -1467,6 +1471,7 @@ document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () =>
 document.head.insertAdjacentHTML('beforeend', '<style>@keyframes paneIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}</style>');
 let statsTimer = null;
 let logsTimer = null;
+let _logLoadSeq = 0;   // 加载序号：切池筛选与 5s 轮询并发时，旧筛选的晚到响应自行丢弃（防旧数据覆盖当前视图，v2.16.9）
 // 标签页不可见时暂停 5s 轮询（后台页签白白打后端），回前台按当前页签立即恢复
 // （null 守卫：重复 shown 事件不会叠加定时器）
 document.addEventListener('visibilitychange', () => {
@@ -3201,7 +3206,11 @@ function fmtTok(n) { n = n || 0; return n >= 1e8 ? (n / 1e8).toFixed(2) + '亿' 
 let _statLoadSeq = 0;   // 加载序号：5s 定时器与手动切视图并发时，旧加载在渲染前自行丢弃（防错形卡片注入）
 async function loadStats() {
   const seq = ++_statLoadSeq;
-  const data = await api('/stats');
+  // v2.16.9 首开提速：/stats 与视图元数据并行拉取（原串行——等 /stats 回来才拉元数据，慢链路下首开白等两倍往返）
+  const metaNeed = statDim === 'provider' || statDim === 'pool' || statDim === 'paid';
+  const dataP = api('/stats');
+  const metaP = metaNeed ? Promise.all([statMeta('providers'), statMeta('pools'), statMeta('models')]) : null;
+  const data = await dataP;
   if (seq !== _statLoadSeq) return;
   if (!data) {
     document.querySelector('#stats-grid .spinner')?.remove();
@@ -3212,8 +3221,8 @@ async function loadStats() {
   const grid = document.getElementById('stats-grid');
   // 分组/付费视图需要供应商名单、池成员、价格配置（TTL 内复用；取失败退空值，视图仍可渲染）
   let provs = [], poolsCfg = {}, cfgModels = [];
-  if (statDim === 'provider' || statDim === 'pool' || statDim === 'paid') {
-    [provs, poolsCfg, cfgModels] = await Promise.all([statMeta('providers'), statMeta('pools'), statMeta('models')]);
+  if (metaP) {
+    [provs, poolsCfg, cfgModels] = await metaP;
   if (seq !== _statLoadSeq) return;
   }
   const items = data.models.map(m => {
@@ -3332,28 +3341,68 @@ async function loadStats() {
     return;
   }
 
-  if (statDim === 'provider' || statDim === 'pool') {
+  if (statDim === 'provider') {
     // 供应商组：provider_id → 供应商名；独立模型（直连无供应商）按协议归「独立模型」组。
-    // 模型池组：取第一个收录该模型的全局池（用户专属池 owner_key_id 不参与分组）；未入池单列一组。
     const provName = pid => { const p = (provs || []).find(z => z.id === pid); return (p && p.name) || pid || ''; };
-    const poolOf = {};
+    items.forEach(x => {
+      const pid = x.m.provider_id || '';
+      x._gkey = pid ? 'p:' + pid : 'i:' + (x.m.provider || 'openai');
+      x._glabel = pid ? provName(pid) : '独立模型 · ' + (x.m.provider || 'openai');
+    });
+    items.sort(byUsageDesc);
+  } else if (statDim === 'pool') {
+    /* 模型池组（v2.16.9 嵌套池改版）：模型在其直接所属的每个全局池各出现一次（多处归属不再去重，
+       卡片键 @池名 防同卡被多组争抢）；父池组内的子池不展开模型，以一张子池计费卡片代替
+       （聚合整棵子树去重后的今日 token，卡片样式 stat-subcard 区别于模型卡）。专属池不参与。 */
+    const poolDirs = {};
     Object.keys(poolsCfg || {}).forEach(pn => {
       if (poolsCfg[pn].owner_key_id) return;
-      (poolsCfg[pn].model_ids || []).forEach(id => { if (!String(id).startsWith('pool:') && !poolOf[id]) poolOf[id] = pn; });
+      const d = { models: [], subs: [] };
+      (poolsCfg[pn].model_ids || []).forEach(id => {
+        const s = String(id);
+        if (s.startsWith('pool:')) d.subs.push(s.slice(5)); else d.models.push(s);
+      });
+      poolDirs[pn] = d;
     });
+    const statById = {};
+    items.forEach(x => { statById[x.m.id] = x; });
+    const treeCache = {};
+    const treeModels = pn => {   // 子树全模型（去重防环）：子池卡片的聚合口径
+      if (treeCache[pn]) return treeCache[pn];
+      const seen = new Set(), out = [], visit = (p, path) => {
+        if (!poolDirs[p] || path.has(p)) return;
+        path.add(p);
+        poolDirs[p].models.forEach(id => { if (!seen.has(id)) { seen.add(id); out.push(id); } });
+        poolDirs[p].subs.forEach(sp => visit(sp, path));
+      };
+      visit(pn, new Set());
+      return treeCache[pn] = out;
+    };
+    const expanded = [];
     items.forEach(x => {
-      if (statDim === 'provider') {
-        const pid = x.m.provider_id || '';
-        x._gkey = pid ? 'p:' + pid : 'i:' + (x.m.provider || 'openai');
-        x._glabel = pid ? provName(pid) : '独立模型 · ' + (x.m.provider || 'openai');
-      } else {
-        const pn = poolOf[x.m.id];
-        x._gkey = pn ? 'q:' + pn : 'q:__none__';
-        x._glabel = pn || '未入池';
-      }
+      const owners = Object.keys(poolDirs).filter(pn => poolDirs[pn].models.includes(x.m.id));
+      if (!owners.length) { x._gkey = 'q:__none__'; x._glabel = '未入池'; expanded.push(x); return; }
+      owners.forEach(pn => expanded.push({ ...x, _gkey: 'q:' + pn, _glabel: pn, _ckey: x.m.id + '@' + pn }));
     });
+    expanded.sort(byUsageDesc);
+    // 子池计费卡片：挂父池组、排直接模型之后（此时追加不再参与排序）
+    Object.keys(poolDirs).forEach(pn => poolDirs[pn].subs.forEach(sp => {
+      const ids = treeModels(sp);
+      const agg = ids.reduce((s2, id) => { const y = statById[id]; return y ? s2 + (y.m.today_tokens || 0) : s2; }, 0);
+      expanded.push({
+        _sub: true, _ckey: 'pool:' + sp, _gkey: 'q:' + pn, _glabel: pn,
+        m: { id: 'pool:' + sp, name: sp, today_tokens: agg },
+        used: agg, limit: 0, unit: 'tokens',
+        numsTitle: '子池 ' + sp + '：整棵子树去重后 ' + ids.length + ' 个模型的今日 token 合计',
+        limitText: '—', pct: 0, cls: 'stat-subcard', pctText: '子池', billing: '子池计费',
+        typeBadge: '<span class="badge b-once">子池</span>', freeBadge: '', costBtn: '',
+        refresh: '含 ' + ids.length + ' 个模型', mark: null, limitNote: '', loadText: ''
+      });
+    }));
+    items.length = 0;
+    items.push(...expanded);
   }
-  items.sort(byUsageDesc);
+  if (statDim !== 'pool') items.sort(byUsageDesc);   // 池维度已在分支内排序（子池卡追加其后，不参与排序）
   statRender(grid, items);
 }
 
@@ -3364,7 +3413,7 @@ function setStatTxt(root, sel, txt) {
 
 function statCardHTML(x, i) {
   return `
-    <div class="stat-card ${x.cls}" data-model-id="${esc(x.m.id)}" style="animation-delay:${Math.min(i * 45, 400)}ms;order:${i}">
+    <div class="stat-card ${x.cls}" data-model-id="${esc(x._ckey || x.m.id)}" style="animation-delay:${Math.min(i * 45, 400)}ms;order:${i}">
       <div class="stat-top">
         <div>
           <div class="stat-id">${esc(x.m.id)}</div>
@@ -3419,7 +3468,7 @@ function statRenderFlat(grid, items) {
 
 /* 卡片增量：已有则逐字段更新，没有则落卡即设 fill 宽（v2.11.44 修既有 bug：增量新增的卡片宽度原无人设置） */
 function statCardEnsure(prev, body, x, i) {
-  let el = prev[x.m.id];
+  let el = prev[x._ckey || x.m.id];
   if (el) { statUpdateCard(el, x); return el; }
   const tmp = document.createElement('div');
   tmp.innerHTML = statCardHTML(x, i);
@@ -3557,11 +3606,12 @@ function statRenderGrouped(grid, items) {
     setStatTxt(sec, '.sg-total', '今日 ' + fmtTok(g.total) + ' tok');
     const body = sec.querySelector('.stat-group-body');
     g.items.forEach((x, i) => {
-      let el = prev[x.m.id];
+      const ck = x._ckey || x.m.id;   // 嵌套池：模型多处出现时卡片键带 @池名，各组独立成卡
+      let el = prev[ck];
       if (el && el.parentElement !== body) body.appendChild(el);   // 归属组变化：搬运（入场动画重放一次，可接受）
       el = statCardEnsure(prev, body, x, i);
       el.style.order = i;
-      seenCards.add(x.m.id);
+      seenCards.add(ck);
     });
     seenKeys.add(g.key);
   };
@@ -3847,9 +3897,11 @@ function decisionInner(d) {
 
 
 async function loadDecisions() {
+  const seq = ++_logLoadSeq;
   const poolFilter = document.getElementById('log-pool-filter').value;
   const url = '/admin/decisions?limit=100' + (poolFilter ? '&pool=' + encodeURIComponent(poolFilter) : '');
   const data = await api(url);
+  if (seq !== _logLoadSeq) return;   // 旧筛选的晚到响应：直接丢弃，不覆盖当前视图
   const el = document.getElementById('log-list');
   if (!data) {
     el.querySelector('.spinner')?.remove();

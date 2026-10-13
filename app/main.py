@@ -111,7 +111,7 @@ def _resolve(model_field: str) -> str | None:
 
 
 def _wrap_key_stream(stream, key: dict, billing_mode: str):
-    """流式响应用户 Key 计量：按 token 捕获 usage，按次则计 1；流结束后入账。"""
+    """流式响应 Key 计量（用户 Key / 管理员类型 Key）：按 token 捕获 usage，按次则计 1；流结束后入账。"""
     captured = 0
 
     async def gen():
@@ -252,7 +252,8 @@ async def _chat_handler(request: Request, auth: dict, forced_pool: str | None = 
             logger.error(f"[调用失败-流式] pool={pool_name} caller={caller!r} detail={_detail}")
             logger.error(f"[调用失败-流式] 决策明细: {steps}")
             raise HTTPException(status_code=503, detail=_detail)
-        if is_user_key:
+        # v2.16.9：管理员类型 Key 也入账（小时桶用量记录恒写，用量历史才有数据）；服务器密钥无 key 记录不在此列
+        if key:
             stream = _wrap_key_stream(stream, key, key.get("billing_mode", "token"))
         if is_anthropic:
             stream = openai_sse_to_anthropic(stream)
@@ -302,7 +303,7 @@ async def _chat_handler(request: Request, auth: dict, forced_pool: str | None = 
         logger.error(f"[调用失败] pool={pool_name} caller={caller!r} detail={_detail}")
         logger.error(f"[调用失败] 决策明细: {steps}")
         raise HTTPException(status_code=503, detail=_detail)
-    if is_user_key:
+    if key:
         amount = 1 if key.get("billing_mode") == "request" else response.usage.total_tokens
         if amount > 0:
             await keyauth.charge_key_usage(key, amount)
@@ -517,7 +518,7 @@ async def embeddings_handler(request: Request, auth: dict = Depends(verify_key))
             status_code=503,
             detail=_detail,
         )
-    if is_user_key:
+    if key:
         usage = response.get("usage") or {}
         amount = 1 if key.get("billing_mode") == "request" else int(usage.get("total_tokens", 0) or tokens or 0)
         if amount > 0:
@@ -572,7 +573,7 @@ async def rerank_handler(request: Request, auth: dict = Depends(verify_key)):
             status_code=503,
             detail=_detail,
         )
-    if is_user_key:
+    if key:
         usage = response.get("usage") or {}
         amount = 1 if key.get("billing_mode") == "request" else int(usage.get("total_tokens", 0) or tokens or 0)
         if amount > 0:

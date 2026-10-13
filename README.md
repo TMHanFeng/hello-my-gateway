@@ -90,7 +90,7 @@ data/ 运行时数据（gateway.db、探测缓存、dev pid），与代码隔离
 
 | 🧠 统一思考控制 | 🧪 计费回归安全网 | 📐 智能估算超时 |
 |:---|:---|:---|
-| `reasoning_effort` 六档 → 按模型 `reasoning_map` 换算上游思考参数；思考内容统一回传 `reasoning_content` / `thinking` | 248 断言计费回归套件（`test_billing_regression.py`）：流式/非流式/一次性/RPM 触顶/安全阀/并发入账零丢失，任何改动先跑套件再上线 | `smart_estimate` 模型按 token 量动态计算超时（吞吐 EMA 校准），样本不足自动回退固定值 |
+| `reasoning_effort` 六档 → 按模型 `reasoning_map` 换算上游思考参数；思考内容统一回传 `reasoning_content` / `thinking` | 258 断言计费回归套件（`test_billing_regression.py`）：流式/非流式/一次性/RPM 触顶/安全阀/并发入账零丢失，任何改动先跑套件再上线 | `smart_estimate` 模型按 token 量动态计算超时（吞吐 EMA 校准），样本不足自动回退固定值 |
 
 | 📡 Embedding / Rerank | 🔑 用户密钥管理 | 📄 JSON 输出路由 |
 |:---|:---|:---|
@@ -171,7 +171,7 @@ python -m app.main
 >
 > 💡 **Ubuntu / Linux**：`python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt && python3 -m app.main`，或直接 `./start_gateway.sh`（自动选 venv/系统解释器；停止 `./stop_gateway.sh`）。代码本身跨平台：运行时目录（data/ logs/ backup/）首次启动自动创建，路径处理与日志滚动均适配 POSIX 文件系统。回归套件同样可在 Linux 运行：`python tests/test_billing_regression.py`。
 >
-> 🧪 **改动计费相关代码后**：`python tests/test_billing_regression.py` 运行 248 断言计费回归套件（自动在 8678 起隔离实例 + mock 上游，不触碰生产端口），全绿再上线。
+> 🧪 **改动计费相关代码后**：`python tests/test_billing_regression.py` 运行 258 断言计费回归套件（自动在 8678 起隔离实例 + mock 上游，不触碰生产端口），全绿再上线。
 
 ---
 
@@ -219,7 +219,7 @@ hello-my-gateway/
 │   ├── index.html                # 传统管理后台（/admin）
 │   └── hfadmin.html              # 科技感管理面板（/hfadmin）
 ├── tests/
-│   └── test_billing_regression.py # 计费回归套件（248 断言，隔离实例 + mock 上游）
+│   └── test_billing_regression.py # 计费回归套件（258 断言，隔离实例 + mock 上游）
 ├── start_gateway.cmd             # Windows 启动入口（自动选解释器，幂等）
 ├── stop_gateway.cmd              # 停止入口（身份核验，只停本仓库网关）
 ├── start_gateway.sh              # Linux/macOS 启动入口（语义同 .cmd：选解释器 + 已运行自检）
@@ -643,6 +643,8 @@ SQLite（`gateway.db`）持久化以下表：
 ## 📜 版本
 
 ### 最新
+
+**`v2.16.9`** — **用户用量历史全量记录 + 统计首开提速 + 按模型池嵌套池改版 + 调用记录筛选守卫（四项体验修复批次）**：①**用户 Key 用量历史恒记**（问题1）：`charge_key_usage` 原对管理员 Key 与未限额 Key 直接早退——`api_key_hourly_usage` 小时桶恒空，面板「用量历史」弹窗除管理员伪 Key#0（decision_log 口径）外全空；改为限额计量仍按原语义跳过、**小时桶记录对所有带 Key 的调用恒写**，`main.py` 四计费点（chat 流式/非流式 + embeddings + rerank）`is_user_key` 判定放宽为带 Key 即入账（管理员类型 Key 同样落账，服务器密钥无 key 记录仍走 decision_log 口径），`search_summary` 专门 Key 挂账注释同步。②**统计首开提速**（问题2）：`loadStats` 原 `await /stats` 后才并行拉视图元数据（providers/pools/models）——串行两轮往返，慢链路（远程/手机）首开白等一倍 RTT；改为 `/stats` 与元数据**同拍并行发起**（TTL 缓存照旧），双面板同构。③**按模型池视图嵌套池改版**（问题3）：原「取第一个收录该模型的全局池」导致嵌套池/多池归属的模型全页只显示一次；改为模型在其直接所属的**每个**全局池各出现一次（卡片键 `模型id@池名`，防增量刷新同卡被多组争抢）；父池组内的子池不再展开模型，以一张**子池计费卡片**代替（`stat-subcard`：虚线边框/紫色侧条/「子池」徽章/无进度条，聚合整棵子树去重后的今日 token，右下「含 N 个模型」，树聚合带防环），专属池仍不参与，未入池模型照旧落「未入池」组。④**调用记录筛选序号守卫**（问题4）：`loadDecisions` 原无并发守卫——切池筛选与 5s 轮询并发时旧筛选的晚到响应覆盖当前视图（具体池视图显示旧数据、"全部池比具体池更新得快"的观感）；加 `_logLoadSeq` 序号守卫（与 `loadStats` `_statLoadSeq` 同款），旧响应直接丢弃。⑤**顺修 index 统计卡片增量字段残留**：v2.16.6 移植引入的 `statUpdateCard` 用 `x.id/x.name`（stats 条目无此字段）两处漏网（v2.16.8 T37c 只修了卡片键），经典面板每 5s 增量刷新把模型名/ID 写成 "undefined"，修正为 `x.m.id/x.m.name`。⑥回归 **251→258** 全绿（T38a-h：无限额Key小时桶恒写/管理员类型Key入账/最近调用不回归/首开并行拉取接线/按池嵌套改版接线/筛选守卫接线/增量字段修正）；README 断言计数三处 248→258（v2.16.7/v2.16.8 两批漏同步）；双面板内联 JS node 语法检查过；8660 重启实测四项：hu（无限额）Key 真实调用后用量历史 18 tok + 调用记录可见、default 组四张子池卡（`pool:netmodel` 聚合 216 tok 正确）、`GLMAPI/glm-5.3-flash` 四处出现且增量刷新零重复、auto 池筛选视图轮询带出新记录、付费视图四请求 t=0 并行发出。生效说明：①需重启网关（keyauth/main 计费路径）；②③④⑤纯面板改动刷新即见。
 
 **`v2.16.8`** — **分组管理入口改版 + 统计外层系统组嵌套（自 hellonew v2.22.3/v2.22.4 回移，纯面板零后端）**：①**设置弹窗交互重排**（双面板同构）：分组收纳每行开关右缘「⚙️ 管理」按钮——点击展开该维度自己的管理盒（模型管理/模型池互斥单开、按钮高亮、开关勾选态不受影响，label 内嵌 button 经 preventDefault 不误触开关），盒内 ↑↓ 排序（首末行禁用）、点名称重命名（复用 `grpRename`）、**🗑 删除分组**（confirm 确认，仅拆组——成员卡片回「未分组」，模型/池本身不动）；收纳开关与分组数据独立（关开关仍可管理删组）；v2.16.7 的弹窗底部合并管理区移除。②**统计页按供应商/按模型池嵌套「分组收纳」系统组**：外层组序=`ui_groups` 数组序（与设置弹窗 ↑↓ 调序联动）、组头=组名+模型数+今日 token 合计、折叠按维度持久化（`gw_statgrp.ocollapsed`）、未归组/auto/兜底/未入池/独立模型落「未分组」垫底、空组不渲染、无分组老用户零感知（回退平铺）；**外层随收纳开关联动**：对应维度开关关闭即不套系统组壳（回内层平铺）、重开原样恢复，两维度互不影响；内层 ⠿ 拖拽限同外层组内调序（dragover 同父守卫，跨外层=改收纳归属去分组页操作）。③**顺修 index 面板统计卡片增量键 bug**：v2.16.6 移植四视图时 index 的 `statCardEnsure/statRenderFlat/statRenderGrouped` 用 `x.id`（stats 条目无此字段），经典面板统计页每 5s 增量刷新退化为整卡销毁重建闪屏，修正为 `x.m.id`（hfadmin 一直正确）。④移植与验证：533 行补丁双面板零冲突整贴（v2.16.7 遗留的表单文案行本次随补丁归位）；回归 **248→251** 全绿（T37a-c：⚙️管理入口在位/outerOn 门+嵌套元素在位/index 增量键修正）；双面板内联 JS node 语法检查过；8660 浏览器实测 cog 互斥展开/开关不误触/删组/关开关外层消失与重开恢复。生效说明：纯面板改动刷新即见，无需重启网关。
 

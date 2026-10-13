@@ -130,34 +130,38 @@ async def key_usage_available(key: dict) -> tuple[bool, str]:
 
 
 async def charge_key_usage(key: dict, amount: int):
-    """按用户 Key 的限额语义计量用量（管理员 Key / 无限额直接忽略），并写入小时桶记录。"""
-    if is_admin_key(key) or not _has_limit(key):
-        return
+    """按用户 Key 的限额语义计量用量，并写入小时桶记录。
+
+    限额计量仅对设了限额的用户 Key 生效（管理员 Key / 未限额忽略）；
+    小时桶记录（用量历史数据源）对所有 Key 恒写——否则未限额 Key 的
+    用量历史弹窗恒为全 0（v2.16.9 修复）。"""
     key_id = key["id"]
+    limited = not is_admin_key(key) and _has_limit(key)
     now = time.time()
-    state = await db.get_key_usage(key_id)
-    if state is None:
+    state = await db.get_key_usage(key_id) if limited else None
+    if limited and state is None:
         await db.init_key_usage(key_id)
         state = await db.get_key_usage(key_id)
 
     async with db.bulk():
-        if key.get("token_type") == "daily":
-            if state.get("last_reset_date") != _today():
-                await db.reset_key_usage(key_id)
-            await db.add_key_usage(key_id, amount)
-        elif key.get("token_type") == "rolling_5h":
-            ws = state.get("window_start")
-            if ws is None or (now - ws) >= ROLLING_5H_SECONDS:
-                await db.reset_key_usage(key_id)
-            await db.add_key_usage(key_id, amount)
-        elif key.get("token_type") == "one_time":
-            if not state.get("expired"):
+        if limited:
+            if key.get("token_type") == "daily":
+                if state.get("last_reset_date") != _today():
+                    await db.reset_key_usage(key_id)
                 await db.add_key_usage(key_id, amount)
-                s = await db.get_key_usage(key_id)
-                if int(key.get("limit_amount", 0)) > 0 and s.get("used_amount", 0) >= int(key.get("limit_amount", 0)):
-                    await db.expire_key_usage(key_id)
+            elif key.get("token_type") == "rolling_5h":
+                ws = state.get("window_start")
+                if ws is None or (now - ws) >= ROLLING_5H_SECONDS:
+                    await db.reset_key_usage(key_id)
+                await db.add_key_usage(key_id, amount)
+            elif key.get("token_type") == "one_time":
+                if not state.get("expired"):
+                    await db.add_key_usage(key_id, amount)
+                    s = await db.get_key_usage(key_id)
+                    if int(key.get("limit_amount", 0)) > 0 and s.get("used_amount", 0) >= int(key.get("limit_amount", 0)):
+                        await db.expire_key_usage(key_id)
 
-        # 1h 粒度用量记录（供历史查询）
+        # 1h 粒度用量记录（供历史查询；管理员/未限额 Key 也记录）
         await db.add_hourly_usage(key_id, _hour_key(), amount)
 
 

@@ -410,7 +410,7 @@ def deep_clean():
     if "one_time_state" in _tables:
         db_exec("DELETE FROM one_time_state WHERE model_name='zzbt/echo-once'")
     if "api_keys" in _tables:
-        db_exec("DELETE FROM api_keys WHERE name IN ('zzkey','zzkey2','zzkey3','zzkey4')")
+        db_exec("DELETE FROM api_keys WHERE name IN ('zzkey','zzkey2','zzkey3','zzkey4','zzkey9','zzkey10')")
         db_exec("DELETE FROM api_key_usage WHERE key_id NOT IN (SELECT id FROM api_keys)")
         db_exec("DELETE FROM api_key_hourly_usage WHERE key_id NOT IN (SELECT id FROM api_keys)")
 
@@ -2177,6 +2177,58 @@ def main():
         check("T37c index统计卡片增量键修正为x.m.id(v2.22.0起x.id致5s整卡重建闪屏)",
               "prev[x.id]" not in _idx and "seen.add(x.id)" not in _idx
               and "statCardEnsure(prev, grid, x, i); el.style.order = i; seen.add(x.m.id)" in _idx, None)
+
+        # ===== T38（v2.16.9 四项修复）：Key 用量历史恒记 / 统计首开并行拉取 / 按池嵌套池改版 / 调用记录筛选序号守卫 =====
+        # 问题1：charge_key_usage 原对管理员 Key 与未限额 Key 早退 → api_key_hourly_usage 恒空，
+        #        用量历史弹窗除管理员伪 Key#0（decision_log 口径）外全空。改法：限额计量仍按原语义跳过，
+        #        小时桶记录对所有带 Key 的调用恒写（main.py 四计费点 is_user_key→key 判定）。
+        r = httpx.post(f"{BASE}/admin/keys", headers=ADMIN,
+                       json={"name": "zzkey9", "type": "user", "allowed_pools": ["zzlocal"],
+                             "token_type": "", "billing_mode": "token", "limit_amount": 0}, timeout=15)
+        kid9 = r.json().get("key", {}).get("id")
+        secret9 = DB.execute("SELECT secret FROM api_keys WHERE name='zzkey9'").fetchone()["secret"]
+        chat("zzlocal", auth=secret9, content="hi")
+        ru = httpx.get(f"{BASE}/admin/keys/{kid9}/usage", headers=ADMIN, timeout=15)
+        check("T38a 无限额Key用量历史不再全空(小时桶恒写)",
+              ru.status_code == 200 and (ru.json().get("total") or 0) > 0, (ru.status_code, ru.json().get("total")))
+        r = httpx.post(f"{BASE}/admin/keys", headers=ADMIN,
+                       json={"name": "zzkey10", "type": "admin"}, timeout=15)
+        kid10 = r.json().get("key", {}).get("id")
+        secret10 = DB.execute("SELECT secret FROM api_keys WHERE name='zzkey10'").fetchone()["secret"]
+        chat("zzlocal", auth=secret10, content="hi")
+        ru = httpx.get(f"{BASE}/admin/keys/{kid10}/usage", headers=ADMIN, timeout=15)
+        check("T38b 管理员类型Key也写小时桶(带Key调用入账,服务器密钥仍走decision_log口径)",
+              ru.status_code == 200 and (ru.json().get("total") or 0) > 0, (ru.status_code, ru.json().get("total")))
+        rc = httpx.get(f"{BASE}/admin/keys/{kid9}/calls", headers=ADMIN, timeout=15)
+        check("T38c 无限额Key最近调用记录可见(存量行为不回归)",
+              rc.status_code == 200 and len(rc.json().get("calls", [])) >= 1,
+              (rc.status_code, len(rc.json().get("calls", []))))
+        # 问题2：loadStats 原 await /stats 之后再拉视图元数据（两轮串行往返，慢链路首开翻倍）；
+        #        改为 /stats 与 providers/pools/models 并行。双面板静态接线断言。
+        check("T38e 双面板统计首开提速(/stats与视图元数据并行拉取)",
+              all(s in _idx for s in ("const metaNeed = statDim === 'provider' || statDim === 'pool' || statDim === 'paid';",
+                                      "const metaP = metaNeed ? Promise.all([statMeta('providers'), statMeta('pools'), statMeta('models')]) : null;"))
+              and all(s in _hf for s in ("const metaNeed = statDim === 'provider' || statDim === 'pool' || statDim === 'paid';",
+                                         "const metaP = metaNeed ? Promise.all([statMeta('providers'), statMeta('pools'), statMeta('models')]) : null;")), None)
+        # 问题3：按池视图嵌套池改版——模型多处归属不去重（卡片键 @池名）、父池内子池以计费卡片代替
+        #        （stat-subcard 区分样式、treeModels 整树去重聚合）。纯前端，双面板静态接线断言。
+        check("T38f 双面板按池嵌套改版(模型多处出现@池名卡片键+子池计费卡片stat-subcard+树聚合treeModels)",
+              all(s in _idx for s in ("_ckey: x.m.id + '@' + pn", "cls: 'stat-subcard'", "const treeModels = pn =>",
+                                      "x._ckey || x.m.id", "stat-card.stat-subcard"))
+              and all(s in _hf for s in ("_ckey: x.m.id + '@' + pn", "cls: 'stat-subcard'", "const treeModels = pn =>",
+                                         "x._ckey || x.m.id", "stat-card.stat-subcard")), None)
+        # 问题4：loadDecisions 原无并发序号守卫——切池筛选与 5s 轮询并发时旧筛选的晚到响应覆盖当前视图
+        #        （具体池视图显示旧数据）。与 loadStats 的 _statLoadSeq 同款守卫。双面板静态接线断言。
+        check("T38g 双面板调用记录筛选序号守卫在位(旧筛选晚到响应丢弃)",
+              all(s in _idx for s in ("let _logLoadSeq = 0;", "if (seq !== _logLoadSeq) return;"))
+              and all(s in _hf for s in ("let _logLoadSeq = 0;", "if (seq !== _logLoadSeq) return;")), None)
+        # 顺修：index statUpdateCard 增量字段 x.id/x.name 残留（v2.16.6 移植引入，T37c 只修了卡片键两处，
+        #       漏了 .stat-id/.stat-name 两处——5s 增量更新会把模型名写成 "undefined"）。
+        check("T38h index统计卡片增量字段修正(x.id/x.name→x.m.id/x.m.name,T37c漏网两处)",
+              "setStatTxt(el, '.stat-id', x.id)" not in _idx
+              and "setStatTxt(el, '.stat-name', x.name" not in _idx
+              and "setStatTxt(el, '.stat-id', x.m.id)" in _idx
+              and "setStatTxt(el, '.stat-name', x.m.name + ' · ' + x.billing)" in _idx, None)
 
     finally:
         try:

@@ -79,7 +79,8 @@ async def dedicated_key(pool_obj) -> dict | None:
 
 async def _charge_dedicated(dk: dict | None, tokens: int):
     """内层总结用量挂账到专门 Key（语义与用户 Key 直连一致：按次计 1 / 按 token 计真实值；
-    管理员 Key、未设限额自动忽略——与 charge_key_usage 行为对齐；任何失败只记日志）。"""
+    限额计量对管理员 Key、未设限额自动忽略（小时桶记录恒写）——与 charge_key_usage 行为对齐；
+    任何失败只记日志）。"""
     if dk is None:
         return
     try:
