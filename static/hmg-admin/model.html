@@ -11,19 +11,28 @@
 <link rel="stylesheet" href="/hmg-admin/assets/hmg.css?v=__GATEWAY_VERSION__">
 <style>
 /* ── 本页私有：供应商/模型卡片与移植表单原子（跨页共用部分在 hmg.css） ── */
-.provider-card { padding: 14px 16px 8px; }
-.provider-head { display: flex; align-items: flex-start; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
+.provider-card { padding: 14px 16px 8px; transition: background-color 200ms cubic-bezier(.23,1,.32,1), border-color 200ms cubic-bezier(.23,1,.32,1); }
+.provider-card:hover { border-color: var(--hairline-strong); }
+.provider-head {
+  display: flex; align-items: flex-start; gap: 10px; flex-wrap: wrap; margin-bottom: 4px;
+  padding-bottom: 10px; border-bottom: 1px solid var(--hairline);
+}
 .card-sub { color: var(--ink-subtle); font-size: 12px; margin-top: 2px; overflow-wrap: anywhere; }
-.drag-handle { cursor: grab; color: var(--ink-tertiary); }
+.drag-handle { cursor: grab; color: var(--ink-tertiary); opacity: .55; transition: opacity 150ms ease; }
+.provider-card:hover > .provider-head .drag-handle, .model-row:hover .drag-handle { opacity: 1; }
 .model-row {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-  padding: 9px 2px; border-top: 1px solid var(--hairline);
+  padding: 9px 8px; margin: 0 -8px; border-radius: 8px;
+  transition: background-color 130ms ease;
 }
+.model-row + .model-row { border-top: 1px solid var(--hairline); }   /* 圆角盒上的 border-top 两端自然内缩 = inset 分隔线 */
+.model-row:hover { background: var(--wash); }
+.model-row:active { background: var(--surface-2); }
 .model-row .m-info { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
-.model-row .model-id { font-weight: 600; font-size: 13.5px; overflow-wrap: anywhere; }
+.model-row .model-id { font-weight: 600; font-size: 13.5px; letter-spacing: -.1px; overflow-wrap: anywhere; }
 .model-row .model-name { color: var(--ink-subtle); font-size: 12.5px; overflow-wrap: anywhere; }
 .m-actions { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; }
-.sp-ok { color: var(--success); } .sp-mid { color: var(--warning); } .sp-slow { color: var(--danger); }
+.sp-ok { color: var(--ok-ink); } .sp-mid { color: var(--warn-ink); } .sp-slow { color: var(--err-ink); }
 /* 余量内联（供应商卡头部协议徽章右侧） */
 .pqi-item {
   display: inline-flex; align-items: center; margin-left: 8px; padding: 1px 8px;
@@ -31,9 +40,9 @@
   color: var(--ink-subtle); max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   vertical-align: middle;
 }
-.pqi-item.pqi-ok { color: var(--success); }
-.pqi-item.pqi-warn { color: var(--warning); }
-.pqi-item.pqi-err { color: var(--danger); }
+.pqi-item.pqi-ok { color: var(--ok-ink); background: var(--ok-tint); }
+.pqi-item.pqi-warn { color: var(--warn-ink); background: var(--warn-tint); }
+.pqi-item.pqi-err { color: var(--err-ink); background: var(--err-tint); }
 /* 移植表单网格（与原面板 .f2/.f3/.fg 同名同义；.fg/.form-sec 共享部分在 hmg.css） */
 .f2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .f3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
@@ -47,7 +56,10 @@
   display: flex; gap: 8px; align-items: flex-start; font-size: 12.5px; line-height: 1.5;
   color: var(--ink-muted); padding: 8px 10px; border: 1px solid var(--hairline);
   border-radius: 8px; cursor: pointer; position: relative;
+  transition: border-color 130ms ease, background-color 130ms ease;
 }
+.opt:hover { border-color: var(--hairline-strong); }
+.opt:has(input:checked) { border-color: rgba(94, 106, 210, .55); background: var(--acc-tint); }
 .opt input { accent-color: var(--accent); margin-top: 2px; flex: none; }
 .opt b { color: var(--ink); display: block; font-size: 13px; }
 .cost-gear {
@@ -121,7 +133,7 @@ function typeBadge(m) {
   if (m.token_type === "local") return '<span class="badge" title="本地模型：不计费不限量，仅记录用量">本地</span>';
   return "<span class=\"badge\">每日</span>";
 }
-function freeBadge(m) { return m.is_free ? '<span class="badge badge-ok">免费</span>' : '<span class="badge badge-err">付费</span>'; }
+function freeBadge(m) { return m.is_free ? '<span class="badge badge-ok">免费</span>' : '<span class="badge badge-warn" title="付费模型">付费</span>'; }
 function modBadge(m) { return m.modality === "embedding" ? '<span class="badge badge-acc">embedding</span>' : m.modality === "rerank" ? '<span class="badge badge-acc">rerank</span>' : m.modality === "vision" ? '<span class="badge">多模态</span>' : "<span class=\"badge\">文本</span>"; }
 function latTag(id) {
   const s = speedCache[id];
@@ -246,7 +258,7 @@ function modelRowHTML(m, i, animate = true) {
       ${modBadge(m)}
       ${m.json_output && m.modality !== "embedding" && m.modality !== "rerank" ? '<span class="badge" title="支持 response_format JSON 格式输出">JSON</span>' : ""}
       ${typeBadge(m)}
-      ${m.reasoning_map && Object.keys(m.reasoning_map).length ? '<span class="badge badge-warn" style="cursor:pointer" title="点击打开编辑，查看思考参数探测结论" onclick="editModel(\'' + jsq(m.id) + '\')">思考映射</span>' : ""}
+      ${m.reasoning_map && Object.keys(m.reasoning_map).length ? '<span class="badge badge-acc" style="cursor:pointer" title="点击打开编辑，查看思考参数探测结论" onclick="editModel(\'' + jsq(m.id) + '\')">思考映射</span>' : ""}
       ${m.smart_estimate ? '<span class="badge">智能超时</span>' : ""}
       ${latTag(m.id)}
     </div>

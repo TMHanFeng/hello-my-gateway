@@ -128,3 +128,11 @@ DESIGN.md **未发布产品浅色主题**(Known Gaps 明示;inverse-* 是品牌�
 - IAB 输入管线会话中段失效(三路点击不派发而截图/evaluate 正常):黑盒受阻用例如实记录,机制覆盖=同类已过证据(弹窗组件 T2 已证/主题 localStorage 路径已证);渲染闸布防态(预置 localStorage/类名)已在报告标注。
 - 命名冲突教训:hmg.js 初版把千分位命名 `hmgJsq`,与 hfadmin `jsq`(引号转义)撞名——移植代码大量 `jsq()` 直呼,共享层必须保持旧名同义(千分位改名 `hmgNum`);移植前先盘点旧面板全局函数名,共享层同名同义、异名让路。
 - api 契约:旧面板 `api()` 失败返回 null(不抛),移植代码满篇 `if (!ok) return;`——共享层照抄该契约(401/网络异常/非 2xx 一律 null),否则 throw 会从每个移植函数里穿出去。
+
+## 12. 质感返工实录（2026-10-13 v2.17.1，验收反馈驱动）
+
+**反馈**：v2.17.0 交付后用户判定「太普通——动效呢？精美的卡片呢？还不如 hfadmin」。根因：定调阶段只摘了 DESIGN.md 的**色板 token**，漏掉三样真正决定观感的东西——①Elevation 段的「顶边微高光」（inset 0 1px 0 白 3.5%，品牌"pixel rendered"质感的来源）；②「层级靠表面阶梯抬升、深色拒绝阴影」只做成了静态平铺（没做 hover 抬升）；③动效只挂了几个 180ms keyframe，完全没按 emil-design-eng 的曲线/时长/可中断规范执行。**教训：awesome-design-md 的价值在 components/elevation/do-don't 段，不在 colors: 段；emil 技能必须在写第一行 CSS 前读，不是交付前补。**
+
+**返工清单**（8 文件，全在 hmg-admin 内）：顶边高光+阶梯 hover / 动效 token 三曲线三时长 / 按压 scale(.97) / 弹窗·菜单·toast 改 .on/.off transition 生命周期（出场恒快/防重入/菜单 origin 跟触发源）/ 抽屉 iOS 曲线 / 进度条宽度过渡（轮询数值→平滑动画）/ 入场瀑布 40ms 级差 / 语义 tint 标签四组双主题 token（付费从红降琥珀=信息非错误）/ 删除按钮安静化 / 行操作 hover 显现（触屏恒显）/ 拖拽把手呼吸 / color-scheme / :has(:checked) 选中态 / 空态虚线框。
+
+**验证**：回归 282/282；8660 四象限截图 + DOM 计算样式断言（IAB 捕获管线残影帧三次，均断言证伪后重拍）。实测抓到品牌行换行 bug 一处。

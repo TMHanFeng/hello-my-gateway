@@ -117,17 +117,19 @@ function hmgEl(html) {
   return t.content.firstElementChild;
 }
 
-/* ── toast ────────────────────────────────────────────────── */
+/* ── toast（transition 生命周期：.on 入场 / .out 出场，可中断；出场恒快于入场） ── */
 let _hmgToastBox = null;
 function hmgToast(msg, type = "info", ms = 2600) {
   if (!_hmgToastBox) { _hmgToastBox = document.createElement("div"); _hmgToastBox.id = "hmg-toast"; document.body.appendChild(_hmgToastBox); }
   const t = hmgEl(`<div class="toast"><span class="dot ${type === "ok" ? "ok" : type === "err" ? "err" : type === "warn" ? "warn" : "acc"}"></span><span></span></div>`);
   t.lastElementChild.textContent = String(msg);
   _hmgToastBox.appendChild(t);
-  setTimeout(() => { t.classList.add("out"); setTimeout(() => t.remove(), 200); }, ms);
+  void t.offsetWidth;            // 先以初始态入布局，再加 .on 触发过渡
+  t.classList.add("on");
+  setTimeout(() => { t.classList.add("out"); setTimeout(() => t.remove(), 170); }, ms);
 }
 
-/* ── 弹窗（桌面居中 / 移动端全屏 sheet，见 hmg.css §11） ───── */
+/* ── 弹窗（桌面居中 / 移动端全屏 sheet，见 hmg.css §8；transition 生命周期：mask.on 入场 / mask.off 出场） ── */
 function hmgOpenModal(opts) {
   const mask = hmgEl(`<div class="mask"><div class="modal${opts.wide ? " wide" : ""}" role="dialog" aria-modal="true">
     <div class="modal-head"><div class="t"></div><button class="modal-x" aria-label="关闭">✕</button></div>
@@ -140,7 +142,14 @@ function hmgOpenModal(opts) {
   else if (opts.body) body.appendChild(opts.body);
   const footBtns = mask.querySelector(".modal-foot .right");
   if (!opts.footer || !opts.footer.length) mask.querySelector(".modal-foot").style.display = "none";
-  const close = () => { mask.remove(); document.removeEventListener("keydown", onKey); if (opts.onClose) opts.onClose(); };
+  const close = () => {
+    if (mask.__closing) return;    // 出场中防重入（Esc/遮罩/✕ 连按）
+    mask.__closing = true;
+    document.removeEventListener("keydown", onKey);
+    mask.classList.add("off");     // 出场 140ms（恒快于入场）后再摘除
+    setTimeout(() => mask.remove(), 160);
+    if (opts.onClose) opts.onClose();
+  };
   const onKey = e => { if (e.key === "Escape") close(); };
   if (opts.maskClose !== false) mask.addEventListener("mousedown", e => { if (e.target === mask) close(); });
   mask.querySelector(".modal-x").onclick = close;
@@ -153,6 +162,8 @@ function hmgOpenModal(opts) {
     footBtns.appendChild(btn);
   }
   document.body.appendChild(mask);
+  void mask.offsetWidth;           // 初始态先入布局，再加 .on 触发缩放+淡入过渡
+  mask.classList.add("on");
   return { mask, body, close };
 }
 /** Promise 版确认框。 */
@@ -192,11 +203,14 @@ function hmgPrompt(title, { value = "", placeholder = "", okLabel = "确定", mu
   });
 }
 
-/* ── 下拉菜单（fixed 定位，自动翻转防溢出） ─────────────────── */
+/* ── 下拉菜单（fixed 定位，自动翻转防溢出；缩放入场以触发源为 transform-origin） ── */
 let _hmgMenu = null;
 function hmgCloseMenu() {
   if (!_hmgMenu) return;
-  _hmgMenu.remove(); _hmgMenu = null;
+  const m = _hmgMenu;
+  _hmgMenu = null;   // 先摘引用：动画期间再开新菜单互不干扰
+  m.classList.add("off");
+  setTimeout(() => m.remove(), 110);
   document.removeEventListener("mousedown", _hmgMenuOutside, true);
   window.removeEventListener("resize", hmgCloseMenu);
   window.removeEventListener("scroll", hmgCloseMenu, true);
@@ -224,8 +238,13 @@ function hmgMenu(anchor, items) {
   const mw = m.offsetWidth, mh = m.offsetHeight;
   let x = Math.max(8, Math.min(r.left, window.innerWidth - mw - 8));
   let y = r.bottom + 4;
-  if (y + mh > window.innerHeight - 8) y = Math.max(8, r.top - mh - 4);
+  const openedUp = y + mh > window.innerHeight - 8;
+  if (openedUp) y = Math.max(8, r.top - mh - 4);
   m.style.left = x + "px"; m.style.top = y + "px";
+  // 触发源感知 origin：菜单从锚点方向缩放展开（弹窗豁免——弹窗恒居中）
+  m.style.transformOrigin = (x + mw / 2 < window.innerWidth / 2 ? "left" : "right") + " " + (openedUp ? "bottom" : "top");
+  void m.offsetWidth;
+  m.classList.add("on");
   setTimeout(() => {
     document.addEventListener("mousedown", _hmgMenuOutside, true);
     window.addEventListener("resize", hmgCloseMenu);
@@ -309,7 +328,7 @@ window.HMG = {
 /* ── ⓘ 信息气泡（data-tip 多行浮层，跟随鼠标/触屏点按；原面板 i-tip 同款交互） ── */
 (function () {
   const pop = document.createElement("div");
-  pop.style.cssText = "display:none;position:fixed;z-index:150;max-width:340px;white-space:pre-wrap;background:var(--surface-3);color:var(--ink);border:1px solid var(--hairline-strong);border-radius:8px;padding:8px 10px;font-size:12px;line-height:1.6;pointer-events:none;box-shadow:0 8px 24px rgba(0,0,0,.25)";
+  pop.style.cssText = "display:none;position:fixed;z-index:150;max-width:340px;white-space:pre-wrap;background:var(--surface-3);color:var(--ink);border:1px solid var(--hairline-strong);border-radius:8px;padding:8px 10px;font-size:12px;line-height:1.6;pointer-events:none;box-shadow:0 16px 48px rgba(0,0,0,.45);opacity:0;transition:opacity 120ms ease";
   document.body.appendChild(pop);
   let owner = null;
   const fine = window.matchMedia && window.matchMedia("(pointer: fine)").matches;
@@ -326,8 +345,12 @@ window.HMG = {
     if (!txt) return;
     if (pop.textContent !== txt) pop.textContent = txt;
     pop.style.display = "block"; place(x, y); owner = t;
+    requestAnimationFrame(() => { pop.style.opacity = "1"; });
   }
-  function hide() { pop.style.display = "none"; owner = null; }
+  function hide() {
+    pop.style.opacity = "0"; owner = null;
+    setTimeout(() => { if (!owner) pop.style.display = "none"; }, 130);   // 淡出播完再摘
+  }
   document.addEventListener("mouseover", e => { const t = e.target.closest && e.target.closest(".i-tip"); if (t) show(t, e.clientX, e.clientY); });
   document.addEventListener("mousemove", e => { const t = e.target.closest && e.target.closest(".i-tip"); if (t && t === owner) place(e.clientX, e.clientY); });
   document.addEventListener("mouseout", e => { if (e.target.closest && e.target.closest(".i-tip")) hide(); });

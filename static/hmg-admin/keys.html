@@ -17,7 +17,9 @@
 .key-grid b { font-weight: 500; overflow-wrap: anywhere; }
 .kv-line { display: flex; gap: 6px; min-width: 0; }
 .kv-line > span:first-child { color: var(--ink-subtle); flex: none; }
-.pool-check { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--hairline); border-radius: 6px; padding: 6px 10px; font-size: 13px; cursor: pointer; min-height: 34px; }
+.pool-check { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--hairline); border-radius: 6px; padding: 6px 10px; font-size: 13px; cursor: pointer; min-height: 34px; transition: border-color 130ms ease, background-color 130ms ease; }
+.pool-check:hover { border-color: var(--hairline-strong); }
+.pool-check:has(input:checked) { border-color: rgba(94, 106, 210, .55); background: var(--acc-tint); }
 .pool-check input { accent-color: var(--accent); }
 .checkbox-grid { display: flex; flex-wrap: wrap; gap: 6px; }
 .kv b { color: var(--ink); font-weight: 500; }
@@ -25,7 +27,7 @@
 .bar-inline .num { white-space: nowrap; }
 .bar-inline .bar { width: 90px; flex: none; }
 .bar-inline .mono:last-child { white-space: nowrap; }
-.usage-tip { position: absolute; pointer-events: none; background: var(--surface-3); border: 1px solid var(--accent); border-radius: 6px; padding: 4px 9px; font-size: 12px; white-space: nowrap; z-index: 5; }
+.usage-tip { position: absolute; pointer-events: none; background: var(--surface-3); border: 1px solid var(--hairline-strong); border-radius: 6px; padding: 4px 9px; font-size: 12px; white-space: nowrap; z-index: 5; box-shadow: var(--shadow-pop); }
 @media (max-width: 767px) {
   .key-grid { grid-template-columns: 1fr; }
 }

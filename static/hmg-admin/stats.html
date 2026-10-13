@@ -12,8 +12,13 @@
 <style>
 /* ── 本页私有：统计卡片 / 分组视图 / 分组查看行 ── */
 .stat-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); align-items: start; }
-.stat-card { background: var(--surface-1); border: 1px solid var(--hairline); border-radius: 12px; padding: 14px 16px; position: relative; }
-.stat-card::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 1px; background: var(--topline); border-radius: 12px 12px 0 0; pointer-events: none; }
+.stat-card {
+  background: var(--surface-1); border: 1px solid var(--hairline); border-radius: 12px; padding: 14px 16px; position: relative;
+  box-shadow: var(--edge), var(--shadow-card);
+  transition: background-color 200ms cubic-bezier(.23,1,.32,1), border-color 200ms cubic-bezier(.23,1,.32,1);
+  animation: hmgIn .36s cubic-bezier(.23,1,.32,1) backwards;   /* 每卡仅创建时播一次（增量更新不重建），延迟由内联 style 提供 */
+}
+.stat-card:hover { border-color: var(--hairline-strong); }
 .stat-top { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 8px; }
 .stat-id { font-weight: 600; font-size: 13.5px; overflow-wrap: anywhere; }
 .stat-name { color: var(--ink-subtle); font-size: 12px; margin-top: 1px; overflow-wrap: anywhere; }
