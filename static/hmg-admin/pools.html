@@ -25,7 +25,6 @@
 .pool-item .pi-id { font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; overflow-wrap: anywhere; }
 .pool-item .drag { cursor: grab; color: var(--ink-tertiary); opacity: .55; transition: opacity 150ms ease; }
 .pool-item:hover .drag { opacity: 1; }
-#pool-list > .card:hover { border-color: var(--hairline-strong); }
 .pi-tags { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
 .i-tip { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; border-radius: 50%; background: var(--surface-3); color: var(--ink-subtle); font-size: 10px; font-style: normal; cursor: help; flex: none; }
 .add-model-row { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
@@ -57,9 +56,9 @@
     <div class="toolbar">
       <div class="seg" id="pool-mode-seg">
         <button class="on" onclick="setPoolMode('normal', this)">普通池</button>
-        <button onclick="setPoolMode('user', this)">👤 专属池</button>
+        <button onclick="setPoolMode('user', this)">专属池</button>
       </div>
-      <button class="btn btn-ghost" onclick="grpOpenSettings()" title="分组收纳设置（模型管理 / 模型池）">⚙️ 分组</button>
+      <button class="btn btn-ghost" onclick="grpOpenSettings()" title="分组收纳设置（模型管理 / 模型池）">分组</button>
       <button class="btn btn-primary" onclick="showAddPool()">＋ 新增池</button>
     </div>
   </div>
@@ -147,7 +146,7 @@ async function loadPools() {
     const isFallback = name === "兜底池";
     const isDedicated = !!pool.owner_key_id;
     const isDraggable = !isAuto;
-    const dedicatedTag = isDedicated ? `<span class="badge badge-warn">👤 专属池 · Key#${esc(pool.owner_key_id)}</span>` : "";
+    const dedicatedTag = isDedicated ? `<span class="badge badge-warn">专属池 · Key#${esc(pool.owner_key_id)}</span>` : "";
     const _cardHtml = `
     <div class="card" data-pool-card="${esc(name)}" ${isDraggable ? 'draggable="true"' : ""}>
       <div class="pool-card-head">
@@ -182,7 +181,7 @@ async function loadPools() {
             </span>
             <span class="th-hint" data-th-hint="${jsq(name)}"></span>
           </span>
-          ${(!isAuto && !isFallback && grpOnP) ? `<button class="btn btn-ghost btn-sm" title="分组收纳" onclick="grpAssignMenu(event,'poolGroups','${jsq(name)}')">📂</button>` : ""}
+          ${(!isAuto && !isFallback && grpOnP) ? `<button class="btn btn-ghost btn-sm ic-btn" title="分组收纳" onclick="grpAssignMenu(event,'poolGroups','${jsq(name)}')">${HMG_ICONS.folder}</button>` : ""}
           <button class="btn btn-ghost btn-sm" onclick="speedPool('${jsq(name)}')">⚡ 测速本池</button>
           ${isAuto ? `<button class="btn btn-primary btn-sm" onclick="openSingleMode()">🎯 一键单模型</button>` : ""}
           ${isFallback ? `<button class="btn btn-ghost btn-sm" onclick="openFallbackTargets()">🛟 选择兜底对象</button>` : ""}

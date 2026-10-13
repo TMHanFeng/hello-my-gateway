@@ -17,7 +17,14 @@ const HMG_ICONS = {
   logs: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3.5 6h.01"/><path d="M3.5 12h.01"/><path d="M3.5 18h.01"/></svg>',
   keys: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="15.5" r="4.5"/><path d="m11 12 9.5-9.5"/><path d="M15 5l3.5 3.5"/><path d="m18 8 2.5-2.5"/></svg>',
   plugins: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 7V3.5"/><path d="M15 7V3.5"/><path d="M7 7h10v3.5a5 5 0 0 1-5 5 5 5 0 0 1-5-5V7z"/><path d="M12 15.5V21"/></svg>',
+  sun: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>',
+  moon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>',
+  menu: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>',
+  folder: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>',
+  cog: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1"/></svg>',
 };
+/* 主题图标：暗色显太阳（点击切亮），亮色显月亮（点击切暗）——统一线性 SVG，不用 emoji（廉价感来源） */
+function hmgThemeIcon(t) { return (t === "light") ? HMG_ICONS.moon : HMG_ICONS.sun; }
 const HMG_NAV = [
   { id: "model", label: "模型管理", icon: "model", href: "/hmg-admin/model" },
   { id: "pools", label: "模型池", icon: "pools", href: "/hmg-admin/pools" },
@@ -273,7 +280,7 @@ function hmgSetTheme(t) {
   document.documentElement.classList.add("theming");
   document.documentElement.setAttribute("data-theme", t);
   setTimeout(() => document.documentElement.classList.remove("theming"), 200);
-  document.querySelectorAll(".theme-btn").forEach(b => { b.textContent = t === "dark" ? "☀️" : "🌙"; b.title = t === "dark" ? "切换到白天模式" : "切换到夜晚模式"; });
+  document.querySelectorAll(".theme-btn").forEach(b => { b.innerHTML = hmgThemeIcon(t); b.title = t === "dark" ? "切换到白天模式" : "切换到夜晚模式"; });
 }
 function hmgToggleTheme() { hmgSetTheme(hmgTheme() === "dark" ? "light" : "dark"); }
 
@@ -288,24 +295,25 @@ function hmgRenderShell() {
         <a class="nav-item${n.id === page ? " on" : ""}" href="${n.href}"${n.id === page ? ' aria-current="page"' : ""}>${HMG_ICONS[n.icon]}<span class="lb">${hmgEsc(n.label)}</span></a>`).join("")}
       </nav>
       <div class="hmg-side-foot">
-        <div class="hmg-side-row"><span style="font-size:12px;color:var(--ink-tertiary)">🔑</span>
+        <div class="hmg-side-row"><span class="side-ic">${HMG_ICONS.keys}</span>
           <button class="pill-key" onclick="hmgChangeKey()" title="点击修改管理密码（仅本浏览器）"><span class="pk-t">管理密码</span></button>
         </div>
-        <div class="hmg-side-row"><button class="theme-btn" onclick="hmgToggleTheme()">☀️</button>
-          <span style="font-size:12px;color:var(--ink-tertiary)">主题</span></div>
+        <div class="hmg-side-row"><button class="theme-btn" onclick="hmgToggleTheme()">${hmgThemeIcon(hmgTheme())}</button>
+          <span style="font-size:12px;color:var(--ink-tertiary);letter-spacing:.01em">主题</span></div>
       </div>`;
-    const tb = hmgTheme() === "dark" ? "☀️" : "🌙";
-    sb.querySelector(".theme-btn").textContent = tb;
+    const tb = sb.querySelector(".theme-btn");
+    tb.innerHTML = hmgThemeIcon(hmgTheme());
+    tb.title = hmgTheme() === "dark" ? "切换到白天模式" : "切换到夜晚模式";
   }
   const bar = document.getElementById("hmg-topbar");
   if (bar) {
     const cur = HMG_NAV.find(n => n.id === page);
     bar.innerHTML = `
-      <button class="btn btn-ghost" id="hmg-burger" style="width:36px;padding:0;font-size:17px" aria-label="菜单">☰</button>
+      <button class="btn btn-ghost theme-btn" id="hmg-burger" aria-label="菜单">${HMG_ICONS.menu}</button>
       <span class="pg">${hmgEsc(cur ? cur.label : "HMG 网关")}</span>
       <span class="sp"></span>
-      <button class="theme-btn" onclick="hmgToggleTheme()">☀️</button>`;
-    bar.querySelector(".theme-btn").textContent = hmgTheme() === "dark" ? "☀️" : "🌙";
+      <button class="theme-btn" onclick="hmgToggleTheme()">${hmgThemeIcon(hmgTheme())}</button>`;
+    bar.querySelector(".theme-btn[onclick]").title = hmgTheme() === "dark" ? "切换到白天模式" : "切换到夜晚模式";
     bar.querySelector("#hmg-burger").onclick = () => document.body.classList.toggle("drawer-open");
   }
   const mk = document.getElementById("hmg-drawermask");
@@ -420,7 +428,8 @@ function grpWrapHtml(kind, items) {
     <div class="grp-section${g.collapsed ? " collapsed" : ""}" data-grp="${HMG.esc(g.id)}">
       <div class="grp-head" onclick="grpToggle('${kind}','${HMG.esc(g.id)}')" title="点击折叠 / 展开">
         <span class="grp-caret">▼</span>
-        <span class="grp-name" ondblclick="event.stopPropagation();grpRename('${kind}','${HMG.esc(g.id)}')" title="双击重命名">📂 ${HMG.esc(g.name)}</span>
+        <span class="side-ic" style="margin-right:-2px">${HMG_ICONS.folder}</span>
+        <span class="grp-name" ondblclick="event.stopPropagation();grpRename('${kind}','${HMG.esc(g.id)}')" title="双击重命名">${HMG.esc(g.name)}</span>
         <span class="grp-count">${(g.members || []).length}</span>
         <button class="grp-x" title="删除分组（成员回到未分组）" onclick="event.stopPropagation();grpDelGroup('${kind}','${HMG.esc(g.id)}')">✕</button>
       </div>

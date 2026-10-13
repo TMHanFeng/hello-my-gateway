@@ -1,28 +1,31 @@
 /* ============================================================
-   hmg-admin 共享设计系统 v2（六页共用，单源；设计约束见 docs/美化工作单-hmg-admin.md）
-   锚点品牌 linear.app：暗色 token 原样摘录；亮色 = 品牌唯一公开的 inverse 系列 + 派生（工作单 §2.2 如实标注）。
-   v2 质感层（本轮补齐）：顶边高光承载"pixel rendered"感、四级表面阶梯做 hover 抬升（品牌拒绝阴影上卡片）、
-   动效按 emil-design-eng 规范（自定义曲线/入出不对称/只动 transform+opacity/可中断过渡替代 keyframe）、
-   语义色只做低饱和 tint 徽章（品牌产品面允许彩色标签，营销面才禁）。
-   中文面板字体维持系统栈（硬约束）；数字 tabular-nums。
+   hmg-admin 共享设计系统 v3（六页共用，单源；设计约束见 docs/美化工作单-hmg-admin.md）
+   锚点品牌 linear.app lavender 色相；亮色 = 品牌唯一公开的 inverse 系列 + 派生（工作单 §2.2 如实标注）。
+   v3 变更（验收反馈驱动：黑太暗伤眼/缺鼠标互动/卡片参差/廉价感）：
+   - 暗色从营销站 #010102「海报黑」升到产品面石墨亮度（靛蓝倾向，色相同族）——长时间高密度使用不刺眼，
+     层级改由「材质半透明模糊 + 表面阶梯 + 阴影」共同承载（apple-design：材料即层级）
+   - 鼠标互动补齐：卡片 hover 浮起 + 阴影绽放 + 顶部辉光发丝线（gradient hairline）；按钮 hover 上浮 + 主按钮辉光；
+     侧栏/顶栏 = 半透明模糊材质，内容从材质下滑过；全部 emoji 图标换统一线性 SVG
+   - 卡片一致性：stats 网格同行等高（stretch + 底部对齐），卡片内边距统一
+   动效仍按 emil-design-eng（自定义曲线/出入不对称/可中断）；中文面板字体系统栈；数字 tabular-nums。
    ============================================================ */
 
 /* ── 1. 设计 token ─────────────────────────────────────────── */
 :root {
   color-scheme: dark;
-  /* 暗色（品牌 colors: 段原样） */
-  --canvas: #010102;
-  --surface-1: #0f1011;
-  --surface-2: #141516;
-  --surface-3: #18191a;
-  --surface-4: #191a1b;
-  --hairline: #23252a;
-  --hairline-strong: #34343a;
-  --hairline-tertiary: #3e3e44;
-  --ink: #f7f8f8;
-  --ink-muted: #d0d6e0;
-  --ink-subtle: #8a8f98;
-  --ink-tertiary: #62666d;
+  /* 暗色：产品面石墨（营销 #010102 的同族提亮版，v2.17.2 护眼适配；hsl 靛蓝倾向与 lavender 同族） */
+  --canvas: #101116;
+  --surface-1: #17181f;
+  --surface-2: #1d1f28;
+  --surface-3: #242734;
+  --surface-4: #2b2e3d;
+  --hairline: #2a2d3a;
+  --hairline-strong: #3a3e51;
+  --hairline-tertiary: #4a4f66;
+  --ink: #f4f5f9;
+  --ink-muted: #c7cbda;
+  --ink-subtle: #9095a8;
+  --ink-tertiary: #676d82;
   --accent: #5e6ad2;
   --accent-hover: #828fff;
   --accent-focus: #5e69d1;
@@ -30,22 +33,25 @@
   --success: #27a644;
   --warning: #f2994a;   /* 语义扩展（工作单 §2.3，非品牌 token） */
   --danger: #eb5757;    /* 语义扩展（同上） */
-  --overlay: rgba(0, 0, 0, .6);
+  --overlay: rgba(5, 6, 12, .55);
 
   /* 语义 tint（暗色：低饱和国底 + 提亮文字，保证对比度） */
-  --ok-ink: #5ec974;   --ok-tint: rgba(39, 166, 68, .12);
-  --warn-ink: #f2a952; --warn-tint: rgba(242, 153, 74, .13);
-  --err-ink: #f0716f;  --err-tint: rgba(235, 87, 87, .13);  --err-line: rgba(235, 87, 87, .38);
-  --acc-ink: #8f9bef;  --acc-tint: rgba(94, 106, 210, .17);
-  --focus-ring: rgba(94, 105, 209, .45);   /* 焦点环 = 2px primary-focus @50%（品牌 Elevation 4 段） */
+  --ok-ink: #5ec974;   --ok-tint: rgba(63, 191, 93, .13);
+  --warn-ink: #f2a952; --warn-tint: rgba(242, 153, 74, .14);
+  --err-ink: #f0716f;  --err-tint: rgba(235, 87, 87, .14);  --err-line: rgba(235, 87, 87, .38);
+  --acc-ink: #97a2f2;  --acc-tint: rgba(94, 106, 210, .20);
+  --focus-ring: rgba(94, 105, 209, .5);   /* 焦点环 = 2px primary-focus @50%（品牌 Elevation 4 段） */
 
-  /* 表面/光效（暗色） */
-  --edge: inset 0 1px 0 rgba(255, 255, 255, .035);            /* 顶边微高光：品牌 decorative depth"pixel rendered" */
-  --edge-btn: inset 0 1px 0 rgba(255, 255, 255, .07);
-  --wash: rgba(255, 255, 255, .035);                          /* 行/项 hover 微抬升 */
-  --shadow-card: 0 1px 2px rgba(0, 0, 0, .22);                /* 卡片落地影（极轻，层次主靠 hairline） */
-  --shadow-pop: 0 16px 48px rgba(0, 0, 0, .55), 0 4px 12px rgba(0, 0, 0, .4);   /* 浮层（菜单/弹窗/toast 专用） */
-  --topbar-bg: rgba(1, 1, 2, .82);
+  /* 表面/材质（暗色）：材料层级——半透明侧栏/顶栏内容下滑过，卡片顶缘微高光，浮层专用投影 */
+  --side-bg: rgba(14, 15, 20, .72);
+  --topbar-bg: rgba(14, 15, 20, .72);
+  --edge: inset 0 1px 0 rgba(255, 255, 255, .05);            /* 顶边微高光：光打在材质上 */
+  --edge-btn: inset 0 1px 0 rgba(255, 255, 255, .08);
+  --wash: rgba(255, 255, 255, .045);                          /* 行/项 hover 微抬升 */
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, .3), 0 4px 16px -8px rgba(0, 0, 0, .35);
+  --shadow-hover: 0 12px 32px -8px rgba(0, 0, 0, .5), 0 4px 12px rgba(0, 0, 0, .3);
+  --shadow-pop: 0 16px 48px rgba(0, 0, 0, .5), 0 4px 12px rgba(0, 0, 0, .38);   /* 浮层（菜单/弹窗/toast 专用） */
+  --sheen: linear-gradient(90deg, transparent, rgba(130, 143, 255, .5), transparent);  /* hover 辉光发丝线 */
 
   /* 动效（emil-design-eng：强 ease-out 曲线；UI 全部 <300ms；出入不对称） */
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
@@ -69,11 +75,11 @@
   --hairline: #e2e3e5;   /* 派生 */
   --hairline-strong: #d0d2d5;  /* 派生 */
   --hairline-tertiary: #c3c5c9; /* 派生 */
-  --ink: #000000;
+  --ink: #16171b;
   --ink-muted: #3c3f44;  /* 派生 */
   --ink-subtle: #62666d; /* 复用暗色 tertiary */
   --ink-tertiary: #8a8f98; /* 复用暗色 subtle */
-  --overlay: rgba(0, 0, 0, .32); /* 派生 */
+  --overlay: rgba(22, 23, 27, .35); /* 派生 */
 
   --ok-ink: #177c31;   --ok-tint: rgba(39, 166, 68, .10);
   --warn-ink: #9a5b0a; --warn-tint: rgba(242, 153, 74, .16);
@@ -81,12 +87,15 @@
   --acc-ink: #4c58b8;  --acc-tint: rgba(94, 106, 210, .11);
   --focus-ring: rgba(94, 105, 209, .40);
 
-  --edge: inset 0 1px 0 rgba(255, 255, 255, .8);
+  --side-bg: rgba(255, 255, 255, .72);
+  --topbar-bg: rgba(255, 255, 255, .72);
+  --edge: inset 0 1px 0 rgba(255, 255, 255, .85);
   --edge-btn: inset 0 1px 0 rgba(255, 255, 255, .9);
-  --wash: rgba(13, 14, 15, .04);
-  --shadow-card: 0 1px 2px rgba(16, 17, 18, .05);
-  --shadow-pop: 0 24px 64px rgba(16, 17, 18, .16), 0 4px 16px rgba(16, 17, 18, .08);
-  --topbar-bg: rgba(255, 255, 255, .82);
+  --wash: rgba(22, 23, 27, .045);
+  --shadow-card: 0 1px 2px rgba(22, 23, 27, .05), 0 4px 16px -8px rgba(22, 23, 27, .07);
+  --shadow-hover: 0 12px 32px -8px rgba(22, 23, 27, .16), 0 4px 12px rgba(22, 23, 27, .08);
+  --shadow-pop: 0 24px 64px rgba(22, 23, 27, .16), 0 4px 16px rgba(22, 23, 27, .08);
+  --sheen: linear-gradient(90deg, transparent, rgba(94, 106, 210, .45), transparent);
 }
 
 /* ── 2. 基础 ──────────────────────────────────────────────── */
@@ -120,12 +129,15 @@ input, select, textarea { font: inherit; color: var(--ink); }
 /* 主题切换过渡：html.theming 期间仅对颜色类属性短过渡（hmg.js 加/摘，200ms） */
 html.theming, html.theming * { transition: background-color .2s ease, color .2s ease, border-color .2s ease, fill .2s ease, box-shadow .2s ease !important; }
 
-/* ── 3. 壳：侧栏 + 内容区 + 移动端 ─────────────────────────── */
+/* ── 3. 壳：侧栏（半透明模糊材质，内容下滑过）+ 内容区 + 移动端 ── */
 #hmg-sidebar {
   position: fixed; left: 0; top: 0; bottom: 0; width: 220px; z-index: 60;
-  background: var(--canvas); border-right: 1px solid var(--hairline);
+  background: var(--side-bg);
+  -webkit-backdrop-filter: blur(20px) saturate(1.3); backdrop-filter: blur(20px) saturate(1.3);
+  border-right: 1px solid var(--hairline);
+  box-shadow: inset -1px 0 0 rgba(255, 255, 255, .02);
   display: flex; flex-direction: column; padding: 12px 10px;
-  transition: transform .32s var(--ease-drawer);
+  transition: transform .32s var(--ease-drawer), background-color var(--t2) ease;
 }
 .hmg-brand { display: flex; align-items: center; gap: 9px; padding: 6px 10px 14px; }
 .hmg-brand .logo {
@@ -147,13 +159,14 @@ html.theming, html.theming * { transition: background-color .2s ease, color .2s 
   display: flex; align-items: center; gap: 10px; padding: 8px 12px;
   border-radius: var(--r-md); color: var(--ink-subtle); font-size: 14px; line-height: 1.2;
   text-decoration: none; white-space: nowrap; min-height: 36px;
-  transition: background-color var(--t1) ease, color var(--t1) ease;
+  transition: background-color var(--t1) ease, color var(--t1) ease, transform 160ms var(--ease-out);
 }
 .nav-item svg { width: 17px; height: 17px; flex: none; transition: color var(--t1) ease; }
 .nav-item:hover { background: var(--wash); color: var(--ink); }
-.nav-item:active { background: var(--surface-2); }
+.nav-item:hover svg { color: var(--ink); }
+.nav-item:active { background: var(--surface-2); transform: scale(.985); }
 .nav-item.on { background: var(--surface-2); color: var(--ink); }  /* 选中即 surface lift（pricing-tab-selected 语义） */
-.nav-item.on svg { color: var(--ink); }
+.nav-item.on svg { color: var(--accent-hover); }                   /* 选中态图标 = lavender 点缀（选中语义，品牌许可范围） */
 .hmg-side-foot { border-top: 1px solid var(--hairline); padding-top: 10px; display: flex; flex-direction: column; gap: 8px; }
 .hmg-side-row { display: flex; align-items: center; gap: 8px; }
 .pill-key {
@@ -167,13 +180,19 @@ html.theming, html.theming * { transition: background-color .2s ease, color .2s 
 .theme-btn {
   width: 32px; height: 32px; border-radius: var(--r-md); flex: none;
   display: inline-flex; align-items: center; justify-content: center;
-  color: var(--ink-subtle); font-size: 15px;
+  color: var(--ink-subtle);
   transition: background-color var(--t1) ease, color var(--t1) ease, transform 160ms var(--ease-out);
 }
+.theme-btn svg { width: 16px; height: 16px; }
 .theme-btn:hover { background: var(--wash); color: var(--ink); }
 .theme-btn:active { transform: scale(.94); }
+.side-ic { display: inline-flex; color: var(--ink-tertiary); flex: none; }
+.side-ic svg { width: 13px; height: 13px; }
+.ic-btn { display: inline-flex; align-items: center; justify-content: center; color: var(--ink-subtle); }
+.ic-btn svg { width: 14px; height: 14px; }
+.ic-btn:hover { color: var(--ink); }
 
-.hmg-main { margin-left: 220px; padding: 24px 28px 56px; max-width: 1468px; animation: hmgIn .3s var(--ease-out) both; }
+.hmg-main { margin-left: 0; padding: 28px 32px 56px 244px; max-width: 1492px; animation: hmgIn .3s var(--ease-out) both; }
 .page-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
 .page-head h1 { font-size: 20px; letter-spacing: -.3px; }
 .page-head .sub { color: var(--ink-subtle); font-size: 13px; }
@@ -213,10 +232,14 @@ body.drawer-open #hmg-drawermask { opacity: 1; visibility: visible; pointer-even
   background: var(--accent); color: var(--on-accent);
   box-shadow: var(--edge-btn), 0 1px 3px rgba(0, 0, 0, .25);
 }
-.btn-primary:hover { background: var(--accent-hover); }
-.btn-primary:active { background: var(--accent-focus); }
+.btn-primary:hover {
+  background: var(--accent-hover); transform: translateY(-1px);
+  box-shadow: 0 4px 16px rgba(94, 106, 210, .4), var(--edge-btn);
+}
+.btn-primary:active { background: var(--accent-focus); transform: scale(.97); box-shadow: var(--edge-btn), 0 1px 3px rgba(0, 0, 0, .25); }
 .btn-secondary { background: var(--surface-2); color: var(--ink); border-color: var(--hairline); box-shadow: var(--edge-btn); }
-.btn-secondary:hover { background: var(--surface-3); border-color: var(--hairline-strong); }
+.btn-secondary:hover { background: var(--surface-3); border-color: var(--hairline-strong); transform: translateY(-1px); box-shadow: 0 3px 10px rgba(0, 0, 0, .22), var(--edge-btn); }
+.btn-secondary:active { transform: scale(.97); box-shadow: var(--edge-btn); }
 .btn-danger { background: var(--err-tint); color: var(--err-ink); border-color: transparent; }
 .btn-danger:hover { background: var(--err-tint); border-color: var(--err-line); filter: brightness(1.12); }
 :root[data-theme="light"] .btn-danger:hover { filter: none; background: rgba(235, 87, 87, .14); }
@@ -267,13 +290,22 @@ textarea.inp { resize: vertical; min-height: 64px; }
 .switch input:focus-visible + i { box-shadow: 0 0 0 2px var(--focus-ring); }
 
 /* ── 6. 卡片 / 徽章 / 布局工具 ─────────────────────────────── */
-/* 卡片 = surface-1 + hairline + 顶边高光；hover 抬升到 surface-2 + hairline-strong（品牌 Elevation 2 语义），
-   不位移不加投影——深色上"阴影抬卡"是反模式，层次全靠表面阶梯。 */
+/* 卡片 = surface-1 + hairline + 顶边高光 + 落地影；hover 浮起（-2px）+ 阴影绽放 + 顶部辉光发丝线。
+   大容器（供应商卡/log 卡）只做描边+辉光，不位移（整卡大片位移晃眼）；小卡片全套浮起。 */
+.card, .stat-card, .pc-card, .log-card {
+  position: relative;
+  transition: background-color var(--t2) var(--ease-out), border-color var(--t2) var(--ease-out),
+              box-shadow var(--t2) var(--ease-out), transform var(--t2) var(--ease-out);
+}
+.card::before, .stat-card::before, .pc-card::before, .log-card::before {
+  content: ""; position: absolute; inset: 0 0 auto 0; height: 1px; z-index: 1;
+  border-radius: var(--r-lg) var(--r-lg) 0 0; pointer-events: none;
+  background: var(--sheen); opacity: 0; transition: opacity var(--t2) ease;
+}
 .card {
   background: var(--surface-1); border: 1px solid var(--hairline); border-radius: var(--r-lg);
-  padding: 16px; position: relative;
+  padding: 16px;
   box-shadow: var(--edge), var(--shadow-card);
-  transition: background-color var(--t2) var(--ease-out), border-color var(--t2) var(--ease-out), box-shadow var(--t2) var(--ease-out);
 }
 .card.hoverable:hover { background: var(--surface-2); border-color: var(--hairline-strong); }
 .card.pad-lg { padding: 24px; }
@@ -283,6 +315,17 @@ textarea.inp { resize: vertical; min-height: 64px; }
 .card-title .sub { font-weight: 400; font-size: 12px; color: var(--ink-subtle); margin-left: 6px; }
 /* 非 group 模式下直接子卡片的纵向节奏（group 模式由 .grp-body 的 grid gap 接管） */
 #models-list > .card:not(:last-child), #pool-list > .card:not(:last-child), #key-list > .card:not(:last-child) { margin-bottom: 12px; }
+
+/* 鼠标互动（触屏不设 hover）：小卡片浮起三件套；大容器描边+辉光；发丝线常开 hover */
+@media (hover: hover) and (pointer: fine) {
+  .card.hoverable:hover, #pool-list > .card:hover, .key-card:hover,
+  .stat-card:hover, .pc-card:hover {
+    background: var(--surface-2); border-color: var(--hairline-strong);
+    transform: translateY(-2px); box-shadow: var(--edge), var(--shadow-hover);
+  }
+  .provider-card:hover, .log-card:hover { border-color: var(--hairline-strong); }
+  .card:hover::before, .stat-card:hover::before, .pc-card:hover::before, .log-card:hover::before { opacity: 1; }
+}
 
 .grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
 .grid-tight { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
@@ -522,6 +565,14 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
   .modal, .menu, .toast { transform: none !important; }
   .bar > i, .q-row .q-track i { transition: width 0s; }
 }
+@media (prefers-reduced-transparency: reduce) {
+  /* 减透明 = 材质变实心（apple：frostier/solid） */
+  #hmg-sidebar, #hmg-topbar { background: var(--canvas); -webkit-backdrop-filter: none; backdrop-filter: none; }
+  .mask { -webkit-backdrop-filter: none; backdrop-filter: none; }
+}
+
+/* 小字号排版：轻微正字距助读（apple：大字负字距/小字微正字距，never one value for all sizes） */
+.badge, .chip, .hint, .fld, .fg > label, .stat-sub, .grp-count, .grp-mgmt-count, .card-title .sub, .page-head .sub { letter-spacing: .01em; }
 
 /* ── 12. 响应式 ───────────────────────────────────────────── */
 @media (max-width: 1199px) {
@@ -530,7 +581,7 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
   .hmg-brand { justify-content: center; padding: 6px 0 14px; }
   .nav-item { justify-content: center; padding: 8px 0; }
   .hmg-side-row { justify-content: center; }
-  .hmg-main { margin-left: 60px; padding: 20px; }
+  .hmg-main { padding: 20px 20px 48px 84px; }
 }
 @media (max-width: 767px) {
   #hmg-topbar { display: flex; }
@@ -540,7 +591,7 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
   #hmg-sidebar .nav-item span.lb, #hmg-sidebar .hmg-side-foot .pill-key { display: flex; }
   #hmg-sidebar .nav-item { justify-content: flex-start; padding: 10px 12px; min-height: 40px; }
   #hmg-sidebar .hmg-side-row { justify-content: flex-start; }
-  .hmg-main { margin-left: 0; padding: 14px 12px 40px; animation: none; }
+  .hmg-main { padding: 14px 12px 40px; animation: none; }
   .page-head h1 { font-size: 18px; }
   .grid, .grid-tight { grid-template-columns: 1fr; }
   .frm-row, .frm-row3 { grid-template-columns: 1fr; }

@@ -11,27 +11,27 @@
 <link rel="stylesheet" href="/hmg-admin/assets/hmg.css?v=__GATEWAY_VERSION__">
 <style>
 /* ── 本页私有：统计卡片 / 分组视图 / 分组查看行 ── */
-.stat-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); align-items: start; }
+.stat-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); }   /* 默认 stretch：同行卡片等高 */
 .stat-card {
-  background: var(--surface-1); border: 1px solid var(--hairline); border-radius: 12px; padding: 14px 16px; position: relative;
+  background: var(--surface-1); border: 1px solid var(--hairline); border-radius: 12px; padding: 16px; position: relative;
+  display: flex; flex-direction: column;            /* 纵排：进度条/元信息贴底，同行卡片底缘对齐 */
   box-shadow: var(--edge), var(--shadow-card);
-  transition: background-color 200ms cubic-bezier(.23,1,.32,1), border-color 200ms cubic-bezier(.23,1,.32,1);
   animation: hmgIn .36s cubic-bezier(.23,1,.32,1) backwards;   /* 每卡仅创建时播一次（增量更新不重建），延迟由内联 style 提供 */
+  /* hover 浮起三件套与辉光发丝线在 hmg.css 共享层（.stat-card 已列入） */
 }
-.stat-card:hover { border-color: var(--hairline-strong); }
 .stat-top { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 8px; }
 .stat-id { font-weight: 600; font-size: 13.5px; overflow-wrap: anywhere; }
 .stat-name { color: var(--ink-subtle); font-size: 12px; margin-top: 1px; overflow-wrap: anywhere; }
 .stat-badges { margin-left: auto; display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
 .stat-badges .badge { max-width: 150px; overflow: hidden; text-overflow: ellipsis; }
 button.badge { cursor: pointer; border: none; font: inherit; font-size: 12px; }
-.stat-nums { font-variant-numeric: tabular-nums; font-size: 13px; display: flex; align-items: baseline; gap: 4px; flex-wrap: wrap; }
+.stat-nums { font-variant-numeric: tabular-nums; font-size: 13px; display: flex; align-items: baseline; gap: 4px; flex-wrap: wrap; margin-bottom: 8px; }   /* 与贴底的进度条保持最小间距 */
 .stat-used { font-size: 19px; font-weight: 600; letter-spacing: -.2px; }
 .stat-sep { color: var(--ink-tertiary); }
 .stat-limit { color: var(--ink-subtle); }
 .stat-unit { color: var(--ink-tertiary); font-size: 12px; }
 .stat-limit-note { color: var(--ink-tertiary); font-size: 11.5px; }
-.stat-bar { position: relative; height: 6px; border-radius: 9999px; background: var(--surface-3); margin: 8px 0 6px; overflow: hidden; }
+.stat-bar { position: relative; height: 6px; border-radius: 9999px; background: var(--surface-3); margin: 0 0 6px; overflow: hidden; margin-top: auto; }   /* margin-top:auto：进度条+元信息贴卡片底缘（同行等高对齐） */
 .stat-fill { display: block; height: 100%; border-radius: 9999px; background: var(--accent); transition: width .3s ease; }
 .stat-card .stat-fill.warn { background: var(--warning); }
 .stat-card .stat-fill.full { background: var(--danger); }
@@ -86,8 +86,8 @@ button.badge { cursor: pointer; border: none; font: inherit; font-size: 12px; }
         <button data-dim="pool" onclick="setStatDim('pool', this)">按模型池</button>
         <button data-dim="paid" onclick="setStatDim('paid', this)">按付费量</button>
       </div>
-      <button class="btn btn-ghost btn-sm" onclick="grpStatsOpen()">📊 分组查看</button>
-      <button class="btn btn-ghost btn-sm" id="btn-hr-stats" onclick="showHeadroomStats()">🪴 节省统计</button>
+      <button class="btn btn-ghost btn-sm" onclick="grpStatsOpen()">分组查看</button>
+      <button class="btn btn-ghost btn-sm" id="btn-hr-stats" onclick="showHeadroomStats()">节省统计</button>
     </div>
   </div>
   <div class="stat-grid" id="stats-grid"><div class="empty">加载中…</div></div>
@@ -228,7 +228,7 @@ async function loadStats() {
       : "<span class=\"badge\">每日</span>";
     const freeBadge = m.is_free ? '<span class="badge badge-ok">免费</span>' : '<span class="badge badge-err">付费</span>';
     const costBtn = (m.cost_enabled || !m.is_free)
-      ? `<button type="button" class="badge badge-acc" data-mid="${esc(m.id)}" onclick="showCostEst(this.dataset.mid)" title="缓存命中/未命中/输出 token 明细与费用预估">💰 预估费用</button>`
+      ? `<button type="button" class="badge badge-acc" data-mid="${esc(m.id)}" onclick="showCostEst(this.dataset.mid)" title="缓存命中/未命中/输出 token 明细与费用预估">预估费用</button>`
       : "";
     const giftTip = posted => "当前可用余额：" + (m.gift_balance ?? 0).toLocaleString()
       + "\n当前可用总额：" + giftPool.toLocaleString() + (posted
@@ -632,7 +632,7 @@ function paidSub(x) {
 }
 function paidTitle(x) {
   return "预估累计费用 =（缓存命中×单价 + 未命中×单价 + 输出×单价）/ 1M，按平峰单价计"
-    + (x._peak ? "；该模型启用了高峰分段计价，高峰部分未计入本排序（明细见「💰 预估费用」弹窗）" : "");
+    + (x._peak ? "；该模型启用了高峰分段计价，高峰部分未计入本排序（明细见「预估费用」弹窗）" : "");
 }
 function statPaidCardHTML(x, i, pct) {
   return `
@@ -700,7 +700,7 @@ function statRenderPaid(grid, items) {
 let GS = { dim: "model", metric: "tokens", days: 7 };
 function grpStatsOpen() {
   gsModal = HMG.modal({
-    title: "📊 用量分组查看",
+    title: "用量分组查看",
     wide: true,
     body: `
       <div class="gs-seg-row"><span class="gs-seg-label">维度</span>

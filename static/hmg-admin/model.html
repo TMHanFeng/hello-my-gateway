@@ -11,8 +11,7 @@
 <link rel="stylesheet" href="/hmg-admin/assets/hmg.css?v=__GATEWAY_VERSION__">
 <style>
 /* ── 本页私有：供应商/模型卡片与移植表单原子（跨页共用部分在 hmg.css） ── */
-.provider-card { padding: 14px 16px 8px; transition: background-color 200ms cubic-bezier(.23,1,.32,1), border-color 200ms cubic-bezier(.23,1,.32,1); }
-.provider-card:hover { border-color: var(--hairline-strong); }
+.provider-card { padding: 14px 16px 8px; }
 .provider-head {
   display: flex; align-items: flex-start; gap: 10px; flex-wrap: wrap; margin-bottom: 4px;
   padding-bottom: 10px; border-bottom: 1px solid var(--hairline);
@@ -89,7 +88,7 @@ input[type="range"] { accent-color: var(--accent); width: 100%; }
   <div class="page-head">
     <h1>模型管理</h1><span class="sub">注册模型接口与供应商；同名模型自动归入大池子统一调度</span><span class="sp"></span>
     <div class="toolbar">
-      <button class="btn btn-ghost" onclick="grpOpenSettings()" title="分组收纳设置（模型管理 / 模型池）">⚙️ 分组</button>
+      <button class="btn btn-ghost" onclick="grpOpenSettings()" title="分组收纳设置（模型管理 / 模型池）">分组</button>
       <button class="btn btn-secondary" onclick="showAddProvider()">＋ 添加供应商</button>
       <button class="btn btn-primary" onclick="showAdd()">＋ 添加模型</button>
     </div>
@@ -166,7 +165,7 @@ async function loadModels() {
           <div class="card-sub mono">${esc(p.id)} · ${esc(p.base_url)}${p.proxy_url ? ` <span class="badge badge-acc" title="代理: ${esc(p.proxy_url)}">🛡️ 代理</span>` : ""}</div>
         </div>
         <div class="row wrap">
-          ${grpOn ? `<button class="btn btn-ghost btn-sm" title="分组收纳" onclick="grpAssignMenu(event,'providerGroups','${jsq(p.id)}')">📂</button>` : ""}
+          ${grpOn ? `<button class="btn btn-ghost btn-sm ic-btn" title="分组收纳" onclick="grpAssignMenu(event,'providerGroups','${jsq(p.id)}')">${HMG_ICONS.folder}</button>` : ""}
           <button class="btn btn-ghost btn-sm" onclick="editProvider('${jsq(p.id)}')">编辑</button>
           <button class="btn btn-danger btn-sm" onclick="delProvider('${jsq(p.id)}')">删除</button>
           <button class="btn btn-primary btn-sm" onclick="showAddUnder('${jsq(p.id)}')">＋ 添加模型</button>
@@ -747,7 +746,7 @@ function mformHtml() {
     <div id="smart-live" class="hidden" style="font-size:12px;color:var(--ink-muted);margin-bottom:13px;line-height:1.6"></div>
     <div class="fg" id="reasoning-map-fg"><label>思考映射 reasoning_map（JSON，可选）：统一档位 off/minimal/low/medium/high/max → 透传上游的请求体片段；留空 = 不注入（embedding/rerank 模型不适用）</label><textarea name="reasoning_map" rows="5" class="inp mono" placeholder='{"off": {"thinking": {"type": "disabled"}}, "medium": {"thinking": {"type": "enabled"}}}'></textarea><div id="reasoning-probe-strip" style="margin-top:6px"></div></div>
     <div class="modal-actions">
-      <button type="button" class="btn btn-ghost" id="m-test-btn" onclick="testConnectivity()">🔌 测试连接</button>
+      <button type="button" class="btn btn-ghost" id="m-test-btn" onclick="testConnectivity()">测试连接</button>
       <span class="right"><button type="button" class="btn btn-secondary" onclick="modelModal.close()">取消</button>
       <button type="submit" class="btn btn-primary" id="model-submit-btn">添加</button></span>
     </div>
