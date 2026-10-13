@@ -146,3 +146,9 @@ DESIGN.md **未发布产品浅色主题**(Known Gaps 明示;inverse-* 是品牌�
 2. **「不要位移不加投影」的 Linear 营销站戒律在产品面要放开**——用户明确的"缺鼠标互动/廉价感"正来自静态 hover。修法：小卡片浮起三件套（位移+阴影绽放+描边）+ 全卡片辉光发丝线 + 按钮上浮辉光；大容器只描边不位移（大片位移晃眼）。apple-design 的「材质即层级」补上：侧栏/顶栏半透明模糊、内容下滑过、reduced-transparency 退实心。
 
 **其余**：stats 同行等高（stretch + flex 纵排 + bar margin-top:auto 贴底）；emoji 图标全量换线性 SVG（廉价感主因，弹窗标题保留作个性）；12px 小字 +.01em 正字距（apple：字距随字号，never one value for all sizes）。回归 282/282（T40k 画布锚点同步）。
+
+## 14. 四线体检实录（2026-10-13 v2.17.3，对齐/功能/美观/性能主动巡查）
+
+- **教训（等高修复要枚举全部网格容器）**：v2.17.2 修「卡片大小不一致」只改了平铺 `.stat-grid`，漏了分组视图的真实渲染容器 `.stat-group-body`——同一批卡片有**多条渲染路径**（平铺/分组/外层系统组嵌套），修样式问题时必须 `grep grid-template-columns` 枚举全页容器逐个核对，不能只修截图上看到的那条路径。修复后实测 17 行 0 参差 + 进度条贴底对齐；T40g 以整行锚点防回退。
+- **鉴别法（IAB 遮挡节流冻结动画时钟）**：带 transition 的属性计算样式会冻结在过渡起始值（76 个 hmgIn 钉在 t=0 为铁证），造成「主题切换不变色」假bug。三步鉴别：①无 transition 的元素（body）计算值即时正确 → 级联没坏；②`document.getAnimations()` 大量 running 且 currentTime=0 → 时钟冻结；③`getAnimations().forEach(a=>a.finish())` 后断言终态全部正确 → 环境问题结案。不要把计算样式冻结当产品 bug 修。
+- **其余四线基线（供后续回归参考）**：DCL 80ms；共享资产 gzip 后 10.3K/17.8K；六页零裸 setInterval；跨页按钮 27px 是 `.btn-sm` 刻意紧凑档非漂移；移动端弹窗实测 380/390 宽是布局视口（innerWidth 含 10px 经典滚动条），真机 overlay 滚动条即全宽——测量时对比 `clientWidth` 而非 `innerWidth`。

@@ -51,7 +51,7 @@ button.badge { cursor: pointer; border: none; font: inherit; font-size: 12px; }
 .sg-drag { margin-left: auto; cursor: grab; color: var(--ink-tertiary); font-size: 12px; }
 .stat-group.dragging { opacity: .4; }
 .stat-group.collapsed .stat-group-body, .stat-ogroup.collapsed .stat-ogroup-body { display: none; }
-.stat-group-body { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); align-items: start; }
+.stat-group-body { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); }   /* 默认 stretch：分组内同行卡片等高（与 .stat-grid 同款） */
 .stat-ogroup-head { border-top: 1px solid var(--hairline); padding-top: 12px; margin-top: 6px; }
 .stat-ogroup-body { display: flex; flex-direction: column; gap: 4px; padding-bottom: 6px; }
 .stat-subcard { border-style: dashed; background: transparent; }

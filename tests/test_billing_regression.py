@@ -2458,10 +2458,11 @@ def main():
               all(s in _pages40["pools"].text for s in ("function loadPools", "poolItemHTML", "collectPoolModels",
                   "openSingleMode", "openFallbackTargets", "renamePool", "togglePoolSwitch", "toggleAutoOrder",
                   "toggleLoadBalance", "bindPoolDrag", "bindDrag")), None)
-        check("T40g stats页业务接线(四维度/安全阀红线红区/gift余额口径/嵌套分组/付费视图/增量渲染/5s轮询守卫)",
+        check("T40g stats页业务接线(四维度/安全阀红线红区/gift余额口径/嵌套分组/付费视图/增量渲染/5s轮询守卫/分组网格等高)",
               all(s in _pages40["stats"].text for s in ('data-dim="billing"', 'data-dim="provider"', 'data-dim="pool"',
                   'data-dim="paid"', "stat-mark", "stat-redzone", "gift_yesterday_leftover", "statCardEnsure",
-                  "statRenderGrouped", "statRenderPaid", "_statLoadSeq", "HMG.poll.start")), None)
+                  "statRenderGrouped", "statRenderPaid", "_statLoadSeq", "HMG.poll.start",
+                  ".stat-group-body { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); }")), None)
         check("T40h logs页业务接线(原因码全集含余量熔断/池筛选/增量刷新/序号守卫/5s轮询)",
               all(s in _pages40["logs"].text for s in ("provider_quota_exhausted", "fallback_switch_error", "peak_blocked",
                   "reasonChip", "formatDetail", "_logLoadSeq", "populateLogFilter", "HMG.poll.start")), None)
