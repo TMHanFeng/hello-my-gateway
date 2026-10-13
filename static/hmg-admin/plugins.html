@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>插件中心 · HMG Admin</title>
+<script>
+/* 主题引导：渲染前定 data-theme，防闪白（跟随系统 → localStorage 手动值优先） */
+(function(){try{var t=localStorage.getItem('hmg_theme');if(t!=='light'&&t!=='dark')t=window.matchMedia&&matchMedia('(prefers-color-scheme: light)').matches?'light':'dark';document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();
+</script>
+<link rel="stylesheet" href="/hmg-admin/assets/hmg.css?v=__GATEWAY_VERSION__">
+<style>
+/* ── 本页私有：插件卡片网格 ── */
+.pc-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+.pc-card { background: var(--surface-1); border: 1px solid var(--hairline); border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 8px; position: relative; }
+.pc-card::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 1px; background: var(--topline); border-radius: 12px 12px 0 0; pointer-events: none; }
+.pc-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.pc-icon { font-size: 20px; }
+.pc-head b { font-size: 14.5px; }
+.pc-head .switch { margin-left: auto; }
+.pc-desc { font-size: 12.5px; color: var(--ink-muted); line-height: 1.6; }
+.pc-meta { font-size: 11.5px; color: var(--ink-tertiary); }
+.pc-hint { font-size: 12px; color: var(--accent-hover); background: color-mix(in srgb, var(--accent) 8%, transparent); border-radius: 6px; padding: 5px 8px; }
+.pc-actions { display: flex; gap: 8px; margin-top: 2px; }
+.pc-add { border-style: dashed; align-items: center; justify-content: center; text-align: center; cursor: pointer; color: var(--ink-subtle); font-size: 14px; gap: 6px; }
+.pc-add:hover { background: var(--surface-2); color: var(--ink); }
+.pc-add span { font-size: 11.5px; color: var(--ink-tertiary); }
+.pc-row { display: flex; align-items: center; gap: 8px; padding: 7px 0; border-bottom: 1px solid var(--hairline); font-size: 13px; }
+.pc-row:last-child { border-bottom: none; }
+.pc-pool-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.pc-pool-item { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--hairline); border-radius: 6px; padding: 5px 10px; font-size: 13px; cursor: pointer; min-height: 32px; }
+.pc-pool-item input { accent-color: var(--accent); }
+.pc-slider { display: flex; align-items: center; gap: 10px; }
+.pc-slider input[type="range"] { flex: 1; accent-color: var(--accent); }
+.pc-slider-val { min-width: 36px; text-align: right; font-variant-numeric: tabular-nums; color: var(--accent-hover); font-weight: 600; }
+.hr-radio { display: flex; gap: 8px; align-items: flex-start; border: 1px solid var(--hairline); border-radius: 8px; padding: 10px 12px; cursor: pointer; font-size: 12.5px; }
+.hr-radio input { accent-color: var(--accent); margin-top: 2px; }
+.hr-radio.on { border-color: var(--accent); }
+.hr-radio-title { display: block; font-size: 13px; font-weight: 500; color: var(--ink); }
+.hr-radio-desc { display: block; color: var(--ink-subtle); margin-top: 2px; line-height: 1.5; }
+.hr-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--hairline); }
+.hr-row-label { font-size: 13.5px; font-weight: 500; }
+.hr-row-desc { font-size: 12px; color: var(--ink-subtle); margin-top: 3px; line-height: 1.6; }
+pre.codeblock { background: var(--surface-2); border: 1px solid var(--hairline); border-radius: 8px; padding: 12px; font-size: 11.5px; line-height: 1.6; overflow: auto; white-space: pre; font-family: ui-monospace, Consolas, monospace; }
+</style>
+</head>
+<body data-page="plugins">
+<div id="hmg-topbar"></div>
+<aside id="hmg-sidebar"></aside>
+<div id="hmg-drawermask"></div>
+<main class="hmg-main">
+  <div class="page-head">
+    <h1>插件中心</h1><span class="sub">网关选配功能以插件形式热插拔：启用 / 停用 / 改配置即时生效（无需重启）；未启用的插件完全旁路</span><span class="sp"></span>
+    <div class="toolbar">
+      <button class="btn btn-secondary btn-sm" onclick="scanPlugins()">🔄 扫描新插件</button>
+      <button class="btn btn-ghost btn-sm" onclick="pcOpenHowto()">📦 自定义插件指南</button>
+    </div>
+  </div>
+  <div class="pc-grid" id="pc-grid"><div class="empty">加载中…</div></div>
+</main>
+<script src="/hmg-admin/assets/hmg.js?v=__GATEWAY_VERSION__"></script>
+<script>
+"use strict";
+HMG.renderShell();
+/* ═══════════ 插件中心页（业务逻辑自 hfadmin 移植，API 零改动）═══════════ */
+const api = HMG.api, esc = HMG.esc, jsq = HMG.jsq, toast = HMG.toast;
+let PC_CACHE = [];
+let PC_STATE = {};   // 插件可见性：停用的插件，其在各页面的功能入口隐藏（模型页 Headroom 勾选 / 池页 Switch 开关）
+let hrSetModal = null, pcSetModal = null, howtoModal = null, switchModal = null;
+
+async function loadPluginCenter() {
+  const d = await api("/admin/plugins");
+  if (!d) return;
+  PC_CACHE = d.plugins || [];
+  PC_CACHE.forEach(p => { PC_STATE[p.id] = !!p.enabled; });
+  const grid = document.getElementById("pc-grid");
+  grid.innerHTML = PC_CACHE.map(pcCard).join("")
+    + '<div class="pc-card pc-add" onclick="pcOpenHowto()">➕ 添加自定义插件…<span>manifest.json 丢进 app/plugins/installed/ 点「扫描」即接入</span></div>';
+}
+function pcCard(p) {
+  const st = p.enabled ? '<span class="badge badge-ok">已启用</span>' : "<span class=\"badge\">已停用</span>";
+  const kd = p.kind === "builtin" ? "" : '<span class="badge badge-acc">自定义</span>';
+  return '<div class="pc-card" id="pc-card-' + esc(p.id) + '">'
+    + '<div class="pc-head"><span class="pc-icon">' + (p.icon || "🧩") + "</span><b>" + esc(p.name) + "</b>" + kd + st
+    + '<label class="switch" title="启用 / 停用（热生效，无需重启）"><input type="checkbox" ' + (p.enabled ? "checked" : "")
+    + ' onchange="togglePlugin(\'' + jsq(p.id) + '\', this.checked)"><i></i></label></div>'
+    + '<div class="pc-desc">' + esc(p.description || "") + "</div>"
+    + '<div class="pc-meta">v' + esc(p.version) + (p.author ? " · " + esc(p.author) : "") + " · " + (p.has_code ? "含代码" : "纯配置") + "</div>"
+    + (p.ui_hint ? '<div class="pc-hint">💡 ' + esc(p.ui_hint) + "</div>" : "")
+    + '<div class="pc-actions"><button class="btn btn-ghost btn-sm" onclick="openPluginSettings(\'' + jsq(p.id) + '\')">⚙ 插件设置</button></div>'
+    + "</div>";
+}
+async function togglePlugin(id, on) {
+  const d = await api("/admin/plugins/" + id + "/" + (on ? "enable" : "disable"), { method: "POST" });
+  if (!d) { loadPluginCenter(); return; }
+  toast((on ? "✅ 已启用 " : "⛔ 已停用 ") + id + "（热生效，无需重启）", on ? "ok" : "warn");
+  PC_STATE[id] = !!on;
+  loadPluginCenter();
+}
+async function scanPlugins() {
+  toast("正在扫描插件目录…");
+  const d = await api("/admin/plugins/scan", { method: "POST" });
+  if (!d) return;
+  toast("扫描完成" + ((d.events || []).length ? "：" + d.events.join("；") : "：没有发现新插件"), "ok");
+  loadPluginCenter();
+}
+function openPluginSettings(id) {
+  if (id === "headroom") { openHeadroomSettings(); return; }
+  if (id === "switch_pool") { openSwitchSettings(); return; }
+  openGenericSettings(id);
+}
+function pcOpenHowto() {
+  howtoModal = HMG.modal({
+    title: "📦 自定义插件指南",
+    wide: true,
+    body: `
+      <div class="hint" style="line-height:1.9;margin-bottom:10px">
+        ① 在 <b>app/plugins/installed/</b> 下新建文件夹（如 <span class="mono">my_plugin</span>）；<br>
+        ② 放入 <b>manifest.json</b>（必填 <span class="mono">id / name / version</span>）——仅凭清单即可获得一张可启停、可存配置的插件卡片（纯配置型插件，零代码）；<br>
+        ③ 需要代码能力再加 <b>plugin.py</b>：暴露 <span class="mono">create_plugin(manifest)</span> 工厂或模块级 <span class="mono">PLUGIN</span> 实例，继承 GatewayPlugin——<span class="mono">on_enable/on_disable</span> 热插拔（可注册/注销路由）、<span class="mono">router</span> 自带 API（挂载于 /admin/plugin_settings/&lt;id&gt;）、<span class="mono">active_compressor</span> 出站压缩 hook；<br>
+        ④ 回插件中心点「🔄 扫描新插件」——卡片立即出现，全程无需重启网关。
+      </div>
+      <pre class="codeblock">{
+  "id": "my_plugin",
+  "name": "我的插件",
+  "version": "0.1.0",
+  "icon": "🚀",
+  "description": "一句话说明",
+  "kind": "custom",
+  "config_scope": "managed",
+  "default_enabled": false,
+  "config_schema": [
+    {"key": "threshold", "type": "int", "default": 100,
+     "min": 0, "max": 9999, "title": "阈值", "desc": "设置页自动渲染与校验"}
+  ]
+}</pre>`,
+    footer: [{ label: "关闭", cls: "btn btn-secondary", onClick: ({ close }) => close() }],
+  });
+}
+/* ── Switch 池：汇总各池开关状态（只读；开关本体在「模型池」页池卡片上） ── */
+async function openSwitchSettings() {
+  const d = await api("/admin/pools");
+  if (!d) return;
+  const pools = d.pools || {};
+  const rows = Object.entries(pools).map(([name, cfg]) =>
+    '<div class="pc-row"><b style="flex:1">' + esc(name) + "</b>"
+    + (cfg.switch_enabled ? '<span class="badge badge-ok">🔀 Switch 已开启</span>' : "<span class=\"badge\">未开启</span>")
+    + '<span style="opacity:.55;font-size:11.5px">' + ((cfg.model_ids || []).length) + " 个模型</span></div>").join("");
+  switchModal = HMG.modal({
+    title: "🔀 Switch 切换池 · 插件设置",
+    body: `
+      <div class="hint" style="margin-bottom:12px;line-height:1.7">插件总闸即卡片上的启用开关（停用后所有池拒绝切换请求，<span class="mono">/v1</span> 调用不受影响）。每个池是否响应 <span class="mono">POST /{池名}?switch=local|net</span> 由「模型池」页对应池卡片的 Switch 开关控制，本页仅汇总展示。</div>
+      <div>${rows || '<div class="hint">暂无模型池</div>'}</div>`,
+    footer: [{ label: "关闭", cls: "btn btn-secondary", onClick: ({ close }) => close() }],
+  });
+}
+/* ── Headroom 设置（保存即热生效） ── */
+async function openHeadroomSettings() {
+  const d = await api("/admin/headroom");
+  if (!d) return;
+  hrSetModal = HMG.modal({
+    title: "🪴 Headroom 上下文压缩 · 插件设置",
+    wide: true,
+    maskClose: false,
+    body: `
+      <div class="hint" style="margin-bottom:4px">对勾选了「Headroom 上下文压缩」的模型，在其接单时自动压缩出站的大块工具输出（长 JSON 数组、日志等）以节省上游 token；同池未勾选的模型收原文，可作 A/B 对照。压缩超时或异常自动旁路，绝不影响请求本身。</div>
+      <div id="hr-avail" style="font-size:12px;margin:6px 0 2px"></div>
+      <div class="hr-row">
+        <div>
+          <div class="hr-row-label">启用插件（总开关）</div>
+          <div class="hr-row-desc">开启后，模型编辑「流式与输出选项」里的「Headroom 上下文压缩」勾选框才可勾选。关闭时所有请求一律发原文——完全旁路。</div>
+        </div>
+        <label class="switch" title="启用 / 停用 Headroom 插件"><input type="checkbox" id="hr-en"><i></i></label>
+      </div>
+      <div class="hr-row" style="display:block">
+        <div class="hr-row-label">压缩模式</div>
+        <div class="hr-row-desc">建议先用 dry_run 观察节省数据，满意后再切 live。</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">
+          <label class="hr-radio"><input type="radio" name="hr-mode" value="dry_run" onchange="applyHrModeHighlight()">
+            <span><span class="hr-radio-title">dry_run · 试运行（只统计）</span><span class="hr-radio-desc">照常发送原文，后台真实计算压缩但只记录「能省多少」，零风险观察期。</span></span></label>
+          <label class="hr-radio"><input type="radio" name="hr-mode" value="live" onchange="applyHrModeHighlight()">
+            <span><span class="hr-radio-title">live · 实际压缩（生效）</span><span class="hr-radio-desc">出站消息真实压缩后再发上游，token 节省立即生效。可点下方「🪴 节省统计」核对效果。</span></span></label>
+        </div>
+      </div>
+      <div class="hr-row">
+        <div>
+          <div class="hr-row-label">纯文本压缩（Kompress ML 模型）</div>
+          <div class="hr-row-desc">关闭 = 纯规则压缩（仅 JSON / 工具输出等结构化大块）。开启后额外对中段自然语言消息做有损压缩：首次自动从 HuggingFace 下载模型权重（数百 MB，后台进行，就绪前该类内容照常透传原文）。<span id="hr-ml-avail"></span></div>
+        </div>
+        <label class="switch" title="启用 / 停用 Kompress ML 纯文本压缩"><input type="checkbox" id="hr-kompress"><i></i></label>
+      </div>
+      <div class="hr-row" style="display:block">
+        <div class="hr-row-label">压缩参数（保持默认即可）</div>
+        <div class="frm-row3" style="margin-top:8px">
+          <div class="fg"><label>最小压缩 token 数</label><input type="number" id="hr-min" class="inp" value="500" min="0"><div class="hr-row-desc">单条消息超过此长度才压缩，越小压得越多</div></div>
+          <div class="fg"><label>保护最近消息条数</label><input type="number" id="hr-protect" class="inp" value="4" min="0"><div class="hr-row-desc">结尾 N 条对话保持原样（模型正在关注的内容）</div></div>
+          <div class="fg"><label>压缩超时（秒）</label><input type="number" id="hr-timeout" class="inp" value="10" min="1"><div class="hr-row-desc">压缩耗时超限即放弃，原文直发不卡请求</div></div>
+        </div>
+      </div>`,
+    footer: [
+      { label: "🪴 节省统计", cls: "btn btn-ghost", onClick: () => showHeadroomStats() },
+      { label: "关闭", cls: "btn btn-secondary", onClick: ({ close }) => close() },
+      { label: "💾 保存（立即热生效）", cls: "btn btn-primary", onClick: () => saveHeadroomSettings() },
+    ],
+  });
+  document.getElementById("hr-en").checked = d.enabled;
+  document.getElementById("hr-min").value = d.min_tokens_to_compress;
+  document.getElementById("hr-protect").value = d.protect_recent;
+  document.getElementById("hr-timeout").value = d.timeout_seconds;
+  document.getElementById("hr-kompress").checked = !!d.kompress_enabled;
+  const ml = document.getElementById("hr-ml-avail");
+  if (ml) {
+    ml.textContent = d.ml_available ? "✓ ML 依赖已就绪" : "✗ ML 依赖未安装（torch 或 onnxruntime + transformers，见 requirements-headroom.txt）";
+    ml.style.color = d.ml_available ? "var(--success)" : "var(--danger)";
+  }
+  document.querySelectorAll('input[name="hr-mode"]').forEach(r => r.checked = (r.value === d.mode));
+  applyHrModeHighlight();
+  const av = document.getElementById("hr-avail");
+  av.textContent = d.available ? "✓ 已检测到 headroom-ai 库，压缩可用" : "✗ 当前运行环境未安装 headroom-ai：开关可打开，但不会产生压缩（自动旁路）";
+  av.style.color = d.available ? "var(--success)" : "var(--danger)";
+}
+async function saveHeadroomSettings() {
+  const body = {
+    enabled: document.getElementById("hr-en").checked,
+    mode: (document.querySelector('input[name="hr-mode"]:checked') || {}).value || "live",
+    min_tokens_to_compress: parseInt(document.getElementById("hr-min").value) || 0,
+    protect_recent: parseInt(document.getElementById("hr-protect").value) || 0,
+    timeout_seconds: parseInt(document.getElementById("hr-timeout").value) || 10,
+    kompress_enabled: document.getElementById("hr-kompress").checked,
+  };
+  const d = await api("/admin/headroom", { method: "POST", body: JSON.stringify(body) });
+  if (d) { toast("Headroom 设置已保存并热生效", "ok"); refreshHrStatsBtn(true); }
+}
+function applyHrModeHighlight() {
+  document.querySelectorAll(".hr-radio").forEach(l => {
+    const inp = l.querySelector("input");
+    if (inp) l.classList.toggle("on", inp.checked);
+  });
+}
+/* ── 通用插件设置：按 manifest config_schema 渲染表单；无 schema 回退 JSON 编辑 ── */
+async function openGenericSettings(id) {
+  const p = PC_CACHE.find(x => x.id === id); if (!p) return;
+  const schema = p.config_schema || [];
+  let poolNames = null;
+  if (schema.some(f => f.ui === "pools")) {
+    const pd = await api("/admin/pools");
+    poolNames = pd ? Object.keys(pd.pools || {}).sort() : [];
+  }
+  let html = '<input type="hidden" id="pcf-pid" value="' + esc(id) + '">';
+  html += schema.length ? schema.map(f => pcField(f, (p.config || {})[f.key], poolNames)).join("")
+    : '<div class="fg"><label>配置（JSON）</label><textarea id="pcf-raw" class="inp mono" rows="7">'
+      + esc(JSON.stringify(p.config || {}, null, 2)) + "</textarea></div>";
+  pcSetModal = HMG.modal({
+    title: (p.icon || "🧩") + " " + p.name + " · 插件设置",
+    maskClose: false,
+    body: html,
+    footer: [
+      { label: "取消", cls: "btn btn-secondary", onClick: ({ close }) => close() },
+      { label: "💾 保存（立即热生效）", cls: "btn btn-primary", onClick: () => savePluginConfig() },
+    ],
+  });
+}
+/* ui=pools：「全部池」总闸——勾上即清空并禁用具体池勾选（存空串 = 全部池） */
+function pcPoolsAll(el) {
+  const wrap = el.closest(".pc-pool-list");
+  if (wrap) wrap.querySelectorAll("input[data-pcf-pool]").forEach(c => { c.checked = false; c.disabled = el.checked; });
+}
+function pcPoolsValue(key) {
+  const wrap = document.getElementById("pcf-" + key + "-list");
+  if (!wrap) return "";
+  const all = wrap.querySelector("input[data-pcf-all]");
+  if (all && all.checked) return "";
+  return [...wrap.querySelectorAll("input[data-pcf-pool]:checked")].map(c => c.getAttribute("data-pcf-pool")).join(",");
+}
+function pcField(f, val, poolNames) {
+  const id = "pcf-" + esc(f.key);
+  let inp;
+  if (f.ui === "pools") {
+    if (poolNames === null) {
+      inp = '<input type="text" id="' + id + '" class="inp" value="' + esc(val !== undefined && val !== null ? val : "") + '" placeholder="留空 = 全部池，多个池用逗号分隔">';
+    } else {
+      const sel = new Set(String(val === undefined || val === null ? "" : val).split(/[,;，；\s]+/).filter(Boolean));
+      const all = !sel.size;
+      inp = '<div class="pc-pool-list" id="' + id + '-list">'
+        + '<label class="pc-pool-item"><input type="checkbox" data-pcf-all ' + (all ? "checked" : "") + ' onchange="pcPoolsAll(this)"><span>🌐 全部池（默认）</span></label>'
+        + poolNames.map(n => '<label class="pc-pool-item"><input type="checkbox" data-pcf-pool="' + esc(n) + '" ' + (sel.has(n) ? "checked" : "") + (all ? " disabled" : "") + "><span>" + esc(n) + "</span></label>").join("")
+        + "</div>";
+    }
+  } else if (f.ui === "slider") {
+    const min = f.min !== undefined ? f.min : 0, max = f.max !== undefined ? f.max : 100, step = f.step || 1;
+    const cur = val !== undefined && val !== null ? val : (f.default !== undefined ? f.default : min);
+    inp = '<div class="pc-slider"><input type="range" id="' + id + '" min="' + min + '" max="' + max + '" step="' + step + '" value="' + cur
+      + '" oninput="document.getElementById(\'' + id + '-val\').textContent=this.value"><span class="pc-slider-val" id="' + id + '-val">' + cur + "</span></div>";
+  } else if (f.type === "bool") inp = '<label class="switch"><input type="checkbox" id="' + id + '" ' + (val ? "checked" : "") + "><i></i></label>";
+  else if (f.type === "enum") inp = '<select id="' + id + '" class="inp">' + (f.options || []).map(o => '<option value="' + esc(o.value) + '" ' + (val === o.value ? "selected" : "") + ">" + esc(o.label || o.value) + "</option>").join("") + "</select>";
+  else inp = '<input type="' + (f.type === "int" || f.type === "float" ? "number" : "text") + '" id="' + id + '" class="inp" value="'
+    + esc(val !== undefined && val !== null ? val : (f.default !== undefined ? f.default : "")) + '">';
+  return '<div class="fg"><label>' + esc(f.title || f.key) + "</label>" + inp + (f.desc ? '<div class="hint">' + esc(f.desc) + "</div>" : "") + "</div>";
+}
+async function savePluginConfig() {
+  const id = document.getElementById("pcf-pid").value;
+  const p = PC_CACHE.find(x => x.id === id); if (!p) return;
+  const schema = p.config_schema || [];
+  let body;
+  if (schema.length) {
+    body = {};
+    schema.forEach(f => {
+      if (f.ui === "pools") { body[f.key] = pcPoolsValue(f.key); return; }
+      const el = document.getElementById("pcf-" + f.key); if (!el) return;
+      body[f.key] = f.type === "bool" ? el.checked
+        : (f.type === "int" ? (parseInt(el.value, 10) || 0)
+          : (f.type === "float" ? (parseFloat(el.value) || 0) : el.value));
+    });
+  } else {
+    try { body = JSON.parse(document.getElementById("pcf-raw").value || "{}"); }
+    catch (e) { toast("JSON 格式错误：" + e.message, "err"); return; }
+  }
+  const d = await api("/admin/plugins/" + id + "/config", { method: "POST", body: JSON.stringify(body) });
+  if (d) { toast("已保存并热生效", "ok"); pcSetModal.close(); loadPluginCenter(); }
+}
+
+/* ═══════════ 初始化 ═══════════ */
+loadPluginCenter();
+</script>
+</body>
+</html>

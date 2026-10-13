@@ -18,6 +18,7 @@ from app.core.paths import STATIC_DIR, ensure_runtime_dirs
 from app.admin.routes import router as admin_router, GATEWAY_VERSION, GATEWAY_COMMIT, get_gateway_version
 from app.plugins.manager import plugin_center
 from app.plugins.routes import router as plugins_router
+from app.admin.hmg_routes import router as hmg_router
 from app.core.format_adapter import (
     is_anthropic_request,
     anthropic_to_openai,
@@ -63,7 +64,7 @@ async def lifespan(app: FastAPI):
     plugin_center.startup(app)
     host, port = server_bind()
     base = f"http://{host}:{port}"
-    logger.info(f"Model Gateway 启动 | 后台: {base}/admin/  {base}/hfadmin | 插件: {base}/admin/plugins | 日志: {LOG_FILE}")
+    logger.info(f"Model Gateway 启动 | 后台: {base}/admin/  {base}/hfadmin  {base}/hmg-admin/model | 插件: {base}/admin/plugins | 日志: {LOG_FILE}")
     yield
     plugin_center.shutdown()
     await quota_server.stop()
@@ -77,6 +78,7 @@ app = FastAPI(title="Model Gateway", lifespan=lifespan)
 app.add_middleware(GZipMiddleware, minimum_size=2048)
 app.include_router(admin_router)
 app.include_router(plugins_router)
+app.include_router(hmg_router)  # /hmg-admin 第三面板（六页多页面 + assets，纯只读路由）
 pool = ModelPool()
 
 

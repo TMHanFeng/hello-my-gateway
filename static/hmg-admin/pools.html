@@ -1,0 +1,611 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>模型池 · HMG Admin</title>
+<script>
+/* 主题引导：渲染前定 data-theme，防闪白（跟随系统 → localStorage 手动值优先） */
+(function(){try{var t=localStorage.getItem('hmg_theme');if(t!=='light'&&t!=='dark')t=window.matchMedia&&matchMedia('(prefers-color-scheme: light)').matches?'light':'dark';document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();
+</script>
+<link rel="stylesheet" href="/hmg-admin/assets/hmg.css?v=__GATEWAY_VERSION__">
+<style>
+/* ── 本页私有：池卡片 / 池条目 / 阈值控件 ── */
+.pool-card-head { display: flex; align-items: flex-start; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.pool-card-sub { color: var(--ink-subtle); font-size: 12px; margin-top: 2px; }
+.pool-items { display: flex; flex-direction: column; gap: 4px; margin: 8px 0; }
+.pool-item {
+  display: flex; align-items: center; gap: 8px; padding: 7px 10px;
+  background: var(--canvas); border: 1px solid var(--hairline); border-radius: 8px;
+  font-size: 13px; min-height: 36px;
+}
+.pool-item[draggable="true"] { cursor: grab; }
+.pool-item .pi-id { font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; overflow-wrap: anywhere; }
+.pool-item .drag { cursor: grab; color: var(--ink-tertiary); }
+.pi-tags { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
+.i-tip { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; border-radius: 50%; background: var(--surface-3); color: var(--ink-subtle); font-size: 10px; font-style: normal; cursor: help; flex: none; }
+.add-model-row { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+.add-model-row select { flex: 1; min-width: 0; }
+.note-box { font-size: 12.5px; line-height: 1.6; color: var(--ink-muted); background: var(--surface-2); border: 1px solid var(--hairline); border-radius: 8px; padding: 8px 12px; margin-bottom: 8px; }
+.threshold-ctl { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--ink-subtle); }
+.th-input-wrap { display: inline-flex; align-items: center; border: 1px solid var(--hairline); border-radius: 6px; background: var(--surface-1); overflow: hidden; }
+.th-input { width: 72px; border: none; background: transparent; padding: 5px 8px; font-size: 12.5px; color: var(--ink); }
+.th-input:focus { outline: none; }
+.th-unit { padding-right: 8px; font-size: 11.5px; color: var(--ink-tertiary); }
+.th-hint { font-size: 11.5px; color: var(--ink-tertiary); }
+.th-hint.ok { color: var(--success); } .th-hint.warn { color: var(--warning); }
+.sw-label { font-size: 12.5px; color: var(--ink-subtle); margin-left: 2px; }
+.single-banner { font-size: 13px; color: var(--ink-muted); background: var(--surface-2); border: 1px solid var(--hairline); border-radius: 8px; padding: 8px 12px; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.fb-check { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--hairline); font-size: 13.5px; }
+.fb-check input { accent-color: var(--accent); }
+@media (max-width: 767px) {
+  .add-model-row { flex-direction: column; align-items: stretch; }
+}
+</style>
+</head>
+<body data-page="pools">
+<div id="hmg-topbar"></div>
+<aside id="hmg-sidebar"></aside>
+<div id="hmg-drawermask"></div>
+<main class="hmg-main">
+  <div class="page-head">
+    <h1>模型池</h1><span class="sub">拖拽 ⠿ 调整优先级（手机端点一下条目/池卡片即上移一格）；池名即调用名（model="池名"）。auto 为内置池固定顶端，兜底池固定末尾</span><span class="sp"></span>
+    <div class="toolbar">
+      <div class="seg" id="pool-mode-seg">
+        <button class="on" onclick="setPoolMode('normal', this)">普通池</button>
+        <button onclick="setPoolMode('user', this)">👤 专属池</button>
+      </div>
+      <button class="btn btn-ghost" onclick="grpOpenSettings()" title="分组收纳设置（模型管理 / 模型池）">⚙️ 分组</button>
+      <button class="btn btn-primary" onclick="showAddPool()">＋ 新增池</button>
+    </div>
+  </div>
+  <div id="pool-list" class="stagger"><div class="empty">加载中…</div></div>
+</main>
+<script src="/hmg-admin/assets/hmg.js?v=__GATEWAY_VERSION__"></script>
+<script>
+"use strict";
+HMG.renderShell();
+/* ═══════════ 模型池页（业务逻辑自 hfadmin 移植，API 零改动）═══════════ */
+const api = HMG.api, esc = HMG.esc, jsq = HMG.jsq, pathEnc = HMG.pathEnc, toast = HMG.toast;
+let modelLookup = {}, providerLookup = {}, poolLookup = {};
+let poolMode = "normal";
+let PC_STATE = {};   // 插件可见性：switch_pool 停用 → 池卡片 Switch 开关隐藏
+let poolModal = null, singleModal = null, fbModal = null;
+function setInnerIfChanged(el, html) {
+  if (el.__lastHtml === html) return false;
+  el.__lastHtml = html;
+  el.innerHTML = html;
+  return true;
+}
+function protocolLabel(p) { return ({ openai: "OpenAI Compatible", anthropic: "Anthropic", openai_responses: "OpenAI Responses" })[p] || p; }
+async function refreshPluginState() {
+  const d = await api("/admin/plugins");
+  if (d) (d.plugins || []).forEach(p => { PC_STATE[p.id] = !!p.enabled; });
+}
+
+function setPoolMode(mode, btn) {
+  poolMode = mode;
+  document.querySelectorAll("#pool-mode-seg button").forEach(b => b.classList.toggle("on", b === btn));
+  loadPools();
+}
+
+async function loadPools() {
+  const [pdata, mdata, provdata] = await Promise.all([api("/admin/pools"), api("/admin/models"), api("/admin/providers")]);
+  if (!pdata || !mdata) return;
+  modelLookup = {}; mdata.models.forEach(m => modelLookup[m.id] = m);
+  providerLookup = {}; if (provdata) provdata.providers.forEach(p => providerLookup[p.id] = p);
+  poolLookup = pdata.pools;
+
+  // 按后端 pool_order 排序（JS 的 Object.keys 会把纯数字池名按整数键规则提前，故显式用有序数组渲染）
+  const _orderList = pdata.pool_order && pdata.pool_order.length
+    ? pdata.pool_order
+    : Object.keys(pdata.pools);
+  const entries = _orderList
+    .filter(name => name in pdata.pools)
+    .map(name => [name, pdata.pools[name]])
+    .filter(([name, pool]) => {
+      const isDedicated = !!pool.owner_key_id;
+      return poolMode === "user" ? isDedicated : !isDedicated;
+    });
+  if (_orderList !== Object.keys(pdata.pools)) {
+    const seen = new Set(entries.map(e => e[0]));
+    Object.entries(pdata.pools).forEach(([n, p]) => {
+      if (!seen.has(n)) {
+        const isDedicated = !!p.owner_key_id;
+        if (poolMode === "user" ? isDedicated : !isDedicated) entries.push([n, p]);
+      }
+    });
+  }
+
+  const onceItem = !document.getElementById("pool-list").__poolAnim;
+  document.getElementById("pool-list").__poolAnim = true;
+  const grpOnP = grpSettings().pools;
+  const poolItems = entries.map(([name, pool]) => {
+    const ids = pool.model_ids || [];
+    const availModels = mdata.models.filter(m => !ids.includes(m.id));
+    const availPools = Object.keys(pdata.pools).filter(p => p !== name && p !== "兜底池" && !ids.includes("pool:" + p));
+    // 下拉按供应商顺序分组排列；独立模型排最后
+    const provSeq = provdata ? provdata.providers : [];
+    const provIdx = new Map(provSeq.map((p, i) => [p.id, i]));
+    const sortedModels = availModels.slice().sort((a, b) =>
+      (a.provider_id && provIdx.has(a.provider_id) ? provIdx.get(a.provider_id) : 1e9) -
+      (b.provider_id && provIdx.has(b.provider_id) ? provIdx.get(b.provider_id) : 1e9));
+    const groupedModels = [];
+    sortedModels.forEach(m => {
+      const p = m.provider_id ? providerLookup[m.provider_id] : null;
+      const label = p ? `${p.name}（${p.id}）` : "独立模型（未挂供应商）";
+      if (!groupedModels.length || groupedModels[groupedModels.length - 1].label !== label) groupedModels.push({ label, items: [] });
+      groupedModels[groupedModels.length - 1].items.push(m);
+    });
+    const modelOpts = groupedModels.map(g => `<optgroup label="${esc(g.label)}">${g.items.map(m => `<option value="${esc(m.id)}">${esc(m.id)}（${esc(m.name || "")}）</option>`).join("")}</optgroup>`).join("");
+    const poolOpts = availPools.map(p => `<option value="pool:${esc(p)}">［池］${esc(p)}</option>`).join("");
+    const isAuto = name === "auto";
+    const isFallback = name === "兜底池";
+    const isDedicated = !!pool.owner_key_id;
+    const isDraggable = !isAuto;
+    const dedicatedTag = isDedicated ? `<span class="badge badge-warn">👤 专属池 · Key#${esc(pool.owner_key_id)}</span>` : "";
+    const _cardHtml = `
+    <div class="card" data-pool-card="${esc(name)}" ${isDraggable ? 'draggable="true"' : ""}>
+      <div class="pool-card-head">
+        <div class="grow" style="min-width:240px">
+          <div class="card-title">
+            ${isDraggable ? '<span class="drag-handle" style="cursor:grab" title="拖拽排序">⠿</span>' : '<span style="opacity:.3">⠿</span>'}
+            池：${esc(name)} <span class="badge">model="${esc(name)}" 可调用</span>
+            ${isFallback ? '<span class="badge badge-acc">🛟 兜底池</span>' : ""}
+            ${isAuto ? '<span class="badge badge-acc">内置</span>' : ""}
+            ${dedicatedTag}
+          </div>
+          <div class="pool-card-sub">${pool.strategy === "sequential" ? "策略：按序调用" : (pool.strategy || "")} · 共 ${ids.length} 项${pool.auto_order ? " · ⚡ 自动择优" : ""}</div>
+        </div>
+        <div class="row wrap">
+          <label class="switch" title="开启后：先排除不可用接口，再按实时延迟从低到高优先调用">
+            <input type="checkbox" ${pool.auto_order ? "checked" : ""} onchange="toggleAutoOrder('${jsq(name)}', this.checked)"><i></i>
+          </label><span class="sw-label">自动择优</span>
+          <label class="switch" title="负载均衡：请求按池内顺序轮流分给每个模型/子池，避免集中在最快的模型上（与自动择优互斥）">
+            <input type="checkbox" ${pool.load_balance ? "checked" : ""} onchange="toggleLoadBalance('${jsq(name)}', this.checked)"><i></i>
+          </label><span class="sw-label">负载均衡</span>
+          ${PC_STATE.switch_pool === false ? "" : `
+          <label class="switch" title="Switch 切换：开启后客户端可 POST /池名 + switch=local|net 定向调用池内一侧（local=本地模型，net=其余云端模型）；要求池内两侧都有模型">
+            <input type="checkbox" ${pool.switch_enabled ? "checked" : ""} onchange="togglePoolSwitch('${jsq(name)}', this.checked)"><i></i>
+          </label><span class="sw-label">Switch</span>
+          `}
+          <span class="threshold-ctl" title="自动择优模式下，超过此延迟(ms)的模型排到末尾；0=不限">
+            <span>⏱ 阈值</span>
+            <span class="th-input-wrap">
+              <input type="number" class="th-input" min="0" step="100" value="${pool.slow_latency_threshold ?? 3000}"
+                onchange="setSlowThreshold('${jsq(name)}', this.value); updateThHint('${jsq(name)}', this.value); this.blur();">
+              <span class="th-unit">ms</span>
+            </span>
+            <span class="th-hint" data-th-hint="${jsq(name)}"></span>
+          </span>
+          ${(!isAuto && !isFallback && grpOnP) ? `<button class="btn btn-ghost btn-sm" title="分组收纳" onclick="grpAssignMenu(event,'poolGroups','${jsq(name)}')">📂</button>` : ""}
+          <button class="btn btn-ghost btn-sm" onclick="speedPool('${jsq(name)}')">⚡ 测速本池</button>
+          ${isAuto ? `<button class="btn btn-primary btn-sm" onclick="openSingleMode()">🎯 一键单模型</button>` : ""}
+          ${isFallback ? `<button class="btn btn-ghost btn-sm" onclick="openFallbackTargets()">🛟 选择兜底对象</button>` : ""}
+          ${(!isAuto && !isFallback && !isDedicated) ? `<button class="btn btn-ghost btn-sm" onclick="renamePool('${jsq(name)}')">✏️ 重命名</button><button class="btn btn-danger btn-sm" onclick="delPool('${jsq(name)}')">删除池</button>` : ""}
+        </div>
+      </div>
+      <div id="single-active-${esc(name)}" class="single-banner hidden">
+        🔒 当前锁定模型：<strong class="mono" id="single-label-${esc(name)}"></strong>
+        <button class="btn btn-danger btn-sm" onclick="clearSingleMode('${jsq(name)}')">🔓 解除锁定</button>
+      </div>
+      ${pool.auto_order ? '<div class="note-box">⚡ 自动择优已开启：先排除不可用接口（用量用尽 / RPM·TPM 触顶），再在可用接口中按调用延迟从低到高优先调用。下方显示顺序保持不变，关闭后按设定顺序调用。</div>' : ""}
+      ${pool.load_balance ? '<div class="note-box">🔄 负载均衡已开启：每次请求按池内模型顺序轮流分配（第一个→第二个→…循环往复），请求均匀分摊到每个模型/子池。关闭后按设定顺序调用。</div>' : ""}
+      ${(PC_STATE.switch_pool !== false && pool.switch_enabled) ? '<div class="note-box">🔀 Switch 切换已开启：客户端可 POST <b>/{池名}</b> 并带 <b>switch=local|net</b> 定向调用一侧——local=令牌类型为 local 的本地模型，net=其余云端模型。同侧全不可用时报 503，不会跨侧调用；每次路由在调用记录里显示为 switch:local / switch:net。</div>' : ""}
+      <div class="pool-items" data-pool="${esc(name)}">
+        ${ids.map((id, i) => poolItemHTML(name, id, i, onceItem)).join("") || '<div class="hint">该池为空，从下方添加接口或子池。</div>'}
+      </div>
+      <div class="add-model-row">
+        <select id="addsel-${esc(name)}" class="inp">
+          <option value="">— 选择要加入的接口 / 子池 —</option>
+          <option value="" disabled>====模型接口====</option>
+          ${modelOpts}
+          <option value="" disabled>====子池====</option>
+          ${poolOpts}
+        </select>
+        <button class="btn btn-secondary btn-sm" onclick="addToPool('${jsq(name)}')">＋ 加入</button>
+      </div>
+    </div>`;
+    return { id: name, html: _cardHtml };
+  });
+  // auto 池固定分组区之外最顶、兜底池固定最底，中间池按自定义分组折叠展示
+  let poolHtml;
+  if (grpOnP && poolItems.length) {
+    const autoIt = poolItems.find(x => x.id === "auto");
+    const fbIt = poolItems.find(x => x.id === "兜底池");
+    const mid = poolItems.filter(x => x.id !== "auto" && x.id !== "兜底池");
+    poolHtml = (autoIt ? autoIt.html : "") + grpWrapHtml("poolGroups", mid) + (fbIt ? fbIt.html : "");
+  } else {
+    poolHtml = poolItems.map(i => i.html).join("") || '<div class="empty">当前模式下暂无模型池。</div>';
+  }
+  setInnerIfChanged(document.getElementById("pool-list"), poolHtml);
+  bindDrag();
+  bindPoolDrag();
+  refreshSingleModeUI();
+  // 初始化阈值 hint
+  document.querySelectorAll(".threshold-ctl").forEach(ctl => {
+    const hint = ctl.querySelector(".th-hint");
+    if (!hint) return;
+    const input = ctl.querySelector(".th-input");
+    const name = hint.dataset.thHint;
+    if (input && name) updateThHint(name, input.value);
+  });
+}
+
+function poolItemHTML(name, id, i, animate = true) {
+  const isPoolRef = id.startsWith("pool:");
+  return `
+  <div class="pool-item" draggable="true" data-id="${esc(id)}"${animate ? ` style="animation:hmgIn 280ms ease-out ${Math.min(i * 35, 400)}ms backwards"` : ""}>
+    <span class="drag" title="拖拽排序">⠿</span>
+    <span class="pi-id">${esc(id)}</span>
+    <span class="pi-tags">
+      ${isPoolRef ? '<span class="badge badge-warn">子池</span>' : (modelLookup[id] ? (modelLookup[id].is_free ? '<span class="badge badge-ok">免费</span>' : '<span class="badge badge-err">付费</span>') : '<span class="badge">未注册</span>')}
+      ${infoTip(id)}
+    </span>
+    <button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick="removeFromPool('${jsq(name)}', '${jsq(id)}')">✕</button>
+  </div>`;
+}
+
+/* 条目信息（i 气泡：data-tip 多行浮层，共享 hmg.js 的 ⓘ 机制） */
+function infoTip(id) {
+  if (id.startsWith("pool:")) {
+    const pname = id.slice(5);
+    const p = poolLookup[pname];
+    const members = p ? (p.model_ids || []) : [];
+    const rows = [["类型", "嵌套子池"], ["择优模式", p && p.auto_order ? "自动（按延迟）" : "按设定顺序"], ["包含项数", String(members.length)], ...members.map((mid, idx) => [`${idx + 1}`, mid])];
+    return `<i class="i-tip" data-tip="池：${esc(pname)}\n${rows.map(r => esc(r[0]) + "：" + esc(r[1])).join("\n")}">i</i>`;
+  }
+  const m = modelLookup[id];
+  if (!m) return `<i class="i-tip" data-tip="${esc(id)}\n该接口未在模型库中注册">i</i>`;
+  const p = providerLookup[m.provider_id];
+  const rows = [
+    ["协议", protocolLabel(p ? p.protocol : m.provider)],
+    ["模型名", m.name],
+    ["Base URL", p ? p.base_url : (m.base_url || "")],
+    ["所属供应商", p ? `${p.name}（${p.id}）` : "—（独立内联）"],
+    ["收费标注", m.is_free ? "免费" : "付费"],
+    ["模态", m.modality === "embedding" ? "embedding（嵌入模型）" : m.modality === "rerank" ? "rerank（重排模型）" : m.modality === "vision" ? "多模态" : "纯文本"],
+    ["令牌", m.token_type === "one_time" ? "一次性" : (m.token_type === "local" ? "本地模型" : (m.token_type === "rolling_5h" ? "5h 限额" : (m.token_type === "all_day" ? "付费·全天可用" : (m.token_type === "idle_only" ? "付费·仅闲时可用" : "每日"))))],
+    [(m.token_type === "local" ? "本地用量（不计费）" : (m.token_type === "rolling_5h" ? "5h 窗口限额" : "每日上限")), m.daily_token_limit ? m.daily_token_limit.toLocaleString() + (m.billing_mode === "request" ? " 次" : " Token") : "不限"],
+    ["RPM/TPM", `${m.rpm_limit || "∞"}/${m.tpm_limit || "∞"}`],
+    ["并发", String(m.max_concurrency)],
+    ["超时", m.timeout_seconds == null ? "默认（120s）" : (m.timeout_seconds === 0 ? "无限等待" : m.timeout_seconds + "s")],
+  ];
+  return `<i class="i-tip" data-tip="${esc(m.id)}\n${rows.map(r => esc(r[0]) + "：" + esc(r[1])).join("\n")}">i</i>`;
+}
+
+function collectPoolModels(poolName, pools, visiting = {}) {
+  if (visiting[poolName]) return [];
+  visiting[poolName] = true;
+  const out = [];
+  const pool = pools[poolName];
+  (pool?.model_ids || []).forEach(id => {
+    if (id.startsWith("pool:")) out.push(...collectPoolModels(id.slice(5), pools, visiting));
+    else out.push(id);
+  });
+  return out;
+}
+
+async function openSingleMode() {
+  const data = await api("/admin/pools/auto/single_override");
+  const cur = data && data.model_id ? data.model_id : "";
+  const models = collectPoolModels("auto", poolLookup);
+  singleModal = HMG.modal({
+    title: "🎯 单模型锁定 · auto",
+    body: `
+      <div class="hint" style="margin-bottom:12px">开启后该池只使用选定模型，其余全部跳过；池内布局不变。</div>
+      <div class="fg"><label>选择模型</label><select id="single-sel" class="inp"><option value="">— 选择模型 —</option>
+        ${models.map(mid => `<option value="${esc(mid)}" ${mid === cur ? "selected" : ""}>${modelLookup[mid] ? esc(mid + "（" + modelLookup[mid].name + "）") : esc(mid)}</option>`).join("")}
+      </select></div>`,
+    footer: [
+      { label: "取消", cls: "btn btn-secondary", onClick: ({ close }) => close() },
+      { label: "🔒 锁定", cls: "btn btn-primary", onClick: () => setSingleMode() },
+    ],
+  });
+}
+async function setSingleMode() {
+  const mid = document.getElementById("single-sel").value;
+  if (!mid) { toast("请选择要锁定的模型", "err"); return; }
+  const ok = await api("/admin/pools/auto/single_override", { method: "POST", body: JSON.stringify({ model_id: mid }) });
+  if (!ok) return;
+  singleModal.close();
+  toast("已锁定：" + mid, "ok");
+  loadPools();
+}
+async function clearSingleMode(name) {
+  const ok = await api("/admin/pools/" + pathEnc(name) + "/single_override", { method: "DELETE" });
+  if (!ok) return;
+  toast("已解除锁定：" + name, "ok");
+  loadPools();
+}
+async function refreshSingleModeUI() {
+  const data = await api("/admin/pools/auto/single_override");
+  document.querySelectorAll("[id^=\"single-active-\"]").forEach(el => {
+    const name = el.id.replace("single-active-", "");
+    const label = document.getElementById("single-label-" + name);
+    const has = data && data.model_id;
+    el.classList.toggle("hidden", !has);
+    if (label && has) label.textContent = data.model_id;
+  });
+}
+
+async function toggleAutoOrder(name, enabled) {
+  const pdata = await api("/admin/pools");
+  if (!pdata || !pdata.pools[name]) return;
+  const hadLb = !!pdata.pools[name].load_balance;
+  // update_pool 必填 model_ids：缺省会 400
+  const ok = await api("/admin/pools/" + pathEnc(name), { method: "PUT", body: JSON.stringify({ model_ids: pdata.pools[name].model_ids || [], auto_order: enabled, load_balance: enabled ? false : undefined }) });
+  if (ok) {
+    toast(enabled ? "已开启自动择优：" + name : "已关闭自动择优：" + name, "ok");
+    if (enabled && hadLb) toast("负载均衡已自动关闭（与自动择优互斥）", "warn");
+    loadPools();
+  }
+}
+async function toggleLoadBalance(name, enabled) {
+  const pdata = await api("/admin/pools");
+  if (!pdata || !pdata.pools[name]) return;
+  const hadAo = !!pdata.pools[name].auto_order;
+  const ok = await api("/admin/pools/" + pathEnc(name), { method: "PUT", body: JSON.stringify({ model_ids: pdata.pools[name].model_ids || [], load_balance: enabled, auto_order: enabled ? false : undefined }) });
+  if (ok) {
+    toast(enabled ? "已开启负载均衡：" + name : "已关闭负载均衡：" + name, "ok");
+    if (enabled && hadAo) toast("自动择优已自动关闭（与负载均衡互斥）", "warn");
+    loadPools();
+  }
+}
+// Switch 切换开关：开启被拒（池内缺某侧模型）时 api() 自动 toast 服务端原因
+async function togglePoolSwitch(name, enabled) {
+  const pdata = await api("/admin/pools");
+  if (!pdata || !pdata.pools[name]) return;
+  const ok = await api("/admin/pools/" + pathEnc(name), { method: "PUT", body: JSON.stringify({ model_ids: pdata.pools[name].model_ids || [], switch_enabled: enabled }) });
+  if (ok) {
+    toast(enabled ? "已开启 Switch 切换：" + name : "已关闭 Switch 切换：" + name, "ok");
+  }
+  loadPools();  // 失败也重拉：勾选回弹为服务端真实状态
+}
+async function setSlowThreshold(name, val) {
+  const v = parseInt(val);
+  if (isNaN(v) || v < 0) { toast("阈值必须为非负数字", "err"); loadPools(); return; }
+  const data = await api("/admin/pools");
+  if (!data || !data.pools[name]) return;
+  const ok = await api("/admin/pools/" + pathEnc(name), { method: "PUT", body: JSON.stringify({ model_ids: data.pools[name].model_ids, slow_latency_threshold: v }) });
+  if (ok) { toast(v === 0 ? name + " 延迟阈值：不限制" : name + " 延迟阈值：" + v + "ms", "ok"); loadPools(); }
+}
+function updateThHint(name, val) {
+  const v = parseInt(val);
+  const hint = document.querySelector('[data-th-hint="' + name.replace(/"/g, '\\"') + '"]');
+  if (hint) {
+    if (isNaN(v) || v <= 0) { hint.textContent = "不限速"; hint.className = "th-hint ok"; }
+    else if (v <= 1000) { hint.textContent = "> " + (v / 1000).toFixed(1) + "s 即降级（激进）"; hint.className = "th-hint warn"; }
+    else if (v <= 3000) { hint.textContent = "> " + (v / 1000).toFixed(1) + "s 即降级"; hint.className = "th-hint ok"; }
+    else { hint.textContent = "> " + (v / 1000).toFixed(1) + "s 即降级（宽松）"; hint.className = "th-hint"; }
+  }
+}
+async function openFallbackTargets() {
+  const data = await api("/admin/pools");
+  if (!data) return;
+  const rows = Object.entries(data.pools)
+    .filter(([n]) => n !== "兜底池")
+    .map(([n, p]) => {
+      const isAuto = n === "auto";
+      const checked = isAuto ? "checked disabled" : (p.fallback_pool === "兜底池" ? "checked" : "");
+      const tag = isAuto ? ' <span class="badge badge-acc">内置·强制</span>' : "";
+      return `<label class="fb-check"><input type="checkbox" value="${esc(n)}" ${checked}> ${esc(n)}${tag}</label>`;
+    }).join("");
+  fbModal = HMG.modal({
+    title: "🛟 选择兜底对象",
+    body: `
+      <div class="hint" style="margin-bottom:12px">勾选的池在自身调用失败/耗尽时，会回退到兜底池继续尝试。<b>auto 池强制兜底，不可取消。</b></div>
+      <div style="max-height:300px;overflow-y:auto">${rows || '<div class="hint">暂无其他池</div>'}</div>`,
+    footer: [
+      { label: "取消", cls: "btn btn-secondary", onClick: ({ close }) => close() },
+      { label: "保存", cls: "btn btn-primary", onClick: () => saveFallbackTargets() },
+    ],
+  });
+}
+async function saveFallbackTargets() {
+  const checked = [...document.querySelectorAll(".fb-check input[type=checkbox]:checked:not(:disabled)")].map(el => el.value);
+  const ok = await api("/admin/pools/fallback_targets", { method: "PUT", body: JSON.stringify({ pool_names: checked }) });
+  if (ok) {
+    fbModal.close();
+    toast("兜底对象已更新（" + checked.length + " 个池）", "ok");
+    loadPools();
+  }
+}
+async function speedPool(name) {
+  const data = await api("/admin/pools");
+  if (!data) return;
+  const pool = data.pools[name];
+  const models = pool ? collectPoolModels(name, data.pools) : [];
+  if (!models.length) { toast("该池无模型可测速", "err"); return; }
+  const speedCache = JSON.parse(localStorage.getItem("gw_speed") || "{}");
+  models.forEach(id => delete speedCache[id]);
+  localStorage.setItem("gw_speed", JSON.stringify(speedCache));
+  toast("测速中：" + name + "（" + models.length + " 个模型）");
+  const res = await api("/speedtest", { method: "POST", body: JSON.stringify({ model_ids: models }) });
+  if (res) {
+    res.results.forEach(r => {
+      if (r.status === "ok") speedCache[r.model_id] = { status: "ok", latency_ms: r.latency_ms, tps: r.tps };
+      else speedCache[r.model_id] = { status: r.status };
+    });
+    localStorage.setItem("gw_speed", JSON.stringify(speedCache));
+    toast("测速完成", "ok");
+  }
+  loadPools();
+}
+function showAddPool() {
+  poolModal = HMG.modal({
+    title: "新增模型池",
+    body: `<div class="fg"><label>池名称（将作为调用名 model="池名"）</label><input id="new-pool-name" class="inp" placeholder="例如：deepseek"></div>`,
+    footer: [
+      { label: "取消", cls: "btn btn-secondary", onClick: ({ close }) => close() },
+      { label: "创建", cls: "btn btn-primary", onClick: () => createPool() },
+    ],
+  });
+  setTimeout(() => { const i = document.getElementById("new-pool-name"); if (i) i.focus(); }, 0);
+}
+async function createPool() {
+  const name = document.getElementById("new-pool-name").value.trim();
+  if (!name) { toast("请输入池名称", "err"); return; }
+  const ok = await api("/admin/pools", { method: "POST", body: JSON.stringify({ name, model_ids: [] }) });
+  if (!ok) return;
+  poolModal.close(); toast("已创建池：" + name, "ok");
+  loadPools();
+}
+async function delPool(name) {
+  if (name === "auto" || name === "兜底池") { toast("内置池不可删除", "err"); return; }
+  if (!await HMG.confirm(`确定删除池 "<b>${esc(name)}</b>" 吗？`, { danger: true, okLabel: "删除" })) return;
+  const ok = await api("/admin/pools/" + pathEnc(name), { method: "DELETE" });
+  if (!ok) return;
+  toast("已删除池：" + name, "ok"); loadPools();
+}
+async function renamePool(name) {
+  const nn = await HMG.prompt("输入新的池名称：", { value: name });
+  if (!nn || nn === name) return;
+  const ok = await api("/admin/pools/" + pathEnc(name) + "/rename", { method: "POST", body: JSON.stringify({ new_name: nn.trim() }) });
+  if (!ok) return;
+  toast("已重命名：" + nn.trim(), "ok"); loadPools();
+}
+async function addToPool(name) {
+  const sel = document.getElementById("addsel-" + name);
+  const id = sel && sel.value;
+  if (!id) { toast("请选择要加入的接口 / 子池", "err"); return; }
+  const pdata = await api("/admin/pools");
+  if (!pdata) return;
+  const pool = pdata.pools[name];
+  const ids = [...(pool.model_ids || []), id];
+  const ok = await api("/admin/pools/" + pathEnc(name), { method: "PUT", body: JSON.stringify({ model_ids: ids }) });
+  if (!ok) return;
+  toast("已加入：" + id, "ok"); loadPools();
+}
+async function removeFromPool(name, id) {
+  const pdata = await api("/admin/pools");
+  if (!pdata) return;
+  const pool = pdata.pools[name];
+  const ids = (pool.model_ids || []).filter(x => x !== id);
+  const ok = await api("/admin/pools/" + pathEnc(name), { method: "PUT", body: JSON.stringify({ model_ids: ids }) });
+  if (!ok) return;
+  toast("已移除：" + id, "ok"); loadPools();
+}
+
+/* ── 拖拽：池内条目排序 + 池卡片排序 ── */
+async function savePoolItemOrder(items) {
+  const name = items.dataset.pool;
+  const ids = [...items.querySelectorAll(".pool-item")].map(el => el.dataset.id);
+  const pdata = await api("/admin/pools");
+  if (!pdata || !pdata.pools[name]) return;
+  const ok = await api("/admin/pools/" + pathEnc(name), { method: "PUT", body: JSON.stringify({ model_ids: ids }) });
+  if (ok) { toast("池内顺序已更新", "ok"); }
+}
+function bindDrag() {
+  document.querySelectorAll(".pool-items").forEach(items => {
+    if (items.dataset.dragBound) return;
+    items.dataset.dragBound = "1";
+    let dragged = null;
+    items.addEventListener("dragstart", e => {
+      const item = e.target.closest(".pool-item");
+      if (!item) return;
+      e.stopPropagation();
+      dragged = item;
+      item.style.opacity = "0.4";
+      e.dataTransfer.effectAllowed = "move";
+    });
+    items.addEventListener("dragover", e => {
+      e.preventDefault();
+      const after = e.target.closest(".pool-item");
+      if (!after || after === dragged || !dragged) return;
+      const rect = after.getBoundingClientRect();
+      const before = e.clientY < rect.top + rect.height / 2;
+      items.insertBefore(dragged, before ? after : after.nextSibling);
+    });
+    items.addEventListener("dragend", async e => {
+      e.stopPropagation();
+      if (!dragged) return;
+      dragged.style.opacity = "";
+      dragged = null;
+      await savePoolItemOrder(items);
+    });
+    if (HMG.isTouch) {
+      items.addEventListener("click", async e => {
+        e.stopPropagation();
+        if (e.target.closest("button, .i-tip")) return;
+        const item = e.target.closest(".pool-item");
+        if (!item) return;
+        const prev = item.previousElementSibling;
+        if (!prev || !prev.matches(".pool-item")) return;
+        items.insertBefore(item, prev);
+        await savePoolItemOrder(items);
+      });
+    }
+  });
+}
+async function savePoolCardOrder(list) {
+  grpSyncFromDOM("poolGroups", list, "[data-pool-card]", "poolCard");
+  const domNames = [...list.querySelectorAll("[data-pool-card]")].map(el => el.dataset.poolCard);
+  const allOthers = Object.keys(poolLookup || {}).filter(n => n !== "auto" && n !== "兜底池");
+  const names = domNames.concat(allOthers.filter(n => !domNames.includes(n)));
+  const ok = await api("/admin/pools/reorder", { method: "PUT", body: JSON.stringify({ pool_names: names }) });
+  if (ok) { toast("池顺序已更新", "ok"); }
+  loadPools();
+}
+function bindPoolDrag() {
+  const list = document.getElementById("pool-list");
+  if (!list) return;
+  if (list.dataset.dragBoundPool) return;
+  list.dataset.dragBoundPool = "1";
+  let dragged = null;
+  list.addEventListener("dragstart", e => {
+    const card = e.target.closest("[data-pool-card]");
+    if (!card || card.dataset.poolCard === "auto") { e.preventDefault(); return; }
+    dragged = card;
+    card.style.opacity = "0.4";
+    e.dataTransfer.effectAllowed = "move";
+  });
+  list.addEventListener("dragover", e => {
+    e.preventDefault();
+    if (!dragged) return;
+    if (e.target.closest(".pool-item")) return;
+    const card = e.target.closest("[data-pool-card]");
+    if (card && card !== dragged) {
+      const rect = card.getBoundingClientRect();
+      const before = e.clientY < rect.top + rect.height / 2;
+      // 禁止把被拖池插到 auto 之前 / 兜底池 之后（后端 reorder 强制 auto 第一、兜底池最后）
+      if (before && card.dataset.poolCard === "auto") return;
+      if (!before && card.dataset.poolCard === "兜底池") return;
+      card.parentNode.insertBefore(dragged, before ? card : card.nextSibling);
+      return;
+    }
+    const sec = e.target.closest(".grp-section");
+    if (sec) {
+      const body = sec.querySelector(".grp-body");
+      if (body && body !== dragged.parentNode) body.appendChild(dragged);
+    }
+  });
+  list.addEventListener("dragend", async e => {
+    if (!dragged) return;
+    dragged.style.opacity = "";
+    dragged = null;
+    await savePoolCardOrder(list);
+  });
+  if (HMG.isTouch) {
+    list.addEventListener("click", async e => {
+      if (e.target.closest("button, input, select, label, .switch, .threshold-ctl, .i-tip")) return;
+      const card = e.target.closest("[data-pool-card]");
+      if (!card) return;
+      const name = card.dataset.poolCard;
+      if (name === "auto" || name === "兜底池") return;
+      let prev = card.previousElementSibling;
+      while (prev && !prev.matches("[data-pool-card]")) prev = prev.previousElementSibling;
+      if (!prev) return;
+      if (prev.dataset.poolCard === "auto") { toast("auto 池固定在第一位"); return; }
+      list.insertBefore(card, prev);
+      await savePoolCardOrder(list);
+    });
+  }
+}
+
+/* ═══════════ 初始化 ═══════════ */
+HMG.grpReload = () => { loadPools(); };
+refreshPluginState().then(loadPools);
+</script>
+</body>
+</html>

@@ -1,0 +1,756 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>用量统计 · HMG Admin</title>
+<script>
+/* 主题引导：渲染前定 data-theme，防闪白（跟随系统 → localStorage 手动值优先） */
+(function(){try{var t=localStorage.getItem('hmg_theme');if(t!=='light'&&t!=='dark')t=window.matchMedia&&matchMedia('(prefers-color-scheme: light)').matches?'light':'dark';document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();
+</script>
+<link rel="stylesheet" href="/hmg-admin/assets/hmg.css?v=__GATEWAY_VERSION__">
+<style>
+/* ── 本页私有：统计卡片 / 分组视图 / 分组查看行 ── */
+.stat-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); align-items: start; }
+.stat-card { background: var(--surface-1); border: 1px solid var(--hairline); border-radius: 12px; padding: 14px 16px; position: relative; }
+.stat-card::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 1px; background: var(--topline); border-radius: 12px 12px 0 0; pointer-events: none; }
+.stat-top { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 8px; }
+.stat-id { font-weight: 600; font-size: 13.5px; overflow-wrap: anywhere; }
+.stat-name { color: var(--ink-subtle); font-size: 12px; margin-top: 1px; overflow-wrap: anywhere; }
+.stat-badges { margin-left: auto; display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
+.stat-badges .badge { max-width: 150px; overflow: hidden; text-overflow: ellipsis; }
+button.badge { cursor: pointer; border: none; font: inherit; font-size: 12px; }
+.stat-nums { font-variant-numeric: tabular-nums; font-size: 13px; display: flex; align-items: baseline; gap: 4px; flex-wrap: wrap; }
+.stat-used { font-size: 19px; font-weight: 600; letter-spacing: -.2px; }
+.stat-sep { color: var(--ink-tertiary); }
+.stat-limit { color: var(--ink-subtle); }
+.stat-unit { color: var(--ink-tertiary); font-size: 12px; }
+.stat-limit-note { color: var(--ink-tertiary); font-size: 11.5px; }
+.stat-bar { position: relative; height: 6px; border-radius: 9999px; background: var(--surface-3); margin: 8px 0 6px; overflow: hidden; }
+.stat-fill { display: block; height: 100%; border-radius: 9999px; background: var(--accent); transition: width .3s ease; }
+.stat-card .stat-fill.warn { background: var(--warning); }
+.stat-card .stat-fill.full { background: var(--danger); }
+.stat-mark { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--ink); opacity: .55; z-index: 1; }
+.stat-redzone { position: absolute; top: 0; bottom: 0; right: 0; left: auto; background: repeating-linear-gradient(45deg, transparent, transparent 3px, rgba(235,87,87,.18) 3px, rgba(235,87,87,.18) 6px); }
+.stat-meta { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--ink-subtle); flex-wrap: wrap; }
+.stat-pct { font-variant-numeric: tabular-nums; }
+.stat-refresh { margin-left: auto; text-align: right; }
+.i-tip { display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; border-radius: 50%; background: var(--surface-3); color: var(--ink-subtle); font-size: 10px; font-style: normal; cursor: help; }
+/* 分组/外层系统组：区块占满整行，体内自建网格 */
+.stat-group, .stat-ogroup { grid-column: 1 / -1; }
+.stat-group-head, .stat-ogroup-head { display: flex; align-items: center; gap: 8px; padding: 4px 2px 8px; font-size: 14px; font-weight: 600; cursor: pointer; user-select: none; }
+.sg-caret, .sog-caret { color: var(--ink-tertiary); font-size: 11px; transition: transform .15s; display: inline-block; }
+.stat-group.collapsed .sg-caret, .stat-ogroup.collapsed .sog-caret { transform: rotate(-90deg); }
+.sg-count, .sog-count { color: var(--ink-tertiary); font-size: 12px; font-weight: 400; }
+.sg-total, .sog-total { color: var(--ink-subtle); font-size: 12px; font-weight: 400; font-variant-numeric: tabular-nums; }
+.sg-drag { margin-left: auto; cursor: grab; color: var(--ink-tertiary); font-size: 12px; }
+.stat-group.dragging { opacity: .4; }
+.stat-group.collapsed .stat-group-body, .stat-ogroup.collapsed .stat-ogroup-body { display: none; }
+.stat-group-body { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); align-items: start; }
+.stat-ogroup-head { border-top: 1px solid var(--hairline); padding-top: 12px; margin-top: 6px; }
+.stat-ogroup-body { display: flex; flex-direction: column; gap: 4px; padding-bottom: 6px; }
+.stat-subcard { border-style: dashed; background: transparent; }
+.stat-subcard .stat-used { font-size: 16px; }
+/* 📊 分组查看行 */
+.gs-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--hairline); font-size: 13px; }
+.gs-row:last-child { border-bottom: none; }
+.gs-rank { width: 22px; color: var(--ink-tertiary); font-size: 12px; font-variant-numeric: tabular-nums; flex: none; }
+.gs-name { flex: none; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gs-val { flex: none; color: var(--ink-subtle); font-size: 12px; font-variant-numeric: tabular-nums; }
+.gs-bar-wrap { flex: 1; height: 5px; border-radius: 9999px; background: var(--surface-3); overflow: hidden; }
+.gs-bar { display: block; height: 100%; border-radius: 9999px; background: var(--accent); }
+.gs-seg-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.gs-seg-label { font-size: 12.5px; color: var(--ink-subtle); flex: none; width: 34px; }
+@media (max-width: 767px) {
+  .stat-grid, .stat-group-body { grid-template-columns: 1fr; }
+  .stat-refresh { margin-left: 0; text-align: left; width: 100%; }
+}
+</style>
+</head>
+<body data-page="stats">
+<div id="hmg-topbar"></div>
+<aside id="hmg-sidebar"></aside>
+<div id="hmg-drawermask"></div>
+<main class="hmg-main">
+  <div class="page-head">
+    <h1>用量统计</h1><span class="sub">每 5 秒自动刷新；配了刷新时间的模型按「当前窗口用量」统计与排序</span><span class="sp"></span>
+    <div class="toolbar">
+      <div class="seg" id="stat-dim-seg">
+        <button class="on" data-dim="billing" onclick="setStatDim('billing', this)">按计费量</button>
+        <button data-dim="provider" onclick="setStatDim('provider', this)">按供应商</button>
+        <button data-dim="pool" onclick="setStatDim('pool', this)">按模型池</button>
+        <button data-dim="paid" onclick="setStatDim('paid', this)">按付费量</button>
+      </div>
+      <button class="btn btn-ghost btn-sm" onclick="grpStatsOpen()">📊 分组查看</button>
+      <button class="btn btn-ghost btn-sm" id="btn-hr-stats" onclick="showHeadroomStats()">🪴 节省统计</button>
+    </div>
+  </div>
+  <div class="stat-grid" id="stats-grid"><div class="empty">加载中…</div></div>
+</main>
+<script src="/hmg-admin/assets/hmg.js?v=__GATEWAY_VERSION__"></script>
+<script>
+"use strict";
+HMG.renderShell();
+/* ═══════════ 用量统计页（业务逻辑自 hfadmin 移植，API 零改动）═══════════ */
+const api = HMG.api, esc = HMG.esc, fmtTok = HMG.fmtTok, toast = HMG.toast;
+let statDim = "billing";
+let _statLoadSeq = 0;   // 加载序号：5s 定时器与手动切视图并发时，旧加载在渲染前自行丢弃
+let hrStatsModal = null, gsModal = null;
+
+function setStatDim(d) {
+  statDim = d;
+  document.querySelectorAll("#stat-dim-seg button").forEach(b => b.classList.toggle("on", b.dataset.dim === d));
+  loadStats();
+}
+function fmtDur(sec) {
+  sec = Math.max(0, Math.floor(sec || 0));
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60);
+  return h > 0 ? (h + "h " + m + "m") : (m + "m");
+}
+
+/* ── 四视图元数据（供应商名单/池成员/模型价格配置）：TTL 懒取 ── */
+let _statMeta = { providers: null, pools: null, models: null, tProv: 0, tPools: 0, tModels: 0 };
+async function statMeta(kind) {
+  const now = Date.now();
+  if (kind === "providers") {
+    if (!_statMeta.providers || now - _statMeta.tProv > 30000) {
+      const d = await api("/admin/providers");
+      if (d) { _statMeta.providers = d.providers || []; _statMeta.tProv = now; }
+    }
+    return _statMeta.providers || [];
+  }
+  if (kind === "pools") {
+    if (!_statMeta.pools || now - _statMeta.tPools > 30000) {
+      const d = await api("/admin/pools");
+      if (d) { _statMeta.pools = d.pools || {}; _statMeta.tPools = now; }
+    }
+    return _statMeta.pools || {};
+  }
+  if (!_statMeta.models || now - _statMeta.tModels > 30000) {
+    const d = await api("/admin/models");
+    if (d) { _statMeta.models = d.models || []; _statMeta.tModels = now; }
+  }
+  return _statMeta.models || [];
+}
+
+/* ── 分组视图持久化（gw_statgrp，双面板同源共享） ── */
+const STAT_GRP_KEY = "gw_statgrp";
+function statGrpAll() { try { return JSON.parse(localStorage.getItem(STAT_GRP_KEY)) || {}; } catch (e) { return {}; } }
+function statGrpSaveAll(st) {
+  const d = statGrpAll();
+  if (st && st.kind) { const c = {}; Object.keys(st).forEach(k => { if (k !== "kind") c[k] = st[k]; }); d[st.kind] = c; }
+  localStorage.setItem(STAT_GRP_KEY, JSON.stringify(d));
+}
+function statGrpOf(kind) {
+  const d = statGrpAll();
+  if (!d[kind] || typeof d[kind] !== "object") d[kind] = { order: [], collapsed: {} };
+  if (!Array.isArray(d[kind].order)) d[kind].order = [];
+  if (!d[kind].collapsed || typeof d[kind].collapsed !== "object") d[kind].collapsed = {};
+  if (!d[kind].ocollapsed || typeof d[kind].ocollapsed !== "object") d[kind].ocollapsed = {};
+  d[kind].kind = kind;
+  return d[kind];
+}
+
+async function loadStats() {
+  const seq = ++_statLoadSeq;
+  const metaNeed = statDim === "provider" || statDim === "pool" || statDim === "paid";
+  const dataP = api("/stats");
+  const metaP = metaNeed ? Promise.all([statMeta("providers"), statMeta("pools"), statMeta("models")]) : null;
+  const data = await dataP;
+  if (seq !== _statLoadSeq) return;
+  const grid = document.getElementById("stats-grid");
+  if (!data) {
+    grid.querySelector(".empty")?.remove();
+    if (!grid.children.length) grid.innerHTML = '<div class="hint">加载失败，等待自动重试…</div>';
+    return;
+  }
+  let provs = [], poolsCfg = {}, cfgModels = [];
+  if (metaP) {
+    [provs, poolsCfg, cfgModels] = await metaP;
+    if (seq !== _statLoadSeq) return;
+  }
+  const items = data.models.map(m => {
+    const isBilling = statDim !== "paid";
+    const wUsed = m.daily_used_tokens ?? m.used_tokens ?? 0;
+    const windowModel = m.token_type === "daily" && m.refresh_time && !["00:00", "0:00", "24:00"].includes((m.refresh_time || "").trim());
+    const isGift = !!m.gift_refund;
+    const giftPosted = (() => { const p = ((m.refresh_time || "00:00") + ":00").split(":").map(Number); const n = new Date(); return n.getHours() * 60 + n.getMinutes() >= (p[0] || 0) * 60 + (p[1] || 0); })();
+    const giftPool = isGift ? (m.gift_yesterday_leftover ?? 0) + (giftPosted ? (m.gift_last_grant_amount ?? 0) : 0) : 0;
+    const giftLimit = isGift ? Math.min(giftPool, m.daily_token_limit || Infinity) : 0;
+    let used = wUsed;
+    let limit = m.daily_token_limit || m.max_tokens || 0;
+    let unit = m.unit || "tokens";
+    let numsTitle = "";
+    let limitText = limit ? limit.toLocaleString() : "∞";
+    if (isBilling && isGift) {
+      limit = giftLimit;
+      used = m.gift_usage_today ?? wUsed;
+      limitText = limit.toLocaleString();
+      numsTitle = "使用量=今日自然日消耗；分母=min(昨日剩余+今日已补, 用户设置上限)，两者取小";
+    }
+    if (isBilling && windowModel && !isGift) numsTitle = `当前窗口用量（自 ${m.refresh_time} 起）`;
+    let pct = isBilling && limit > 0 ? Math.min(100, used / limit * 100) : 0;
+    if (isBilling && isGift && limit <= 0) pct = 100;
+    const valve = Math.max(0, Math.min(100, m.valve_pct ?? 100));
+    let limitNote = "";
+    if (isBilling && limit > 0 && valve > 0 && valve < 100) {
+      limitNote = "原 " + limit.toLocaleString() + " × " + valve + "%";
+      limitText = Math.floor(limit * valve / 100).toLocaleString();
+      numsTitle += "；安全阀 k=" + valve + "%：红线为可用上限 " + Math.floor(limit * valve / 100).toLocaleString() + "，红线右侧红区为超出部分";
+    } else if (isBilling && limit > 0 && valve <= 0) {
+      pct = 100;
+      limitNote = "k=0% 已停用";
+      limitText = "0";
+      numsTitle += "；安全阀 k=0%：该模型已停用（不再路由）";
+    }
+    const mark = (isBilling && limit > 0 && valve > 0 && valve < 100) ? valve : null;
+    const loadText = (m.max_concurrency > 0 && isBilling)
+      ? "负载 " + (m.active_requests || 0) + "/" + m.max_concurrency + ((m.waiting_requests || 0) > 0 ? " · 排队 " + m.waiting_requests : "")
+      : "";
+    let effPct = pct;
+    if (isBilling && limit > 0 && valve > 0 && valve < 100) {
+      effPct = Math.min(100, used / (limit * valve / 100) * 100);
+    }
+    const cls = !isBilling ? "" : (m.expired ? "full" : (effPct >= 100 ? "full" : effPct >= 75 ? "warn" : ""));
+    const pctText = !isBilling ? "—" : (m.expired ? "已失效" : (isBilling && limit > 0 && valve <= 0 ? "已停用" : (isGift && limit <= 0 ? "已用尽" : (limit > 0 ? pct.toFixed(1) + "%" : "不限量"))));
+    const billing = m.billing_mode === "request" ? "按次计费" : "按 Token 计费";
+    const typeBadge = m.token_type === "one_time" ? '<span class="badge badge-warn">一次性</span>'
+      : m.token_type === "rolling_5h" ? '<span class="badge badge-warn">5h限额</span>'
+      : m.token_type === "all_day" ? '<span class="badge" title="付费模型：全天可用">全天可用</span>'
+      : m.token_type === "idle_only" ? '<span class="badge badge-warn" title="付费模型：仅闲时可用（高峰时段内不路由）">仅闲时</span>'
+      : isGift ? '<span class="badge badge-warn" title="余额返还制：到账时刻按昨日消耗补回额度">余额返还制</span>'
+      : windowModel ? `<span class="badge badge-warn" title="每日 ${m.refresh_time} 刷新窗口">${m.refresh_time}窗口</span>`
+      : "<span class=\"badge\">每日</span>";
+    const freeBadge = m.is_free ? '<span class="badge badge-ok">免费</span>' : '<span class="badge badge-err">付费</span>';
+    const costBtn = (m.cost_enabled || !m.is_free)
+      ? `<button type="button" class="badge badge-acc" data-mid="${esc(m.id)}" onclick="showCostEst(this.dataset.mid)" title="缓存命中/未命中/输出 token 明细与费用预估">💰 预估费用</button>`
+      : "";
+    const giftTip = posted => "当前可用余额：" + (m.gift_balance ?? 0).toLocaleString()
+      + "\n当前可用总额：" + giftPool.toLocaleString() + (posted
+        ? "（昨日剩余 " + (m.gift_yesterday_leftover ?? 0).toLocaleString() + " + 今日已补 " + (m.gift_last_grant_amount ?? 0).toLocaleString() + "）"
+        : "（昨日剩余；预计 " + (m.refresh_time || "") + " 后为 " + (giftPool + (m.gift_pending_grant ?? 0)).toLocaleString() + "）")
+      + "\n用户设置上限（封顶）：" + (m.daily_token_limit || 0).toLocaleString()
+      + "\n今日计费上限（与用户上限取小）：" + giftLimit.toLocaleString()
+      + "\n今日 / 昨日自然日消耗：" + (m.today_tokens || 0).toLocaleString() + " / " + (m.gift_yesterday_usage ?? 0).toLocaleString() + " tok"
+      + (posted
+        ? "\n今日已采：" + Math.min(m.today_tokens || 0, m.gift_grant_cap || 5000000).toLocaleString() + " / " + (m.gift_grant_cap || 5000000).toLocaleString() + "（超出不返还）\n今日 " + (m.refresh_time || "") + " 已到账 " + (m.gift_last_grant_amount ?? 0).toLocaleString() + "\n预计下次补账：" + (m.gift_pending_grant ?? 0).toLocaleString() + "（明日 " + (m.refresh_time || "") + "，按今日消耗）"
+        : "\n预计到账：" + (m.refresh_time || "") + " 补 " + (m.gift_pending_grant ?? 0).toLocaleString() + "（按昨日自然日消耗，不超过上限）")
+      + "\n上一天剩余（昨日 24:00）：" + (m.gift_yesterday_leftover ?? 0).toLocaleString();
+    let refresh = m.token_type === "one_time" ? "不刷新"
+      : m.token_type === "rolling_5h" ? "5h窗口 · 剩 " + fmtDur(m.window_remaining_sec)
+      : (m.token_type === "all_day" || m.token_type === "idle_only") ? "—"
+      : isGift ? (giftPosted
+        ? "已补 " + (m.gift_last_grant_amount ?? 0).toLocaleString() + ` <i class="i-tip" data-tip="${esc(giftTip(true))}">ⓘ</i>`
+        : "预计 " + (m.refresh_time || "到账时刻") + " 补 " + (m.gift_pending_grant ?? 0).toLocaleString() + ` <i class="i-tip" data-tip="${esc(giftTip(false))}">ⓘ</i>`)
+      : (m.refresh_time ? "刷新 " + m.refresh_time : "—");
+    if (windowModel && !isGift && isBilling && (m.today_tokens || 0) > 0) {
+      refresh += ` · 自然日 ${(m.today_tokens || 0).toLocaleString()} tok`;
+    }
+    return { m, used, limit, unit, numsTitle, limitText, pct, cls, pctText, billing, typeBadge, freeBadge, costBtn, refresh, _used: used, _limit: limit, _wused: wUsed, _valve: valve, mark, limitNote, loadText };
+  });
+
+  /* ── 视图排序/过滤 ── */
+  const usagePctOf = x => {
+    if (x._limit <= 0) return x.m.token_type === "gift" ? 200 : -1;
+    if (x._valve <= 0) return 200;
+    return Math.min(999, (x._wused || 0) / (x._limit * x._valve / 100) * 100);
+  };
+  const byUsageDesc = (a, b) => (usagePctOf(b) - usagePctOf(a))
+    || ((b._wused || 0) - (a._wused || 0)) || String(a.m.id).localeCompare(String(b.m.id));
+
+  if (statDim === "paid") {
+    const cfgOf = id => (cfgModels || []).find(c => c.id === id) || {};
+    const paid = items.filter(x => !x.m.is_free).map(x => {
+      const cfg = cfgOf(x.m.id);
+      const p = cfg.cost_prices || {};
+      const priced = (p.hit > 0 || p.miss > 0 || p.out > 0);
+      const ct = x.m.cost_tokens || {};
+      const cost = ((ct.hit || 0) * (p.hit || 0) + (ct.miss || 0) * (p.miss || 0) + (ct.out || 0) * (p.out || 0)) / 1e6;
+      return { ...x, _priced: priced, _cost: cost, _priceCfg: p, _peak: !!(cfg.cost_peak && cfg.cost_peak.enabled) };
+    });
+    paid.sort((a, b) => {
+      if (a._priced !== b._priced) return a._priced ? -1 : 1;
+      if (a._priced) return (b._cost - a._cost) || ((b.m.total_tokens_all || 0) - (a.m.total_tokens_all || 0));
+      return ((b.m.total_tokens_all || 0) - (a.m.total_tokens_all || 0)) || String(a.m.id).localeCompare(String(b.m.id));
+    });
+    statRender(grid, paid);
+    return;
+  }
+
+  if (statDim === "provider") {
+    const provName = pid => { const p = (provs || []).find(z => z.id === pid); return (p && p.name) || pid || ""; };
+    items.forEach(x => {
+      const pid = x.m.provider_id || "";
+      x._gkey = pid ? "p:" + pid : "i:" + (x.m.provider || "openai");
+      x._glabel = pid ? provName(pid) : "独立模型 · " + (x.m.provider || "openai");
+    });
+    items.sort(byUsageDesc);
+  } else if (statDim === "pool") {
+    /* 模型池组：模型在其直接所属的每个全局池各出现一次（卡片键 @池名 防争抢）；
+       父池组内的子池不展开模型，以一张子池计费卡片代替（聚合整棵子树去重后的今日 token） */
+    const poolDirs = {};
+    Object.keys(poolsCfg || {}).forEach(pn => {
+      if (poolsCfg[pn].owner_key_id) return;
+      const d = { models: [], subs: [] };
+      (poolsCfg[pn].model_ids || []).forEach(id => {
+        const s = String(id);
+        if (s.startsWith("pool:")) d.subs.push(s.slice(5)); else d.models.push(s);
+      });
+      poolDirs[pn] = d;
+    });
+    const statById = {};
+    items.forEach(x => { statById[x.m.id] = x; });
+    const treeCache = {};
+    const treeModels = pn => {
+      if (treeCache[pn]) return treeCache[pn];
+      const seen = new Set(), out = [], visit = (p, path) => {
+        if (!poolDirs[p] || path.has(p)) return;
+        path.add(p);
+        poolDirs[p].models.forEach(id => { if (!seen.has(id)) { seen.add(id); out.push(id); } });
+        poolDirs[p].subs.forEach(sp => visit(sp, path));
+      };
+      visit(pn, new Set());
+      return treeCache[pn] = out;
+    };
+    const expanded = [];
+    items.forEach(x => {
+      const owners = Object.keys(poolDirs).filter(pn => poolDirs[pn].models.includes(x.m.id));
+      if (!owners.length) { x._gkey = "q:__none__"; x._glabel = "未入池"; expanded.push(x); return; }
+      owners.forEach(pn => expanded.push({ ...x, _gkey: "q:" + pn, _glabel: pn, _ckey: x.m.id + "@" + pn }));
+    });
+    expanded.sort(byUsageDesc);
+    Object.keys(poolDirs).forEach(pn => poolDirs[pn].subs.forEach(sp => {
+      const ids = treeModels(sp);
+      const agg = ids.reduce((s2, id) => { const y = statById[id]; return y ? s2 + (y.m.today_tokens || 0) : s2; }, 0);
+      expanded.push({
+        _sub: true, _ckey: "pool:" + sp, _gkey: "q:" + pn, _glabel: pn,
+        m: { id: "pool:" + sp, name: sp, today_tokens: agg },
+        used: agg, limit: 0, unit: "tokens",
+        numsTitle: "子池 " + sp + "：整棵子树去重后 " + ids.length + " 个模型的今日 token 合计",
+        limitText: "—", pct: 0, cls: "stat-subcard", pctText: "子池", billing: "子池计费",
+        typeBadge: '<span class="badge badge-warn">子池</span>', freeBadge: "", costBtn: "",
+        refresh: "含 " + ids.length + " 个模型", mark: null, limitNote: "", loadText: ""
+      });
+    }));
+    items.length = 0;
+    items.push(...expanded);
+  }
+  if (statDim !== "pool") items.sort(byUsageDesc);
+  statRender(grid, items);
+}
+
+function setStatTxt(root, sel, txt) {
+  const n = root.querySelector(sel);
+  if (n && n.textContent !== txt) n.textContent = txt;
+}
+
+function statCardHTML(x, i) {
+  return `
+    <div class="stat-card ${x.cls}" data-model-id="${esc(x._ckey || x.m.id)}" style="animation-delay:${Math.min(i * 45, 400)}ms;order:${i}">
+      <div class="stat-top">
+        <div class="grow" style="min-width:0">
+          <div class="stat-id">${esc(x.m.id)}</div>
+          <div class="stat-name">${esc(x.m.name)} · ${x.billing}</div>
+        </div>
+        <div class="stat-badges">${x.freeBadge}${x.typeBadge}${x.costBtn}</div>
+      </div>
+      <div class="stat-nums" title="${esc(x.numsTitle)}">
+        <span class="stat-used">${x.used.toLocaleString()}</span>
+        <span class="stat-sep">/</span>
+        <span class="stat-limit">${x.limitText}</span>
+        <span class="stat-unit">${x.unit}</span>
+        ${x.limitNote ? `<span class="stat-limit-note">${x.limitNote}</span>` : ""}
+      </div>
+      <div class="stat-bar">${x.mark != null ? `<div class="stat-redzone" style="left:${x.mark}%"></div><div class="stat-mark" style="left:calc(${x.mark}% - 1px)" data-k="${x.mark}"></div>` : ""}<div class="stat-fill ${x.cls === "full" ? "full" : x.cls === "warn" ? "warn" : ""}" data-pct="${x.pct}" style="width:0%"></div></div>
+      <div class="stat-meta">
+        <span class="stat-pct">${x.pctText}</span>
+        ${x.loadText ? `<span class="stat-load">${x.loadText}</span>` : ""}
+        <span class="stat-refresh">${x.refresh}</span>
+      </div>
+    </div>`;
+}
+
+let _statRenderedDim = null;
+let _statDragSrc = null;
+
+function statRender(grid, items) {
+  grid.querySelector(".empty")?.remove();
+  if (_statRenderedDim !== statDim) { grid.innerHTML = ""; _statRenderedDim = statDim; }
+  if (statDim === "paid") return statRenderPaid(grid, items);
+  if (statDim === "provider" || statDim === "pool") return statRenderGrouped(grid, items);
+  statRenderFlat(grid, items);
+}
+
+/* 按计费量平铺视图：增量刷新复用既有卡片 DOM（不闪屏）；顺序用 CSS order 表达 */
+function statRenderFlat(grid, items) {
+  if (!items.length) { grid.innerHTML = '<div class="empty">暂无模型。</div>'; return; }
+  const prev = {};
+  [...grid.querySelectorAll(".stat-card")].forEach(el => { prev[el.dataset.modelId] = el; });
+  if (!Object.keys(prev).length) {
+    grid.innerHTML = items.map((x, i) => statCardHTML(x, i)).join("");
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      grid.querySelectorAll(".stat-fill").forEach(f => { f.style.width = f.dataset.pct + "%"; });
+    }));
+    return;
+  }
+  const seen = new Set();
+  items.forEach((x, i) => { const el = statCardEnsure(prev, grid, x, i); el.style.order = i; seen.add(x.m.id); });
+  Object.keys(prev).forEach(id => { if (!seen.has(id)) prev[id].remove(); });
+}
+
+function statCardEnsure(prev, body, x, i) {
+  let el = prev[x._ckey || x.m.id];
+  if (el) { statUpdateCard(el, x); return el; }
+  const tmp = document.createElement("div");
+  tmp.innerHTML = statCardHTML(x, i);
+  el = tmp.firstElementChild;
+  const nf = el.querySelector(".stat-fill");
+  if (nf) nf.style.width = x.pct + "%";
+  body.appendChild(el);
+  return el;
+}
+
+function statUpdateCard(el, x) {
+  const fillCls = x.cls === "full" ? " full" : x.cls === "warn" ? " warn" : "";
+  el.className = "stat-card " + (x.cls || "");
+  setStatTxt(el, ".stat-id", x.m.id);
+  setStatTxt(el, ".stat-name", x.m.name + " · " + x.billing);
+  const bd = el.querySelector(".stat-badges");
+  if (bd && bd.innerHTML !== x.freeBadge + x.typeBadge + x.costBtn) bd.innerHTML = x.freeBadge + x.typeBadge + x.costBtn;
+  setStatTxt(el, ".stat-used", x.used.toLocaleString());
+  setStatTxt(el, ".stat-limit", x.limitText);
+  setStatTxt(el, ".stat-unit", x.unit);
+  const nums = el.querySelector(".stat-nums");
+  if (nums && nums.getAttribute("title") !== x.numsTitle) nums.setAttribute("title", x.numsTitle);
+  const fill = el.querySelector(".stat-fill");
+  if (fill) {
+    if (fill.dataset.pct !== String(x.pct)) { fill.dataset.pct = x.pct; fill.style.width = x.pct + "%"; }
+    const wantCls = "stat-fill" + fillCls;
+    if (fill.className !== wantCls) fill.className = wantCls;
+  }
+  const mark = el.querySelector(".stat-mark");
+  if (x.mark != null) {
+    if (mark) {
+      if (mark.dataset.k !== String(x.mark)) { mark.dataset.k = x.mark; mark.style.left = "calc(" + x.mark + "% - 1px)"; }
+    } else {
+      const d = document.createElement("div");
+      d.className = "stat-mark"; d.dataset.k = x.mark; d.style.left = "calc(" + x.mark + "% - 1px)";
+      el.querySelector(".stat-bar").prepend(d);
+    }
+    let rz = el.querySelector(".stat-redzone");
+    if (rz) { if (rz.dataset.k !== String(x.mark)) { rz.dataset.k = x.mark; rz.style.left = x.mark + "%"; } }
+    else {
+      const d2 = document.createElement("div");
+      d2.className = "stat-redzone"; d2.dataset.k = x.mark; d2.style.left = x.mark + "%";
+      el.querySelector(".stat-bar").prepend(d2);
+    }
+  } else if (mark) {
+    mark.remove();
+    el.querySelector(".stat-redzone")?.remove();
+  }
+  const noteEl = el.querySelector(".stat-limit-note");
+  if (x.limitNote) {
+    if (noteEl) { if (noteEl.textContent !== x.limitNote) noteEl.textContent = x.limitNote; }
+    else {
+      const sp = document.createElement("span");
+      sp.className = "stat-limit-note"; sp.textContent = x.limitNote;
+      const un = el.querySelector(".stat-unit");
+      if (un) un.after(sp); else el.querySelector(".stat-nums").appendChild(sp);
+    }
+  } else if (noteEl) noteEl.remove();
+  const pctEl = el.querySelector(".stat-pct");
+  if (pctEl && pctEl.textContent !== x.pctText) pctEl.textContent = x.pctText;
+  const rf = el.querySelector(".stat-refresh");
+  if (rf && rf.innerHTML !== x.refresh) rf.innerHTML = x.refresh;
+  const loadEl = el.querySelector(".stat-load");
+  if (x.loadText) {
+    if (loadEl) { if (loadEl.textContent !== x.loadText) loadEl.textContent = x.loadText; }
+    else {
+      const sp = document.createElement("span");
+      sp.className = "stat-load"; sp.textContent = x.loadText;
+      const pf = el.querySelector(".stat-pct");
+      if (pf) pf.after(sp); else el.querySelector(".stat-meta")?.prepend(sp);
+    }
+  } else if (loadEl) loadEl.remove();
+}
+
+/* 按供应商/按模型池分组视图：组内使用占比降序；组间序=拖拽持久化 > 组今日用量 > 名称；
+   外层系统组随「分组收纳」开关联动（providerGroups/poolGroups） */
+function statRenderGrouped(grid, items) {
+  if (!items.length) { grid.innerHTML = '<div class="empty">暂无模型。</div>'; return; }
+  const st = statGrpOf(statDim);
+  const groups = [], gmap = {};
+  items.forEach(x => {
+    let g = gmap[x._gkey];
+    if (!g) { g = gmap[x._gkey] = { key: x._gkey, label: x._glabel, items: [], total: 0 }; groups.push(g); }
+    g.items.push(x);
+    g.total += (x.m.today_tokens || 0);
+  });
+  const pos = k => { const i = st.order.indexOf(k); return i === -1 ? 9999 : i; };
+  groups.sort((a, b) => (pos(a.key) - pos(b.key)) || (b.total - a.total) || a.label.localeCompare(b.label));
+  const okind = statDim === "provider" ? "providerGroups" : "poolGroups";
+  const outerOn = grpSettings()[statDim === "provider" ? "models" : "pools"];
+  const odefs = outerOn ? (grpData()[okind] || []) : [];
+  const outerOf = {};
+  odefs.forEach(g => (g.members || []).forEach(mm => { if (!outerOf[mm]) outerOf[mm] = "o:" + g.id; }));
+  const hasOuter = odefs.length > 0;
+  const okeyOf = g => {
+    if (!hasOuter) return "";
+    const mk = (String(g.key).startsWith("p:") ? g.key.slice(2)
+      : (String(g.key).startsWith("q:") && g.key !== "q:__none__") ? g.key.slice(2) : "");
+    return outerOf[mk] || "o:__ungrouped__";
+  };
+  const outers = [], omap = {};
+  if (hasOuter) {
+    odefs.forEach((g, i) => { omap["o:" + g.id] = { okey: "o:" + g.id, olabel: g.name, oi: i, groups: [], total: 0, count: 0 }; outers.push(omap["o:" + g.id]); });
+    omap["o:__ungrouped__"] = { okey: "o:__ungrouped__", olabel: "未分组", oi: odefs.length, groups: [], total: 0, count: 0 };
+    outers.push(omap["o:__ungrouped__"]);
+  }
+  groups.forEach(g => {
+    if (!hasOuter) return;
+    const o = omap[okeyOf(g)];
+    o.groups.push(g); o.total += g.total; o.count += g.items.length;
+  });
+  const prev = {};
+  [...grid.querySelectorAll(".stat-card")].forEach(el => { prev[el.dataset.modelId] = el; });
+  const seenCards = new Set(), seenKeys = new Set(), seenOkeys = new Set();
+  const renderInner = (g, gi, container) => {
+    let sec = container.querySelector(':scope > .stat-group[data-gkey="' + CSS.escape(g.key) + '"]');
+    if (!sec) {
+      sec = document.createElement("div");
+      sec.className = "stat-group";
+      sec.dataset.gkey = g.key;
+      sec.innerHTML = '<div class="stat-group-head" title="点击折叠 / 展开；⠿ 拖拽调整分组顺序"><span class="sg-caret">▼</span><span class="sg-name"></span><span class="sg-count"></span><span class="sg-total"></span><span class="sg-drag" title="拖拽调整分组顺序">⠿</span></div><div class="stat-group-body"></div>';
+      statGrpBind(sec);
+    }
+    if (sec.parentElement !== container) container.appendChild(sec);
+    else if (container.children[gi] !== sec) container.insertBefore(sec, container.children[gi]);
+    if (!!st.collapsed[g.key] !== sec.classList.contains("collapsed")) sec.classList.toggle("collapsed", !!st.collapsed[g.key]);
+    sec.style.order = gi;
+    setStatTxt(sec, ".sg-name", g.label);
+    setStatTxt(sec, ".sg-count", String(g.items.length));
+    setStatTxt(sec, ".sg-total", "今日 " + fmtTok(g.total) + " tok");
+    const body = sec.querySelector(".stat-group-body");
+    g.items.forEach((x, i) => {
+      const ck = x._ckey || x.m.id;
+      let el = prev[ck];
+      if (el && el.parentElement !== body) body.appendChild(el);
+      el = statCardEnsure(prev, body, x, i);
+      el.style.order = i;
+      seenCards.add(ck);
+    });
+    seenKeys.add(g.key);
+  };
+  if (!hasOuter) {
+    groups.forEach((g, gi) => renderInner(g, gi, grid));
+  } else {
+    outers.forEach(o => {
+      if (!o.groups.length) return;
+      let osec = grid.querySelector(':scope > .stat-ogroup[data-okey="' + CSS.escape(o.okey) + '"]');
+      if (!osec) {
+        osec = document.createElement("div");
+        osec.className = "stat-ogroup";
+        osec.dataset.okey = o.okey;
+        osec.innerHTML = '<div class="stat-ogroup-head" title="分组收纳系统组：组序与「分组收纳」一致；点击折叠 / 展开"><span class="sog-caret">▼</span><span class="sog-name"></span><span class="sog-count"></span><span class="sog-total"></span></div><div class="stat-ogroup-body"></div>';
+        osec.querySelector(".stat-ogroup-head").addEventListener("click", () => {
+          osec.classList.toggle("collapsed");
+          const st2 = statGrpOf(statDim);
+          st2.ocollapsed[osec.dataset.okey] = osec.classList.contains("collapsed");
+          statGrpSaveAll(st2);
+        });
+        grid.appendChild(osec);
+      }
+      if (!!st.ocollapsed[o.okey] !== osec.classList.contains("collapsed")) osec.classList.toggle("collapsed", !!st.ocollapsed[o.okey]);
+      osec.style.order = o.oi;
+      setStatTxt(osec, ".sog-name", o.olabel);
+      setStatTxt(osec, ".sog-count", o.count + " 模型");
+      setStatTxt(osec, ".sog-total", "今日 " + fmtTok(o.total) + " tok");
+      const obody = osec.querySelector(".stat-ogroup-body");
+      o.groups.forEach((g, gi) => renderInner(g, gi, obody));
+      seenOkeys.add(o.okey);
+    });
+  }
+  Object.keys(prev).forEach(id => { if (!seenCards.has(id)) prev[id].remove(); });
+  grid.querySelectorAll(".stat-group").forEach(sec => { if (!seenKeys.has(sec.dataset.gkey)) sec.remove(); });
+  grid.querySelectorAll(":scope > .stat-ogroup").forEach(sec => { if (!seenOkeys.has(sec.dataset.okey)) sec.remove(); });
+}
+
+/* 分组区段交互：组头点击折叠（持久化）；⠿ 手柄发起拖拽；dragend 回写 order 并持久化 */
+function statGrpBind(sec) {
+  if (sec.dataset.dragBoundStat) return;
+  sec.dataset.dragBoundStat = "1";
+  sec.draggable = true;
+  sec.querySelector(".stat-group-head").addEventListener("mousedown", e => {
+    sec.dataset.dragOk = e.target.closest(".sg-drag") ? "1" : "";
+  });
+  sec.querySelector(".stat-group-head").addEventListener("click", e => {
+    if (e.target.closest(".sg-drag")) return;
+    sec.classList.toggle("collapsed");
+    const st = statGrpOf(statDim);
+    st.collapsed[sec.dataset.gkey] = sec.classList.contains("collapsed");
+    statGrpSaveAll(st);
+  });
+  sec.addEventListener("dragstart", e => {
+    if (!sec.dataset.dragOk) { e.preventDefault(); return; }
+    delete sec.dataset.dragOk;
+    _statDragSrc = sec;
+    sec.classList.add("dragging");
+    e.dataTransfer.effectAllowed = "move";
+  });
+  sec.addEventListener("dragend", () => {
+    sec.classList.remove("dragging");
+    _statDragSrc = null;
+    const grid = document.getElementById("stats-grid");
+    const secs = [...grid.querySelectorAll(".stat-group")];
+    secs.forEach((s2, i2) => { s2.style.order = i2; });
+    const st = statGrpOf(statDim);
+    st.order = secs.map(s2 => s2.dataset.gkey);
+    statGrpSaveAll(st);
+  });
+  sec.addEventListener("dragover", e => {
+    e.preventDefault();
+    if (!_statDragSrc || sec === _statDragSrc) return;
+    if (_statDragSrc.parentElement !== sec.parentElement) return;
+    const box = sec.getBoundingClientRect();
+    const par = sec.parentElement;
+    if (e.clientY < box.top + box.height / 2) par.insertBefore(_statDragSrc, sec);
+    else par.insertBefore(_statDragSrc, sec.nextSibling);
+  });
+}
+
+/* 按付费量视图：仅付费模型，有单价按累计预估费用降序在前 */
+function paidBig(x) { return x._priced ? "¥" + x._cost.toFixed(4) : (x.m.total_tokens_all || 0).toLocaleString(); }
+function paidSub(x) {
+  if (!x._priced) return "未设单价 · 按累计 token 排序";
+  const p = x._priceCfg;
+  return "单价 命中 " + p.hit + " / 未命中 " + p.miss + " / 输出 " + p.out + " ¥/M" + (x._peak ? " · 高峰未计入" : "");
+}
+function paidTitle(x) {
+  return "预估累计费用 =（缓存命中×单价 + 未命中×单价 + 输出×单价）/ 1M，按平峰单价计"
+    + (x._peak ? "；该模型启用了高峰分段计价，高峰部分未计入本排序（明细见「💰 预估费用」弹窗）" : "");
+}
+function statPaidCardHTML(x, i, pct) {
+  return `
+    <div class="stat-card" data-model-id="${esc(x.m.id)}" style="animation-delay:${Math.min(i * 45, 400)}ms;order:${i}">
+      <div class="stat-top">
+        <div class="grow" style="min-width:0">
+          <div class="stat-id">${esc(x.m.id)}</div>
+          <div class="stat-name">${esc(x.m.name)} · ${x.billing}</div>
+        </div>
+        <div class="stat-badges">${x.freeBadge}${x.typeBadge}${x.costBtn}</div>
+      </div>
+      <div class="stat-nums" title="${esc(paidTitle(x))}">
+        <span class="stat-used">${paidBig(x)}</span>
+        <span class="stat-unit">${x._priced ? "元" : "tokens"}</span>
+      </div>
+      <div class="stat-bar"><div class="stat-fill" data-pct="${pct}" style="width:0%"></div></div>
+      <div class="stat-meta">
+        <span class="stat-pct">${paidSub(x)}</span>
+        <span class="stat-refresh">累计 ${(x.m.total_tokens_all || 0).toLocaleString()} tok · ${(x.m.total_requests_all || 0).toLocaleString()} 次</span>
+      </div>
+    </div>`;
+}
+
+function statRenderPaid(grid, items) {
+  if (!items.length) { grid.innerHTML = '<div class="empty">没有付费模型——在模型编辑中把「免费/付费」标为付费的模型会出现在此视图。</div>'; return; }
+  const maxCost = Math.max(...items.filter(x => x._priced).map(x => x._cost), 0);
+  const prev = {};
+  [...grid.querySelectorAll(".stat-card")].forEach(el => { prev[el.dataset.modelId] = el; });
+  const seen = new Set();
+  items.forEach((x, i) => {
+    const pct = (x._priced && maxCost > 0) ? Math.max(2, Math.min(100, x._cost / maxCost * 100)) : 0;
+    let el = prev[x.m.id];
+    if (!el) {
+      const tmp = document.createElement("div");
+      tmp.innerHTML = statPaidCardHTML(x, i, pct);
+      el = tmp.firstElementChild;
+      const nf = el.querySelector(".stat-fill");
+      if (nf) nf.style.width = pct + "%";
+      grid.appendChild(el);
+    } else {
+      el.style.order = i;
+      el.className = "stat-card";
+      setStatTxt(el, ".stat-id", x.m.id);
+      setStatTxt(el, ".stat-name", x.m.name + " · " + x.billing);
+      const bd = el.querySelector(".stat-badges");
+      if (bd && bd.innerHTML !== x.freeBadge + x.typeBadge + x.costBtn) bd.innerHTML = x.freeBadge + x.typeBadge + x.costBtn;
+      setStatTxt(el, ".stat-used", paidBig(x));
+      setStatTxt(el, ".stat-unit", x._priced ? "元" : "tokens");
+      const nums = el.querySelector(".stat-nums");
+      if (nums && nums.getAttribute("title") !== paidTitle(x)) nums.setAttribute("title", paidTitle(x));
+      const fill = el.querySelector(".stat-fill");
+      if (fill && fill.dataset.pct !== String(pct)) { fill.dataset.pct = pct; fill.style.width = pct + "%"; }
+      setStatTxt(el, ".stat-pct", paidSub(x));
+      const note = "累计 " + (x.m.total_tokens_all || 0).toLocaleString() + " tok · " + (x.m.total_requests_all || 0).toLocaleString() + " 次";
+      const rf = el.querySelector(".stat-refresh");
+      if (rf && rf.textContent !== note) rf.textContent = note;
+      el.querySelectorAll(".stat-mark,.stat-redzone,.stat-limit-note,.stat-load").forEach(n => n.remove());
+    }
+    seen.add(x.m.id);
+  });
+  Object.keys(prev).forEach(id => { if (!seen.has(id)) prev[id].remove(); });
+}
+
+/* ── 📊 用量分组查看（维度 × 口径 × 时间段 → /admin/stats/grouped） ── */
+let GS = { dim: "model", metric: "tokens", days: 7 };
+function grpStatsOpen() {
+  gsModal = HMG.modal({
+    title: "📊 用量分组查看",
+    wide: true,
+    body: `
+      <div class="gs-seg-row"><span class="gs-seg-label">维度</span>
+        <div class="seg sm" id="gs-dim-seg">
+          <button data-v="provider" onclick="grpStatsSet('dim','provider')">供应商</button>
+          <button data-v="model" onclick="grpStatsSet('dim','model')">模型</button>
+          <button data-v="pool" onclick="grpStatsSet('dim','pool')">模型池</button>
+          <button data-v="key" onclick="grpStatsSet('dim','key')">用户 Key</button>
+        </div></div>
+      <div class="gs-seg-row"><span class="gs-seg-label">口径</span>
+        <div class="seg sm" id="gs-metric-seg">
+          <button data-v="tokens" onclick="grpStatsSet('metric','tokens')">Token 用量</button>
+          <button data-v="calls" onclick="grpStatsSet('metric','calls')">请求次数</button>
+        </div></div>
+      <div class="gs-seg-row"><span class="gs-seg-label">时间</span>
+        <div class="seg sm" id="gs-days-seg">
+          <button data-v="1" onclick="grpStatsSet('days','1')">今日</button>
+          <button data-v="7" onclick="grpStatsSet('days','7')">近 7 天</button>
+          <button data-v="30" onclick="grpStatsSet('days','30')">近 30 天</button>
+        </div></div>
+      <div id="gs-rows"><div class="empty">加载中…</div></div>
+      <div class="hint" style="margin-top:10px">口径：调用记录账本（decision_log，含失败请求；Token 取实际回传用量，失败记 0）。模型池维度按请求实际命中的池聚合——父池调用计入父池，直接调子池单列。</div>`,
+    footer: [{ label: "关闭", cls: "btn btn-secondary", onClick: ({ close }) => close() }],
+  });
+  grpStatsRefresh();
+}
+function grpStatsSet(k, v) {
+  GS[k] = (k === "days") ? parseInt(v, 10) : v;
+  grpStatsRefresh();
+}
+async function grpStatsRefresh() {
+  ["dim", "metric", "days"].forEach(k => {
+    const seg = document.getElementById("gs-" + k + "-seg");
+    if (seg) [...seg.querySelectorAll("button")].forEach(b => b.classList.toggle("on", String(b.dataset.v) === String(GS[k])));
+  });
+  const el = document.getElementById("gs-rows");
+  if (!el) return;
+  el.innerHTML = '<div class="empty">加载中…</div>';
+  const data = await api(`/admin/stats/grouped?dim=${GS.dim}&days=${GS.days}`);
+  if (!data) { el.innerHTML = '<div class="hint">加载失败，稍后重试</div>'; return; }
+  if (!data.rows.length) { el.innerHTML = '<div class="empty">该时间段暂无调用记录</div>'; return; }
+  const key = GS.metric === "calls" ? "calls" : "tokens";
+  const max = Math.max(...data.rows.map(r => r[key]), 1);
+  el.innerHTML = data.rows.map((r, i) => `
+    <div class="gs-row"><span class="gs-rank">${i + 1}</span><span class="gs-name" title="${esc(r.name)}">${esc(r.name)}</span>
+      <span class="gs-val">${key === "tokens" ? Number(r.tokens).toLocaleString() + " tok" : Number(r.calls).toLocaleString() + " 次"}</span>
+      <span class="gs-bar-wrap"><span class="gs-bar" style="width:${Math.max(2, Math.round(r[key] / max * 100))}%"></span></span></div>`).join("");
+}
+
+/* ── 🪴 节省统计：showHeadroomStats/refreshHrStatsBtn 在 hmg.js 共享层（本页只挂入口显隐） ── */
+
+/* ═══════════ 初始化：首渲 + 5s 轮询（poll 统一 visibilitychange 感知） ═══════════ */
+refreshHrStatsBtn();
+HMG.poll.start("stats", loadStats, 5000);
+loadStats();
+</script>
+</body>
+</html>

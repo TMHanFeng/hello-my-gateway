@@ -2425,6 +2425,69 @@ def main():
                                          "decorateProvQuota", "pqSyncBindings", "provider_quota_exhausted",
                                          "余量监控已保存并查询", "余量监控已停用")), None)
 
+        # ===== T40（v2.17.0）：hmg-admin 第三面板（多页面真路由 + 共享资产 + 单 DOM 双主题，纯只读新增零后端行为改动） =====
+        _r40root = httpx.get(f"{BASE}/hmg-admin", headers=ADMIN, timeout=15, follow_redirects=False)
+        _pages40 = {p: httpx.get(f"{BASE}/hmg-admin/{p}", headers=ADMIN, timeout=15)
+                    for p in ("model", "pools", "stats", "logs", "keys", "plugins")}
+        check("T40a 六页路由200+/hmg-admin 307落地model/白名单外404",
+              _r40root.status_code == 307 and "/hmg-admin/model" in str(_r40root.headers.get("location", ""))
+              and all(r.status_code == 200 for r in _pages40.values())
+              and httpx.get(f"{BASE}/hmg-admin/nope", headers=ADMIN, timeout=15).status_code == 404,
+              (_r40root.status_code, {k: v.status_code for k, v in _pages40.items()}))
+        _css40 = httpx.get(f"{BASE}/hmg-admin/assets/hmg.css", headers=ADMIN, timeout=15)
+        _js40 = httpx.get(f"{BASE}/hmg-admin/assets/hmg.js", headers=ADMIN, timeout=15)
+        check("T40b 资产可达+Content-Type+ETag在位+目录遍历防护(../model.html白名单外404)",
+              _css40.status_code == 200 and _css40.headers.get("content-type", "").startswith("text/css")
+              and _js40.status_code == 200 and _js40.headers.get("content-type", "").startswith("application/javascript")
+              and bool(_css40.headers.get("etag")) and bool(_js40.headers.get("etag"))
+              and httpx.get(f"{BASE}/hmg-admin/assets/..%2Fmodel.html", headers=ADMIN, timeout=15).status_code == 404, None)
+        _etag40 = _pages40["model"].headers.get("etag")
+        check("T40c 页面ETag/304协商+no-cache(内容未变零传输)",
+              bool(_etag40) and _pages40["model"].headers.get("cache-control") == "no-cache"
+              and httpx.get(f"{BASE}/hmg-admin/model", headers={**ADMIN, "if-none-match": _etag40}, timeout=15).status_code == 304, None)
+        check("T40d 六页壳挂载点+主题引导+hmg资产引用+__GATEWAY_VERSION__已替换",
+              all("__GATEWAY_VERSION__" not in r.text for r in _pages40.values())
+              and all('id="hmg-sidebar"' in r.text and "hmg_theme" in r.text and "data-page=" in r.text for r in _pages40.values())
+              and all("assets/hmg.css?v=" in r.text and "assets/hmg.js?v=" in r.text for r in _pages40.values()), None)
+        check("T40e model页业务接线(供应商/模型CRUD+编辑弹窗+余量监控区+内联余量+思考参数+赠费校准+双拖拽)",
+              all(s in _pages40["model"].text for s in ("function loadModels", "function editModel", "function submitModel",
+                  "pqq-section", "pqFillEditSection", "pqSaveFromEdit", "pqSyncBindings", "decorateProvQuota",
+                  "data-pq-inline", "renderReasoningStrip", "showGiftCalibrate", "bindProviderDrag", "bindModelDrag",
+                  "openCostSettings")), None)
+        check("T40f pools页业务接线(池CRUD/嵌套子池/单模型锁定/兜底/重命名/Switch门控/双拖拽)",
+              all(s in _pages40["pools"].text for s in ("function loadPools", "poolItemHTML", "collectPoolModels",
+                  "openSingleMode", "openFallbackTargets", "renamePool", "togglePoolSwitch", "toggleAutoOrder",
+                  "toggleLoadBalance", "bindPoolDrag", "bindDrag")), None)
+        check("T40g stats页业务接线(四维度/安全阀红线红区/gift余额口径/嵌套分组/付费视图/增量渲染/5s轮询守卫)",
+              all(s in _pages40["stats"].text for s in ('data-dim="billing"', 'data-dim="provider"', 'data-dim="pool"',
+                  'data-dim="paid"', "stat-mark", "stat-redzone", "gift_yesterday_leftover", "statCardEnsure",
+                  "statRenderGrouped", "statRenderPaid", "_statLoadSeq", "HMG.poll.start")), None)
+        check("T40h logs页业务接线(原因码全集含余量熔断/池筛选/增量刷新/序号守卫/5s轮询)",
+              all(s in _pages40["logs"].text for s in ("provider_quota_exhausted", "fallback_switch_error", "peak_blocked",
+                  "reasonChip", "formatDetail", "_logLoadSeq", "populateLogFilter", "HMG.poll.start")), None)
+        check("T40i keys页业务接线(创建编辑/轮换日志/用量历史SVG/专属池/管理员伪Key#0)",
+              all(s in _pages40["keys"].text for s in ("function loadKeys", "function submitKey", "showKeyRotations",
+                  "loadKeyUsage", "usage-hours", "loadKeyOwnPool", "管理员（服务器密钥）")), None)
+        check("T40j plugins页业务接线(插件卡启停/扫描/config_schema动态表单含pools·slider/headroom设置/节省统计入口)",
+              all(s in _pages40["plugins"].text for s in ("function loadPluginCenter", "togglePlugin", "scanPlugins",
+                  "pcField", "pcPoolsValue", "savePluginConfig", "openHeadroomSettings", "applyHrModeHighlight",
+                  "showHeadroomStats")), None)
+        # 共享资产层单源：grp 套件/成本预估/节省统计/轮询管理/双主题全在 hmg.js·hmg.css，六页零复制
+        _hmgjs = open(os.path.join(REPO, "static", "hmg-admin", "assets", "hmg.js"), encoding="utf-8").read()
+        _hmgcss = open(os.path.join(REPO, "static", "hmg-admin", "assets", "hmg.css"), encoding="utf-8").read()
+        check("T40k 共享资产单源(hmg.js: 分组收纳/成本预估/节省统计/轮询管理/壳注入/双主题; hmg.css: Linear双token/三断点/减动效)",
+              all(s in _hmgjs for s in ("function grpWrapHtml", "function grpSyncFromDOM", "function grpOpenSettings",
+                  "function _parsePeakWindows", "function recalcCost", "function saveCostPrices",
+                  "function showHeadroomStats", "const hmgPoll", "function hmgSetTheme", "function hmgRenderShell",
+                  "function gwGroupsBoot"))
+              and all(s in _hmgcss for s in ("--canvas: #010102", "--canvas: #ffffff", "--accent: #5e6ad2",
+                                             "@media (max-width: 1199px)", "@media (max-width: 767px)",
+                                             "prefers-reduced-motion")), None)
+        # 残留闸复核：admin/hfadmin 双面板文件未引入任何 hmg 引用（文件级零改动由 git diff 把关，此处锚点复核）
+        check("T40l 双面板零污染复核(两面板无 hmg-admin 引用,原余量锚点仍在你位)",
+              "hmg-admin" not in _hf and "hmg-admin" not in _idx
+              and "pq-inline" in _hf and "pq-inline" in _idx, None)
+
     finally:
         try:
             deep_clean()

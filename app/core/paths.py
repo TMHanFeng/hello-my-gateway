@@ -24,6 +24,7 @@ DOCS_DIR = PROJECT_ROOT / "docs"
 FRONTEND_PATH = STATIC_DIR / "index.html"       # /admin 面板（FRONTEND_ADMIN 的历史别名）
 FRONTEND_ADMIN = FRONTEND_PATH
 FRONTEND_HFADMIN = STATIC_DIR / "hfadmin.html"  # /hfadmin 面板
+HMG_STATIC_DIR = STATIC_DIR / "hmg-admin"       # /hmg-admin 第三面板（六页面 HTML + assets/ 共享资产）
 REASONING_PROBE_CACHE = DATA_DIR / "reasoning_probe_cache.json"
 QUOTA_RESULT_PATH = PROJECT_ROOT / "cheackresult.json"  # 余量监控工位：每次刷新覆盖写入的最新结果（供外部服务读取）
 DEV_PID_PATH = DATA_DIR / "dev8651.pid"         # 8651 开发实例 pid（scripts/start|stop_dev_8651.ps1）

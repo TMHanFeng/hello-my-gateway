@@ -39,3 +39,4 @@ data/
 
 # 余量监控工位：运行时结果文件（网关启动/每次刷新覆盖写入）
 cheackresult.json
+gui-test-screenshots/

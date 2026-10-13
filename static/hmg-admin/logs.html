@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>调用记录 · HMG Admin</title>
+<script>
+/* 主题引导：渲染前定 data-theme，防闪白（跟随系统 → localStorage 手动值优先） */
+(function(){try{var t=localStorage.getItem('hmg_theme');if(t!=='light'&&t!=='dark')t=window.matchMedia&&matchMedia('(prefers-color-scheme: light)').matches?'light':'dark';document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();
+</script>
+<link rel="stylesheet" href="/hmg-admin/assets/hmg.css?v=__GATEWAY_VERSION__">
+<style>
+/* ── 本页私有：decision 卡片与原因码 chip ── */
+.log-card { background: var(--surface-1); border: 1px solid var(--hairline); border-radius: 12px; padding: 12px 16px; margin-bottom: 10px; }
+.log-card::before { content: none; }
+.log-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12.5px; }
+.log-time { color: var(--ink-subtle); font-variant-numeric: tabular-nums; }
+.log-pool { color: var(--ink-muted); }
+.log-selected { margin-left: auto; font-weight: 500; font-size: 12.5px; }
+.log-selected.ok { color: var(--success); }
+.log-selected.fail { color: var(--danger); }
+.log-steps { display: flex; flex-direction: column; gap: 3px; margin-top: 8px; border-top: 1px solid var(--hairline); padding-top: 8px; }
+.log-step { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 12px; }
+.s-model { font-family: ui-monospace, Consolas, monospace; font-size: 12px; overflow-wrap: anywhere; }
+.s-arrow { color: var(--ink-tertiary); }
+.rsn {
+  display: inline-flex; align-items: center; gap: 4px; border-radius: 4px; padding: 1px 7px;
+  font-size: 11.5px; line-height: 1.7; white-space: nowrap; max-width: 100%;
+}
+.rsn-selected { background: color-mix(in srgb, var(--success) 14%, transparent); color: var(--success); }
+.rsn-skip { background: var(--surface-2); color: var(--ink-subtle); }
+.rsn-warn { background: color-mix(in srgb, var(--warning) 14%, transparent); color: var(--warning); }
+.rsn-neutral { background: var(--surface-2); color: var(--ink-tertiary); }
+@keyframes logFlash { from { background: color-mix(in srgb, var(--accent) 14%, var(--surface-1)); } to { background: var(--surface-1); } }
+</style>
+</head>
+<body data-page="logs">
+<div id="hmg-topbar"></div>
+<aside id="hmg-sidebar"></aside>
+<div id="hmg-drawermask"></div>
+<main class="hmg-main">
+  <div class="page-head">
+    <h1>调用记录</h1><span class="sub">每次调用的选模过程与切换依据。绿=选中，灰=排除，黄=切换</span><span class="sp"></span>
+    <div class="toolbar">
+      <select id="log-pool-filter" class="inp" style="width:auto;min-width:140px" onchange="loadDecisions()">
+        <option value="">全部池</option>
+      </select>
+      <button class="btn btn-ghost btn-sm" onclick="loadDecisions()">刷新</button>
+    </div>
+  </div>
+  <div id="log-list"><div class="empty">加载中…</div></div>
+</main>
+<script src="/hmg-admin/assets/hmg.js?v=__GATEWAY_VERSION__"></script>
+<script>
+"use strict";
+HMG.renderShell();
+/* ═══════════ 调用记录页（业务逻辑自 hfadmin 移植，API 零改动）═══════════ */
+const api = HMG.api, esc = HMG.esc;
+let _logLoadSeq = 0;   // 加载序号：切池筛选与 5s 轮询并发时，旧筛选的晚到响应自行丢弃
+
+/* 基础标签与样式类 */
+const REASON_BASE = {
+  selected: ["选中调用", "rsn-selected"],
+  ok: ["可用", "rsn-selected"],
+  quota_exhausted: ["用量已尽", "rsn-skip"],
+  rpm_limited: ["RPM 触顶", "rsn-skip"],
+  tpm_limited: ["TPM 触顶", "rsn-skip"],
+  valve_exceeded: ["安全阀触顶", "rsn-skip"],
+  provider_quota_exhausted: ["余量熔断", "rsn-skip"],
+  cooldown: ["冷却中", "rsn-warn"],
+  context_exceeded: ["超上下文窗口", "rsn-skip"],
+  context_overflow: ["上下文超限·不冷却透传", "rsn-warn"],
+  no_vision: ["不支持图片", "rsn-skip"],
+  one_time_expired: ["一次性已失效", "rsn-skip"],
+  peak_blocked: ["高峰时段", "rsn-skip"],
+  already_tried: ["本轮已尝试", "rsn-neutral"],
+  pool_exhausted: ["子池无可用接口", "rsn-skip"],
+  cycle: ["循环引用已跳过", "rsn-warn"],
+  switch_429: ["上游限流 → 切换", "rsn-warn"],
+  switch_error: ["上游错误 → 切换", "rsn-warn"],
+  fallback_selected: ["兜底池选中", "rsn-selected"],
+  fallback_switch_429: ["兜底上游限流 → 切换", "rsn-warn"],
+  fallback_switch_error: ["兜底上游错误 → 切换", "rsn-warn"],
+};
+
+/* detail 对象 → 附加描述串 */
+function formatDetail(reason, d) {
+  if (!d) return "";
+  const fmtNum = n => (typeof n === "number" ? n.toLocaleString("en-US") : n);
+  const tail = s => " · " + s;
+  switch (reason) {
+    case "quota_exhausted":
+      if (d.used != null && d.limit != null) {
+        const pct = d.limit > 0 ? Math.round(d.used / d.limit * 100) : 0;
+        return tail(`${fmtNum(d.used)}/${fmtNum(d.limit)} (${pct}%)`);
+      }
+      if (d.reason_detail) return tail(d.reason_detail);
+      return "";
+    case "rpm_limited":
+      return d.current != null ? tail(`${fmtNum(d.current)}/${fmtNum(d.limit)} RPM`) : "";
+    case "tpm_limited":
+      return d.current != null ? tail(`${fmtNum(d.current)}/${fmtNum(d.limit)} TPM`) : "";
+    case "valve_exceeded":
+      if (d.used != null && d.estimated != null && d.effective_limit != null) {
+        return tail(`已用 ${fmtNum(d.used)} + 预估 ${fmtNum(d.estimated)} ≥ k上限 ${fmtNum(d.effective_limit)}（k=${d.valve_pct}%）`);
+      }
+      if (d.reason_detail) return tail(d.reason_detail);
+      return "";
+    case "provider_quota_exhausted":
+      if (d.remaining_sec != null) return tail(`剩 ${d.remaining_sec}s 后重置`);
+      return d.reason_detail ? tail(d.reason_detail) : "";
+    case "cooldown":
+      return d.remaining_sec != null ? tail(`剩 ${d.remaining_sec}s`) : "";
+    case "context_exceeded":
+      return d.estimated != null ? tail(`请求估算 ${fmtNum(d.estimated)} tok，上限 ${fmtNum(d.window)}`) : "";
+    case "no_vision":
+      return tail(`模型为 ${d.modality || "text"}，请求含图`);
+    case "one_time_expired":
+      if (d.used != null && d.limit != null) return tail(`已用 ${fmtNum(d.used)}/${fmtNum(d.limit)}`);
+      if (d.age_sec != null && d.ttl_sec != null) return tail(`已存活 ${d.age_sec}s / TTL ${d.ttl_sec}s`);
+      if (d.expire_date) return tail(`到期 ${d.expire_date}`);
+      return d.reason_detail ? tail(d.reason_detail) : "";
+    case "peak_blocked": {
+      const bits = [];
+      if (d.peak_windows) bits.push("高峰 " + d.peak_windows);
+      if (d.peak_weekdays) bits.push("周" + d.peak_weekdays);
+      if (d.peak_exdates) bits.push("谷峰 " + d.peak_exdates);
+      return bits.length ? tail(`仅闲时可用 · ${bits.join(" · ")} 内不路由`) : "";
+    }
+    case "switch_429":
+    case "fallback_switch_429":
+      if (d.latency_ms != null) return tail(`HTTP 429 · ${d.latency_ms}ms · 冷却 ${d.cooldown_sec}s`);
+      return d.cooldown_sec != null ? tail(`HTTP 429 · 冷却 ${d.cooldown_sec}s`) : "";
+    case "switch_error":
+    case "fallback_switch_error": {
+      const parts = [];
+      if (d.error_type) parts.push(d.error_type);
+      if (d.status != null) parts.push("HTTP " + d.status);
+      if (d.latency_ms != null) parts.push(d.latency_ms + "ms");
+      if (d.cooldown_sec != null) parts.push("冷却 " + d.cooldown_sec + "s");
+      const tail3 = parts.length ? tail(parts.join(" · ")) : "";
+      return d.error ? tail3 + tail(d.error.slice(0, 80)) : tail3;
+    }
+    default:
+      return "";
+  }
+}
+
+function reasonChip(reason, detail) {
+  const [label, cls] = REASON_BASE[reason] || [reason, "rsn-neutral"];
+  const extra = formatDetail(reason, detail);
+  return `<span class="rsn ${cls}" title="${esc((label + extra).slice(1))}">${esc(label)}${extra ? `<span style="opacity:.75">${esc(extra)}</span>` : ""}</span>`;
+}
+async function populateLogFilter() {
+  const data = await api("/admin/pools");
+  if (!data) return;
+  const sel = document.getElementById("log-pool-filter");
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">全部池</option>' + Object.keys(data.pools).map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join("");
+  sel.value = cur;
+}
+function decisionInner(d) {
+  const t = new Date(d.ts * 1000).toLocaleString("zh-CN", { hour12: false });
+  const ok = !!d.selected;
+  const steps = (d.steps || []).map(s => `
+      <div class="log-step">
+        <span class="s-model">${esc(s.model)}</span>
+        <span class="s-arrow">→</span>
+        ${reasonChip(s.reason, s.detail)}
+      </div>`).join("");
+  return `
+      <div class="log-head">
+        <span class="log-time">${t}</span>
+        ${d.caller ? `<span class="log-pool" style="color:var(--accent-hover)">👤 ${esc(d.caller)}</span>` : ""}
+        <span class="log-pool">池 ${esc(d.pool_name)}</span>
+        ${d.requested ? `<span class="rsn rsn-neutral">指定 ${esc(d.requested)}</span>` : ""}
+        <span class="rsn rsn-neutral">估算 ${d.estimated_tokens} tok</span>
+          ${d.actual_tokens != null && d.actual_tokens !== "" ? `<span class="rsn rsn-selected">实际 ${d.actual_tokens} tok</span>` : ""}
+        <span class="log-selected ${ok ? "ok" : "fail"}">${ok ? "✓ " + esc(d.selected) : "✕ 无可用接口"}</span>
+      </div>
+      <div class="log-steps">${steps || '<span class="hint">无候选</span>'}</div>`;
+}
+
+async function loadDecisions() {
+  const seq = ++_logLoadSeq;
+  const poolFilter = document.getElementById("log-pool-filter").value;
+  const url = "/admin/decisions?limit=100" + (poolFilter ? "&pool=" + encodeURIComponent(poolFilter) : "");
+  const data = await api(url);
+  if (seq !== _logLoadSeq) return;   // 旧筛选的晚到响应：直接丢弃
+  const el = document.getElementById("log-list");
+  if (!data) {
+    el.querySelector(".empty")?.remove();
+    if (!el.children.length) el.innerHTML = '<div class="hint">加载失败，等待自动重试…</div>';
+    return;
+  }
+  if (!data.decisions.length) { el.innerHTML = '<div class="empty">暂无调用记录。发起一次对话后这里会显示选模过程与切换依据。</div>'; return; }
+  // 增量刷新：按决策 id 复用既有卡片；新记录顶部插入并播一次入场动画
+  el.querySelector(".empty")?.remove();
+  const firstLoad = !el.querySelector(".log-card");
+  const prev = {};
+  [...el.querySelectorAll(".log-card")].forEach(n => { if (n.dataset.decisionId) prev[n.dataset.decisionId] = n; });
+  const fresh = [];
+  const seen = new Set();
+  data.decisions.forEach(d => {
+    const key = String(d.id);
+    seen.add(key);
+    const inner = decisionInner(d);
+    const node = prev[key];
+    if (!node) {
+      const tmp = document.createElement("div");
+      const anim = firstLoad ? "none" : "logFlash 1.8s ease-out backwards";
+      tmp.innerHTML = `<div class="log-card" data-decision-id="${key}" style="animation:${anim}">${inner}</div>`;
+      fresh.push(tmp.firstElementChild);
+      return;
+    }
+    if (node.dataset.sig !== String(d.actual_tokens ?? "")) {
+      node.dataset.sig = String(d.actual_tokens ?? "");
+      node.innerHTML = inner;
+    }
+    delete prev[key];
+  });
+  Object.values(prev).forEach(n => n.remove());
+  if (fresh.length) {
+    // 新进入列表的卡片插到第一张 id 更小的卡片前，列表恒按记录时间倒序
+    fresh.forEach(c => {
+      const after = [...el.querySelectorAll(".log-card")].find(n => Number(n.dataset.decisionId || 0) < Number(c.dataset.decisionId));
+      el.insertBefore(c, after || null);
+    });
+  }
+}
+
+/* ═══════════ 初始化 ═══════════ */
+populateLogFilter().then(loadDecisions);
+HMG.poll.start("logs", loadDecisions, 5000);
+</script>
+</body>
+</html>

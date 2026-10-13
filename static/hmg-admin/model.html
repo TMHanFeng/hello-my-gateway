@@ -1,0 +1,1270 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>模型管理 · HMG Admin</title>
+<script>
+/* 主题引导：渲染前定 data-theme，防闪白（跟随系统 → localStorage 手动值优先） */
+(function(){try{var t=localStorage.getItem('hmg_theme');if(t!=='light'&&t!=='dark')t=window.matchMedia&&matchMedia('(prefers-color-scheme: light)').matches?'light':'dark';document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();
+</script>
+<link rel="stylesheet" href="/hmg-admin/assets/hmg.css?v=__GATEWAY_VERSION__">
+<style>
+/* ── 本页私有：供应商/模型卡片与移植表单原子（跨页共用部分在 hmg.css） ── */
+.provider-card { padding: 14px 16px 8px; }
+.provider-head { display: flex; align-items: flex-start; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
+.card-sub { color: var(--ink-subtle); font-size: 12px; margin-top: 2px; overflow-wrap: anywhere; }
+.drag-handle { cursor: grab; color: var(--ink-tertiary); }
+.model-row {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 9px 2px; border-top: 1px solid var(--hairline);
+}
+.model-row .m-info { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
+.model-row .model-id { font-weight: 600; font-size: 13.5px; overflow-wrap: anywhere; }
+.model-row .model-name { color: var(--ink-subtle); font-size: 12.5px; overflow-wrap: anywhere; }
+.m-actions { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; }
+.sp-ok { color: var(--success); } .sp-mid { color: var(--warning); } .sp-slow { color: var(--danger); }
+/* 余量内联（供应商卡头部协议徽章右侧） */
+.pqi-item {
+  display: inline-flex; align-items: center; margin-left: 8px; padding: 1px 8px;
+  border-radius: 9999px; background: var(--surface-2); font-size: 11.5px; line-height: 1.7;
+  color: var(--ink-subtle); max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  vertical-align: middle;
+}
+.pqi-item.pqi-ok { color: var(--success); }
+.pqi-item.pqi-warn { color: var(--warning); }
+.pqi-item.pqi-err { color: var(--danger); }
+/* 移植表单网格（与原面板 .f2/.f3/.fg 同名同义；.fg/.form-sec 共享部分在 hmg.css） */
+.f2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.f3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+.fg { margin-bottom: 12px; }
+.fg .inp { margin-bottom: 0; }
+#mform .fg, #pform .fg { margin-bottom: 12px; }
+#mform .f2, #mform .f3, #pform .f2 { margin-bottom: 0; }
+.modal .form-sec:first-child { margin-top: 0; padding-top: 0; border-top: none; }
+.opt-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
+.opt {
+  display: flex; gap: 8px; align-items: flex-start; font-size: 12.5px; line-height: 1.5;
+  color: var(--ink-muted); padding: 8px 10px; border: 1px solid var(--hairline);
+  border-radius: 8px; cursor: pointer; position: relative;
+}
+.opt input { accent-color: var(--accent); margin-top: 2px; flex: none; }
+.opt b { color: var(--ink); display: block; font-size: 13px; }
+.cost-gear {
+  position: absolute; right: 6px; top: 6px; width: 24px; height: 24px; border-radius: 6px;
+  color: var(--ink-subtle); font-size: 13px; display: flex; align-items: center; justify-content: center;
+}
+.cost-gear:hover { background: var(--surface-2); color: var(--ink); }
+.modal-actions { display: flex; gap: 8px; margin-top: 16px; align-items: center; flex-wrap: wrap; }
+.modal-actions .right { margin-left: auto; display: flex; gap: 8px; }
+input[type="range"] { accent-color: var(--accent); width: 100%; }
+.grp-pop-title { font-size: 12.5px; color: var(--ink-subtle); padding: 4px 8px 6px; }
+.th-hint { font-size: 12px; color: var(--ink-tertiary); margin-top: 4px; display: block; }
+.th-hint.ok { color: var(--success); } .th-hint.warn { color: var(--warning); }
+.hint b { color: var(--ink); }
+.rsn { font-size: 11.5px; }
+@media (max-width: 767px) {
+  .opt-grid { grid-template-columns: 1fr; }
+  .m-actions { margin-left: 0; width: 100%; }
+}
+</style>
+</head>
+<body data-page="model">
+<div id="hmg-topbar"></div>
+<aside id="hmg-sidebar"></aside>
+<div id="hmg-drawermask"></div>
+<main class="hmg-main">
+  <div class="page-head">
+    <h1>模型管理</h1><span class="sub">注册模型接口与供应商；同名模型自动归入大池子统一调度</span><span class="sp"></span>
+    <div class="toolbar">
+      <button class="btn btn-ghost" onclick="grpOpenSettings()" title="分组收纳设置（模型管理 / 模型池）">⚙️ 分组</button>
+      <button class="btn btn-secondary" onclick="showAddProvider()">＋ 添加供应商</button>
+      <button class="btn btn-primary" onclick="showAdd()">＋ 添加模型</button>
+    </div>
+  </div>
+  <div id="models-list" class="stagger"><div class="empty">加载中…</div></div>
+</main>
+<script src="/hmg-admin/assets/hmg.js?v=__GATEWAY_VERSION__"></script>
+<script>
+"use strict";
+HMG.renderShell();
+/* ═══════════ 模型管理页（业务逻辑自 hfadmin 移植，API 零改动）═══════════ */
+const api = HMG.api, esc = HMG.esc, jsq = HMG.jsq, pathEnc = HMG.pathEnc, toast = HMG.toast;
+var editingId = null, editingProviderId = null;   // var：供 hmg.js 共享弹窗（openCostSettings→window.editingId）读取
+let modelLookup = {}, providerLookup = {};
+var cachedModels = null;   // var：saveCostPrices 保存价格后同步编辑回填缓存
+let cachedProviders = null;
+let speedCache = JSON.parse(localStorage.getItem("gw_speed") || "{}");
+let provModal = null, modelModal = null, giftModal = null;
+
+/* 首屏后不再重放入场动画：保存/编辑触发的整表重建保持视觉静止 */
+const _entranceDone = {};
+function onceFlag(key) { const v = !_entranceDone[key]; _entranceDone[key] = true; return v; }
+function setInnerIfChanged(el, html) {
+  if (el.__lastHtml === html) return false;
+  el.__lastHtml = html;
+  el.innerHTML = html;
+  return true;
+}
+
+/* ── 徽章（Linear 纪律：语义色只用于状态语义） ── */
+function protocolLabel(p) { return ({ openai: "OpenAI Compatible", anthropic: "Anthropic", openai_responses: "OpenAI Responses" })[p] || p; }
+function provBadge(p) {
+  return '<span class="badge">' + esc(protocolLabel(p)) + "</span>";
+}
+function typeBadge(m) {
+  if (m.token_type === "one_time") return '<span class="badge badge-warn">一次性</span>';
+  if (m.token_type === "rolling_5h") return '<span class="badge badge-warn">5h限额</span>';
+  if (m.token_type === "all_day") return '<span class="badge" title="付费模型：全天可用">全天可用</span>';
+  if (m.token_type === "idle_only") return '<span class="badge badge-warn" title="付费模型：仅闲时可用（高峰时段内不路由）">仅闲时</span>';
+  if (m.token_type === "gift") return '<span class="badge badge-warn" title="余额返还制：到账时刻按昨日消耗补回额度（上限封顶）">余额返还制</span>';
+  if (m.token_type === "local") return '<span class="badge" title="本地模型：不计费不限量，仅记录用量">本地</span>';
+  return "<span class=\"badge\">每日</span>";
+}
+function freeBadge(m) { return m.is_free ? '<span class="badge badge-ok">免费</span>' : '<span class="badge badge-err">付费</span>'; }
+function modBadge(m) { return m.modality === "embedding" ? '<span class="badge badge-acc">embedding</span>' : m.modality === "rerank" ? '<span class="badge badge-acc">rerank</span>' : m.modality === "vision" ? '<span class="badge">多模态</span>' : "<span class=\"badge\">文本</span>"; }
+function latTag(id) {
+  const s = speedCache[id];
+  if (!s) return "";
+  if (s.status !== "ok") return `<span class="badge badge-warn">${s.status === "rate_limited" ? "限流" : "失败"}</span>`;
+  const cls = s.latency_ms < 800 ? "sp-ok" : s.latency_ms < 2500 ? "sp-mid" : "sp-slow";
+  return `<span class="mono num ${cls}" style="font-size:11px">${s.latency_ms}ms · ${s.tps}t/s</span>`;
+}
+
+async function loadModels() {
+  const [mdata, provdata] = await Promise.all([api("/admin/models"), api("/admin/providers")]);
+  if (!mdata || !provdata) return;
+  providerLookup = {};
+  provdata.providers.forEach(p => providerLookup[p.id] = p);
+  cachedModels = mdata.models;
+  cachedProviders = provdata.providers;
+
+  const models = mdata.models;
+  const providers = provdata.providers;
+  const animRow = onceFlag("models-row");
+  const grpOn = grpSettings().models;
+  const provCards = [];
+  providers.forEach(p => {
+    const pmodels = models.filter(m => m.provider_id === p.id);
+    provCards.push({ id: p.id, html: `
+    <div class="card provider-card" draggable="true" data-provider-drag="${esc(p.id)}" style="cursor:grab" title="拖拽排序供应商">
+      <div class="provider-head">
+        <div class="grow" style="min-width:220px">
+          <div class="card-title"><span class="drag-handle">⠿</span> ${esc(p.name)} ${provBadge(p.protocol)}<span class="pq-inline" data-pq-inline="${esc(p.id)}"></span></div>
+          <div class="card-sub mono">${esc(p.id)} · ${esc(p.base_url)}${p.proxy_url ? ` <span class="badge badge-acc" title="代理: ${esc(p.proxy_url)}">🛡️ 代理</span>` : ""}</div>
+        </div>
+        <div class="row wrap">
+          ${grpOn ? `<button class="btn btn-ghost btn-sm" title="分组收纳" onclick="grpAssignMenu(event,'providerGroups','${jsq(p.id)}')">📂</button>` : ""}
+          <button class="btn btn-ghost btn-sm" onclick="editProvider('${jsq(p.id)}')">编辑</button>
+          <button class="btn btn-danger btn-sm" onclick="delProvider('${jsq(p.id)}')">删除</button>
+          <button class="btn btn-primary btn-sm" onclick="showAddUnder('${jsq(p.id)}')">＋ 添加模型</button>
+        </div>
+      </div>
+      ${pmodels.map((m, i2) => modelRowHTML(m, i2, animRow)).join("") || '<div class="hint" style="padding:6px 2px">该供应商下暂无模型。</div>'}
+    </div>` });
+  });
+  let html = grpOn ? grpWrapHtml("providerGroups", provCards) : provCards.map(c => c.html).join("");
+  const standalone = models.filter(m => !m.provider_id);
+  if (standalone.length) {
+    html += `
+    <div class="card provider-card">
+      <div class="provider-head">
+        <div><div class="card-title">独立模型（内联连接）</div><div class="card-sub">未挂载到任何供应商</div></div>
+      </div>
+      ${standalone.map((m, i) => modelRowHTML(m, i, animRow)).join("")}
+    </div>`;
+  }
+  if (!providers.length && !standalone.length) {
+    html = '<div class="empty">暂无模型。点击右上角「添加供应商」后在其下添加模型，或添加独立模型。</div>';
+  }
+  setInnerIfChanged(document.getElementById("models-list"), html);
+  bindProviderDrag();
+  bindModelDrag();
+  decorateProvQuota();  // 卡片头部内联余量（fire-and-forget）
+}
+
+/* 拖拽：模型行内排序（触屏点一下上移一格） */
+function bindModelDrag() {
+  const list = document.getElementById("models-list");
+  if (!list) return;
+  if (list.dataset.dragBoundModel) return;
+  list.dataset.dragBoundModel = "1";
+  let dragged = null;
+  list.addEventListener("dragstart", e => {
+    const row = e.target.closest(".model-row[draggable]");
+    if (!row) return;
+    e.stopPropagation();
+    dragged = row;
+    row.style.opacity = "0.4";
+    e.dataTransfer.effectAllowed = "move";
+  });
+  list.addEventListener("dragover", e => {
+    const row = e.target.closest(".model-row[draggable]");
+    if (!row || row === dragged || !dragged) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const rect = row.getBoundingClientRect();
+    const before = e.clientY < rect.top + rect.height / 2;
+    row.parentNode.insertBefore(dragged, before ? row : row.nextSibling);
+  });
+  list.addEventListener("dragend", async e => {
+    if (!dragged) return;
+    dragged.style.opacity = "";
+    const row = dragged;
+    dragged = null;
+    const ids = [...list.querySelectorAll(".model-row[draggable]")].map(el => el.dataset.modelId);
+    if (!ids.length) return;
+    const ok = await api("/admin/models/reorder", { method: "PUT", body: JSON.stringify({ model_ids: ids }) });
+    if (ok) { toast("模型顺序已更新", "ok"); }
+  });
+  if (HMG.isTouch) {
+    list.addEventListener("click", async e => {
+      if (e.target.closest("button, a, input, select, label")) return;
+      const row = e.target.closest(".model-row[draggable]");
+      if (!row) return;
+      let prev = row.previousElementSibling;
+      while (prev && !prev.matches(".model-row[draggable]")) prev = prev.previousElementSibling;
+      if (!prev) return;
+      row.parentNode.insertBefore(row, prev);
+      const ids = [...list.querySelectorAll(".model-row[draggable]")].map(el => el.dataset.modelId);
+      if (!ids.length) return;
+      const ok = await api("/admin/models/reorder", { method: "PUT", body: JSON.stringify({ model_ids: ids }) });
+      if (ok) { toast("模型顺序已更新", "ok"); }
+    });
+  }
+}
+
+function modelRowHTML(m, i, animate = true) {
+  return `
+  <div class="model-row" draggable="true" data-model-id="${esc(m.id)}"${animate ? ` style="animation:hmgIn 300ms ease-out ${Math.min(i * 40, 400)}ms backwards"` : ""}>
+    <span class="drag-handle" title="拖拽排序">⠿</span>
+    <div class="m-info">
+      <span class="model-id">${esc(m.id)}</span>
+      <span class="model-name">${esc(m.name)}</span>
+      ${provBadge(m.provider || "openai")}
+      ${freeBadge(m)}
+      ${modBadge(m)}
+      ${m.json_output && m.modality !== "embedding" && m.modality !== "rerank" ? '<span class="badge" title="支持 response_format JSON 格式输出">JSON</span>' : ""}
+      ${typeBadge(m)}
+      ${m.reasoning_map && Object.keys(m.reasoning_map).length ? '<span class="badge badge-warn" style="cursor:pointer" title="点击打开编辑，查看思考参数探测结论" onclick="editModel(\'' + jsq(m.id) + '\')">思考映射</span>' : ""}
+      ${m.smart_estimate ? '<span class="badge">智能超时</span>' : ""}
+      ${latTag(m.id)}
+    </div>
+    <div class="m-actions">
+      <button class="btn btn-ghost btn-sm" onclick="speedOne('${jsq(m.id)}')">⚡ 测速</button>
+      <button class="btn btn-ghost btn-sm" onclick="editModel('${jsq(m.id)}')">编辑</button>
+      <button class="btn btn-danger btn-sm" onclick="delModel('${jsq(m.id)}')">删除</button>
+    </div>
+  </div>`;
+}
+
+async function speedOne(id) {
+  delete speedCache[id];
+  localStorage.setItem("gw_speed", JSON.stringify(speedCache));
+  toast("测速中：" + id);
+  const data = await api("/speedtest", { method: "POST", body: JSON.stringify({ model_ids: [id] }) });
+  if (!data) return;
+  const r = data.results && data.results[0];
+  if (!r) return;
+  if (r.status === "ok") {
+    speedCache[id] = { status: "ok", latency_ms: r.latency_ms, tps: r.tps };
+    localStorage.setItem("gw_speed", JSON.stringify(speedCache));
+    toast(`✅ ${id}：${r.latency_ms}ms · ${r.tps}t/s`, "ok");
+  } else {
+    speedCache[id] = { status: r.status };
+    localStorage.setItem("gw_speed", JSON.stringify(speedCache));
+    toast(`${id} 测速失败：${r.error || r.status}`, "err");
+  }
+  loadModels();
+}
+
+async function testConnectivity() {
+  const f = document.getElementById("mform");
+  const providerId = document.getElementById("f-provider-id").value;
+  let base_url, api_key, protocol;
+  if (providerId) {
+    const data = await api("/admin/providers");
+    const p = data && data.providers ? data.providers.find(x => x.id === providerId) : null;
+    if (!p) { toast("供应商不存在", "err"); return; }
+    base_url = p.base_url; api_key = p.api_key; protocol = p.protocol;
+  } else {
+    base_url = f.elements.base_url.value.trim();
+    api_key = f.elements.api_key.value.trim();
+    protocol = f.elements.provider.value;
+  }
+  const model_name = f.elements.name.value.trim();
+  if (!base_url) { toast("请填写 Base URL", "err"); return; }
+  if (!api_key) { toast("请填写 API Key", "err"); return; }
+  if (!model_name) { toast("请填写模型名称", "err"); return; }
+  const btn = document.getElementById("m-test-btn");
+  const orig = btn.textContent;
+  btn.disabled = true; btn.textContent = "测试中…";
+  try {
+    const result = await api("/admin/test_model", {
+      method: "POST",
+      body: JSON.stringify({ base_url, api_key, protocol, model_name, modality: f.elements.modality ? f.elements.modality.value : "text" })
+    });
+    if (!result) return;
+    const r = result.result;
+    if (r.status === "ok") {
+      toast(`✓ 连通 延迟 ${r.latency_ms}ms${r.tps != null ? ` · ${r.tps}t/s` : ""}${r.tokens != null ? ` · ${r.tokens} tokens` : ""}`, "ok");
+    } else if (r.status === "rate_limited") {
+      toast(`⚠ 连通但被限流 延迟 ${r.latency_ms}ms`, "warn");
+    } else {
+      toast(`✕ ${r.error || r.status} · ${r.latency_ms}ms`, "err");
+    }
+  } finally {
+    btn.disabled = false; btn.textContent = orig;
+  }
+}
+
+/* ═══════════ 供应商 ═══════════ */
+function pformHtml() {
+  return `
+  <form id="pform" onsubmit="submitProvider(event)">
+    <div class="f2">
+      <div class="fg"><label>供应商 ID（唯一标识）</label><input name="id" id="prov-id" class="inp" required placeholder="my-openai"></div>
+      <div class="fg"><label>供应商名称</label><input name="name" class="inp" required placeholder="我的 OpenAI"></div>
+    </div>
+    <div class="f2">
+      <div class="fg"><label>协议</label><select name="protocol" class="inp"><option value="openai_responses">OpenAI Responses</option><option value="openai" selected>OpenAI Compatible</option><option value="anthropic">Anthropic</option><option value="qianfan_search">千帆搜索</option><option value="qianfan_web_search">千帆网页搜索</option></select></div>
+      <div class="fg"><label>Base URL</label><input name="base_url" class="inp" required placeholder="https://api.openai.com/v1"></div>
+    </div>
+    <div class="fg"><label>API Key</label><input name="api_key" class="inp" required placeholder="sk-..."></div>
+    <div class="fg" id="prov-group-fg" style="display:none"><label>加入分组（可选）</label><select id="prov-join-group" class="inp"></select><span class="hint">分组收纳启用时可直接入组；保存后立即生效</span></div>
+    <div class="fg">
+      <label>代理地址（可选）</label>
+      <div class="row">
+        <input name="proxy_url" class="inp" placeholder="http://127.0.0.1:7890" title="部分国外模型的供应商可配置 VPN/clash 代理；留空则直连" oninput="onProxyInput(this)">
+        <button type="button" class="btn btn-ghost btn-sm" id="proxy-test-btn" disabled onclick="testProviderProxy()" title="通过代理请求 BaseURL 测延迟，并读取 Clash 当前节点">🔍 连接测试</button>
+      </div>
+      <span id="proxy-test-result" class="th-hint"></span>
+    </div>
+    <!-- 🔋 套餐/余额监控：仅编辑态显示；勾选开启随「保存」创建/更新绑定并立即查询；取消勾选随保存停用（凭证保留）；🗑 解绑删历史 -->
+    <div id="pqq-section" style="display:none">
+      <div class="form-sec">🔋 套餐/余额监控</div>
+      <div class="row wrap" style="margin-bottom:10px">
+        <label class="switch" title="开启后随「保存」创建/更新绑定并立即查询；取消勾选随保存停用"><input type="checkbox" id="pqq-on" onchange="pqOnToggle()"><i></i></label>
+        <span class="hint" style="margin:0" id="pqq-state"></span>
+        <button type="button" class="btn btn-ghost btn-sm" id="pqq-del" style="display:none" onclick="pqDeleteFromEdit()" title="解除绑定并删除历史记录">🗑</button>
+      </div>
+      <div id="pqq-fields" style="display:none">
+        <div class="fg"><label>获取方式</label><select id="pqq-mode" class="inp" onchange="pqModeChange()"><option value="auto">自动参数获取（内置平台）</option><option value="custom">自定义获取（脚本）</option></select></div>
+        <div id="pqq-auto">
+          <div class="fg"><label>平台类型</label><select id="pqq-platform" class="inp" onchange="pqPlatformChange()"></select></div>
+          <div id="pqq-extra"></div>
+          <div class="hint" id="pqq-note" style="margin:2px 0 8px"></div>
+        </div>
+        <div id="pqq-custom" class="hidden">
+          <div class="fg"><label>脚本（scripts/quota_providers/ 目录扫描，文件名即脚本 id）</label><select id="pqq-script" class="inp"></select></div>
+          <div class="fg"><label>参数串（原样透传：网关不解析不过滤，多余参数由脚本自决取舍；name:value; 分号分隔；留空 = 保持原值）</label>
+            <textarea id="pqq-params" class="inp" rows="6" placeholder="userId:1234567;passToken:V1:xxxxx;"></textarea></div>
+          <div class="hint" style="margin:2px 0 8px">脚本异常/超时/输出非 JSON 视为查询失败；脚本可回传 updated_params，网关原样写回绑定。</div>
+        </div>
+        <div class="fg"><label>轮询间隔（全局，所有绑定共用）</label><select id="pqq-interval" class="inp"><option value="30">30 分钟</option><option value="60">1 小时</option><option value="1440">每天</option></select></div>
+        <div class="hint">随弹窗底部「保存」一并生效；取消勾选再保存 = 停用监控（凭证保留）；删除点上方 🗑。</div>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-ghost" onclick="provModal.close()">取消</button>
+      <button type="submit" class="btn btn-primary">保存</button>
+    </div>
+  </form>`;
+}
+function showAddProvider() {
+  editingProviderId = null;
+  provModal = HMG.modal({ title: "添加供应商", body: pformHtml(), maskClose: false });
+  document.getElementById("prov-id").disabled = false;
+  provJoinGroupRender();
+}
+function onProxyInput(input) {
+  const btn = document.getElementById("proxy-test-btn");
+  const rst = document.getElementById("proxy-test-result");
+  if (btn) btn.disabled = !(input.value.trim());
+  if (rst) rst.textContent = "";
+}
+async function testProviderProxy() {
+  const inp = document.querySelector('#pform [name="proxy_url"]');
+  const baseInp = document.querySelector('#pform [name="base_url"]');
+  const btn = document.getElementById("proxy-test-btn");
+  const rst = document.getElementById("proxy-test-result");
+  const proxy = inp ? inp.value.trim() : "";
+  const base = baseInp ? baseInp.value.trim() : "";
+  if (!proxy) return;
+  if (btn) btn.disabled = true;
+  if (rst) { rst.textContent = "测试中…"; rst.className = "th-hint"; }
+  const data = await api("/admin/test_proxy", { method: "POST", body: JSON.stringify({ proxy_url: proxy, base_url: base }) });
+  if (data && data.ok) {
+    const nodes = data.node ? " · 节点: " + data.node : " · 节点: N/A(Clash API 未开)";
+    rst.textContent = "✅ 连通 " + data.latency_ms + "ms" + nodes;
+    rst.className = "th-hint ok";
+  } else {
+    rst.textContent = "❌ 失败: " + (data && data.error ? data.error : "未知错误");
+    rst.className = "th-hint warn";
+  }
+  if (btn) btn.disabled = !(inp.value.trim());
+}
+async function editProvider(id) {
+  const data = await api("/admin/providers");
+  if (!data) return;
+  const p = data.providers.find(x => x.id === id);
+  if (!p) return;
+  editingProviderId = id;
+  provModal = HMG.modal({ title: "编辑供应商", body: pformHtml(), maskClose: false });
+  const _pgf = document.getElementById("prov-group-fg"); if (_pgf) _pgf.style.display = "none";   // 入组仅限新增流程
+  const f = document.getElementById("pform");
+  f.id.value = p.id; f.name.value = p.name; f.protocol.value = p.protocol;
+  f.base_url.value = p.base_url; f.api_key.value = p.api_key; f.proxy_url.value = p.proxy_url || "";
+  const _pbt = document.getElementById("proxy-test-btn");
+  if (_pbt) _pbt.disabled = !(f.proxy_url.value.trim());
+  document.getElementById("prov-id").disabled = true;
+  pqFillEditSection(id);  // 🔋 余量监控区回填（异步不阻塞弹窗）
+}
+function provJoinGroupRender() {
+  const fg = document.getElementById("prov-group-fg");
+  if (!fg) return;
+  const on = grpSettings().models;
+  fg.style.display = on ? "" : "none";
+  if (!on) return;
+  const sel = document.getElementById("prov-join-group");
+  sel.innerHTML = '<option value="">不加入分组</option>' +
+    grpList("providerGroups").map(g => '<option value="' + esc(g.id) + '">' + esc(g.name) + "（" + (g.members || []).length + "）</option>").join("") +
+    '<option value="__new__">＋ 新建分组…</option>';
+  sel.value = "";
+}
+async function provJoinGroupApply(newId) {
+  const sel = document.getElementById("prov-join-group");
+  const gid = sel && sel.value;
+  if (!gid || !newId) return;
+  if (gid === "__new__") {
+    const nn = await HMG.prompt("新的分组名称：", { placeholder: "如：主力供应商" });
+    if (!nn || !nn.trim()) return;
+    const d = grpData();
+    if (!Array.isArray(d.providerGroups)) d.providerGroups = [];
+    if (d.providerGroups.some(g => g.name === nn.trim())) { toast("同名分组已存在", "err"); return; }
+    d.providerGroups.push({ id: "g" + Date.now().toString(36), name: nn.trim(), collapsed: false, members: [newId] });
+    grpSave(d); loadModels();
+  } else {
+    grpToggleMember("providerGroups", newId, gid, true);
+  }
+}
+async function submitProvider(e) {
+  e.preventDefault();
+  const body = Object.fromEntries(new FormData(document.getElementById("pform")).entries());
+  let ok, newProv;
+  if (editingProviderId) ok = await api("/admin/providers/" + pathEnc(editingProviderId), { method: "PUT", body: JSON.stringify(body) });
+  else { newProv = await api("/admin/providers", { method: "POST", body: JSON.stringify(body) }); ok = newProv; }
+  if (!ok) return;
+  if (newProv && newProv.provider) provJoinGroupApply(newProv.provider.id);   // 新增供应商按选择入组
+  const _pqs = document.getElementById("pqq-section");
+  if (editingProviderId && _pqs && _pqs.style.display !== "none") await pqSaveFromEdit(editingProviderId);
+  provModal.close(); toast(editingProviderId ? "供应商已更新" : "供应商已添加", "ok");
+  loadModels();
+}
+async function delProvider(id) {
+  if (!await HMG.confirm(`确定删除供应商 "<b>${esc(id)}</b>" 吗？（其下不能仍有模型）`, { danger: true, okLabel: "删除" })) return;
+  const ok = await api("/admin/providers/" + pathEnc(id), { method: "DELETE" });
+  if (!ok) return;
+  toast("供应商已删除", "ok"); loadModels();
+}
+
+/* ═══════════ 模型表单 ═══════════ */
+const PAID_TOKEN_TYPES = ["all_day", "idle_only"];
+function onIsFreeChange() {
+  const f = document.getElementById("mform");
+  const paid = f.is_free.value === "false";
+  const sel = document.getElementById("f-token-type");
+  if (!sel) return;
+  Array.from(sel.options).forEach(o => {
+    const isPaidOpt = PAID_TOKEN_TYPES.includes(o.value);
+    o.hidden = paid ? !isPaidOpt : isPaidOpt;
+  });
+  if (sel.selectedOptions[0] && sel.selectedOptions[0].hidden) sel.value = paid ? "all_day" : "daily";
+  const _ce = document.getElementById("f-cost-enabled");
+  if (paid && _ce) _ce.checked = true;
+  onTokenTypeChange();
+}
+function onBillingChange() {
+  const form = document.getElementById("mform");
+  const mode = form.billing_mode.value;
+  const ttype = form.token_type.value;
+  if (ttype === "gift") {
+    document.getElementById("limit-label").textContent = mode === "request" ? "余额上限（次，0=不限）" : "余额上限（每日赠送封顶，0=不限）";
+    return;
+  }
+  document.getElementById("limit-label").textContent = ttype === "rolling_5h"
+    ? (mode === "request" ? "5h 窗口请求次数限额（0=不限）" : "5h 窗口 Token 限额（0=不限）")
+    : (mode === "request" ? "每日请求次数上限（0=不限）" : "每日 Token 上限（0=不限）");
+}
+function onTokenTypeChange() {
+  const ttype = document.getElementById("mform").token_type.value;
+  document.getElementById("once-fields").classList.toggle("hidden", ttype !== "one_time");
+  const _df = document.getElementById("daily-fields");
+  if (_df) _df.classList.toggle("hidden", ttype !== "daily" && ttype !== "gift");
+  const _gf = document.getElementById("gift-fields");
+  if (_gf) _gf.classList.toggle("hidden", ttype !== "gift");
+  const _lf = document.getElementById("limit-fields");
+  if (_lf) _lf.classList.toggle("hidden", ttype === "one_time" || ttype === "local");
+  const _lcf = document.getElementById("local-fields");
+  if (_lcf) _lcf.classList.toggle("hidden", ttype !== "local");
+  const _pf = document.getElementById("peak-fields");
+  if (_pf) _pf.classList.toggle("hidden", ttype !== "all_day" && ttype !== "idle_only");
+  const _vf = document.getElementById("valve-fields");
+  if (_vf) _vf.classList.toggle("hidden", ttype === "local");
+  updateGiftHint();
+  onBillingChange();
+  if (ttype === "gift" && editingId) refreshValveGiftPool(editingId);
+  onValveInput();
+}
+let valveGiftPool = null, valveGiftPoolFor = "";
+function refreshValveGiftPool(modelId) {
+  if (valveGiftPoolFor === modelId) return;
+  valveGiftPoolFor = modelId;
+  valveGiftPool = null;
+  api("/stats").then(d => {
+    const m = d && (d.models || []).find(x => x.id === modelId);
+    valveGiftPool = m ? (m.gift_pool ?? null) : null;
+    if (editingId === modelId) onValveInput();
+  }).catch(() => { valveGiftPool = null; });
+}
+function onValveInput() {
+  const f = document.getElementById("mform");
+  const pct = parseInt(f.valve_pct.value);
+  if (!Number.isFinite(pct)) return;
+  const ttype = f.token_type.value;
+  const src = ttype === "one_time" ? f.max_tokens : f.daily_token_limit;
+  let base = parseInt(src && src.value) || 0;
+  const pctEl = document.getElementById("valve-pct-val");
+  const hint = document.getElementById("valve-hint");
+  f.valve_pct.style.background = `linear-gradient(to right, var(--accent) ${pct}%, var(--surface-3) ${pct}%)`;
+  if (pctEl) pctEl.textContent = pct + "%";
+  if (!hint) return;
+  let giftNote = "";
+  let giftPoolOk = false;
+  if (ttype === "gift" && base > 0 && valveGiftPoolFor === editingId && valveGiftPool != null && valveGiftPool > 0) {
+    if (valveGiftPool < base) {
+      giftNote = "余额池 " + valveGiftPool.toLocaleString() + " 与上限 " + base.toLocaleString() + " 取小";
+      base = valveGiftPool;
+    } else {
+      giftPoolOk = true;
+    }
+  }
+  if (base <= 0) { hint.textContent = "已用 + 预估 ≥ k×最大量限制 时跳过该模型；最大量限制为 0（不限量），安全阀不生效"; return; }
+  if (pct <= 0) { hint.textContent = "当前可用最大限制：0（k=0%，该模型停用，不再路由）"; return; }
+  const eff = Math.floor(base * pct / 100);
+  let note = "当前可用最大限制：" + eff.toLocaleString() + "（" + (giftNote ? giftNote + " × " + pct + "%" : "原 " + base.toLocaleString() + " × " + pct + "%") + (giftPoolOk ? "；余额池充足" : "") + "）";
+  if (ttype === "gift") note += giftNote ? "；随补账变化，以统计卡片实时为准" : "；实际还受当日余额池限制（见统计卡片）";
+  hint.textContent = "已用 + 预估 ≥ k×最大量限制 时跳过该模型；" + note;
+}
+function updateGiftHint() {
+  const ttype = (document.getElementById("f-token-type") || {}).value || "daily";
+  const gift = ttype === "gift";
+  const lbl = document.getElementById("limit-label");
+  if (lbl) lbl.textContent = gift ? "余额上限（每日赠送封顶，0=不限）" : "每日 Token 上限（0=不限）";
+  const rl = document.getElementById("refresh-label");
+  if (rl) rl.textContent = gift ? "到账补账时刻（HH:MM，北京时间）" : "每日刷新时间（HH:MM，北京时间）";
+}
+function onProviderSelect() {
+  const pid = document.getElementById("f-provider-id").value;
+  document.getElementById("inline-conn").style.display = pid ? "none" : "";
+  document.getElementById("inherit-note").classList.toggle("hidden", !pid);
+  document.getElementById("f-base-url").required = !pid;
+  document.getElementById("f-api-key").required = !pid;
+  onSearchSummaryVisibility();
+}
+
+/* ── 搜索 AI 总结：仅 qianfan_web_search 协议显示 ── */
+let summaryPoolOpts = null;
+function effProtocol() {
+  const pid = document.getElementById("f-provider-id").value;
+  if (pid) { const p = (cachedProviders || []).find(x => x.id === pid); return p ? (p.protocol || "openai") : ""; }
+  const f = document.getElementById("mform");
+  return (f.provider && f.provider.value) || "openai";
+}
+async function fillSummaryPools() {
+  const sel = document.getElementById("f-summary-pool");
+  if (!sel) return;
+  if (summaryPoolOpts === null) {
+    const data = await api("/admin/pools");
+    summaryPoolOpts = (data && data.summary_candidates) ? data.summary_candidates
+                                                       : Object.keys((data && data.pools) || {});
+  }
+  const keep = sel.value;
+  const opts = ["<option value=\"\">— 不总结（返回原始结果列表）—</option>"];
+  summaryPoolOpts.forEach(n => opts.push(`<option value="${esc(n)}">${esc(n)}</option>`));
+  sel.innerHTML = opts.join("");
+  if (keep) sel.value = keep;
+  if (!sel.value && !editingId) sel.value = summaryPoolOpts.indexOf("mm") >= 0 ? "mm" : "";
+}
+function onSearchSummaryVisibility() {
+  const box = document.getElementById("search-summary-fields");
+  if (!box) return;
+  const isSearch = effProtocol() === "qianfan_web_search";
+  box.style.display = isSearch ? "" : "none";
+  if (isSearch) fillSummaryPools();
+}
+
+/* ── 赠费人工校准 ── */
+function showGiftCalibrate() {
+  if (!editingId) return;
+  giftModal = HMG.modal({
+    title: "🛠 余额返还制人工校准",
+    body: `
+      <div class="hint" style="margin-bottom:14px">模型：<b>${esc(editingId)}</b>。对齐火山控制台实际值；<b>留空的项不修改</b>。余额 = 昨日剩余 − 今日使用（到账时刻后再加今日返还）；<b>今日返还量</b>即昨日使用量的校准值；<b>今日使用量</b>校准会同步今日已采与明日发放基数。校准后自当刻起按新值计算。</div>
+      <div class="fg"><label>昨日剩余量（当前 <span id="cal-y-cur">?</span>）</label><input type="number" id="cal-yesterday" class="inp" placeholder="留空 = 不修改"></div>
+      <div class="fg"><label>今日返还量（昨日使用量）<span class="hint" style="margin-left:6px;display:inline">当前 <span id="cal-g-cur">?</span></span></label><input type="number" id="cal-grant" class="inp" placeholder="留空 = 不修改"></div>
+      <div class="fg"><label>今日使用量（当前 <span id="cal-u-cur">?</span>）</label><input type="number" id="cal-usage" class="inp" placeholder="留空 = 不修改"></div>
+      <div class="hint" id="gift-cal-status" style="margin-top:10px"></div>`,
+    footer: [
+      { label: "取消", cls: "btn btn-secondary", onClick: ({ close }) => close() },
+      { label: "✓ 应用校准", cls: "btn btn-primary", onClick: () => applyGiftCalibrate() },
+    ],
+  });
+  fillGiftCalibrate();
+}
+async function fillGiftCalibrate() {
+  const d = await api("/stats");
+  const m = d && editingId ? (d.models || []).find(x => x.id === editingId) : null;
+  const status = document.getElementById("gift-cal-status");
+  if (!m || !m.gift_refund) { if (status) status.textContent = "暂无账本数据"; return; }
+  document.getElementById("cal-y-cur").textContent = (m.gift_cal_yesterday ?? 0).toLocaleString();
+  document.getElementById("cal-g-cur").textContent = (m.gift_cal_grant ?? 0).toLocaleString();
+  document.getElementById("cal-u-cur").textContent = (m.gift_cal_usage ?? 0).toLocaleString();
+  if (status) status.textContent = "";
+}
+async function applyGiftCalibrate() {
+  const body = { model_id: editingId };
+  const y = document.getElementById("cal-yesterday").value.trim();
+  const g = document.getElementById("cal-grant").value.trim();
+  const u = document.getElementById("cal-usage").value.trim();
+  if (y !== "") body.yesterday_leftover = parseInt(y) || 0;
+  if (g !== "") body.grant_today = parseInt(g) || 0;
+  if (u !== "") body.usage_today = parseInt(u) || 0;
+  if (Object.keys(body).length === 1) { toast("请至少填写一项", "err"); return; }
+  const r = await api("/admin/gift/calibrate", { method: "POST", body: JSON.stringify(body) });
+  if (r) {
+    await fillGiftCalibrate();
+    toast("人工校准已完成，余额 " + (r.balance ?? 0).toLocaleString(), "ok");
+    if (giftModal) giftModal.close();
+  }
+}
+
+/* ═══════════ 模型编辑弹窗（五分区：基本/计费额度/配额限流/流式输出/思考映射） ═══════════ */
+function mformHtml() {
+  return `
+  <form id="mform" onsubmit="submitModel(event)">
+    <div class="fg"><label>模型 ID（网关唯一标识符，编辑时不可修改）</label><input name="id" id="f-model-id" class="inp" required placeholder="openai/gpt-4o"></div>
+    <div class="f2">
+      <div class="fg"><label>模型实际调用名称</label><input name="name" id="f-model-name" class="inp" required placeholder="gpt-4o"></div>
+      <div class="fg"><label>所属供应商（选此项则继承连接信息）</label><select name="provider_id" id="f-provider-id" class="inp" onchange="onProviderSelect()"><option value="">— 独立模型（内联填写）—</option></select></div>
+    </div>
+    <div id="inline-conn">
+      <div class="f2">
+        <div class="fg"><label>提供商协议</label><select name="provider" class="inp" onchange="onSearchSummaryVisibility()"><option value="openai_responses">OpenAI Responses</option><option value="openai" selected>OpenAI Compatible</option><option value="anthropic">Anthropic</option><option value="qianfan_search">千帆搜索</option><option value="qianfan_web_search">千帆网页搜索</option></select></div>
+        <div class="fg"><label>Base URL</label><input name="base_url" id="f-base-url" class="inp" required placeholder="https://api.openai.com/v1"></div>
+      </div>
+      <div class="fg"><label>API Key</label><input name="api_key" id="f-api-key" class="inp" required placeholder="sk-..."></div>
+    </div>
+    <div id="inherit-note" class="hint hidden" style="margin-bottom:13px">✨ 将继承所选供应商的协议 / Base URL / API Key。</div>
+    <div id="search-summary-fields" style="display:none">
+      <div class="form-sec">搜索 AI 总结</div>
+      <div class="f2">
+        <div class="fg"><label>总结模型池</label><select name="summary_pool" id="f-summary-pool" class="inp"><option value="">— 不总结（返回原始结果列表）—</option></select></div>
+        <div class="fg"><label>回答字数（自由填写，直接拼进提示词）</label><input name="summary_length" id="f-summary-length" class="inp" placeholder="例：500（留空则不限制）"></div>
+      </div>
+      <div class="hint" style="margin-bottom:13px">搜索结果（含网页正文、标题、链接、摘要等全部可解析字段）会交给所选模型池做一次 AI 总结；该池全部失败时自动退回原始结果列表。</div>
+    </div>
+    <div class="form-sec">计费与额度</div>
+    <div class="f3">
+      <div class="fg"><label>令牌类型</label><select name="token_type" id="f-token-type" class="inp" onchange="onTokenTypeChange()"><option value="daily">daily（每日刷新）</option><option value="rolling_5h">rolling_5h（5h 限额）</option><option value="one_time">one_time（一次性）</option><option value="gift">gift（余额返还制）</option><option value="local">local（本地模型·不计费不限量）</option><option value="all_day">all_day（付费·全天可用）</option><option value="idle_only">idle_only（付费·仅闲时可用）</option></select></div>
+      <div class="fg"><label>计费模式</label><select name="billing_mode" class="inp" onchange="onBillingChange()"><option value="token">按 Token 计费</option><option value="request">按请求次数计费</option></select></div>
+      <div class="fg"><label>收费标注</label><select name="is_free" class="inp" onchange="onIsFreeChange()"><option value="true">免费模型</option><option value="false">付费模型</option></select></div>
+    </div>
+    <div class="f3">
+      <div class="fg"><label>模型模态</label><select name="modality" class="inp" onchange="onModalityChange()"><option value="text">纯文本</option><option value="vision">多模态</option><option value="embedding">embedding（嵌入模型）</option><option value="rerank">rerank（重排模型）</option></select></div>
+      <div class="fg" id="limit-fields"><label id="limit-label">每日 Token 上限（0=不限）</label><input name="daily_token_limit" type="number" class="inp" value="0"></div>
+      <div class="fg"><label>上下文窗口（0=不校验）</label><input name="context_window" type="number" class="inp" value="0"></div>
+    </div>
+    <div id="peak-fields" class="hidden">
+      <div class="fg"><label>每日高峰时段（北京时间）</label><input name="peak_windows" id="f-peak-windows" class="inp" placeholder="如 9:00-12:00;14:00-16:00（段内起≥止视为跨零点，如 21:00-6:00；留空=当天全天）"></div>
+      <div class="f2">
+        <div class="fg"><label>每周高峰（周几，1=周一 … 7=周日）</label><input name="peak_weekdays" id="f-peak-weekdays" class="inp" placeholder="如 12345（周一至周五；留空=每天）"></div>
+        <div class="fg"><label>特定谷峰日（月日四位，每年循环）</label><input name="peak_exdates" id="f-peak-exdates" class="inp" placeholder="如 1001-1007;0930（区间含首尾，起>止=跨年经元旦）"></div>
+      </div>
+      <div class="hint">与「缓存 Token 计费统计」的高峰期为同一份数据（存储一处，两处修改互通）。高峰 = 每周高峰日 ∩ 每日高峰时段 − 特定谷峰日；「仅闲时可用」模型高峰内不路由。</div>
+    </div>
+    <div id="local-fields" class="hidden">
+      <div class="hint" style="color:var(--success)">本地模型：不计费、不限量，仅记录用量（usage 照常入统计）；安全阀不生效。</div>
+    </div>
+    <div class="fg" id="valve-fields">
+      <label>使用量安全阀 k：<span id="valve-pct-val" class="num" style="color:var(--accent-hover)">100%</span></label>
+      <input name="valve_pct" type="range" min="0" max="100" step="1" value="100" oninput="onValveInput()">
+      <div class="hint" id="valve-hint">已用 + 预估 ≥ k×最大量限制 时跳过该模型；当前可用最大限制：—</div>
+    </div>
+    <div class="form-sec">配额与限流</div>
+    <div class="f3">
+      <div class="fg"><label>RPM 限制（0=不限）</label><input name="rpm_limit" type="number" class="inp" value="0"></div>
+      <div class="fg"><label>TPM 限制（0=不限）</label><input name="tpm_limit" type="number" class="inp" value="0"></div>
+      <div class="fg"><label>最大并发数（0=不限）</label><input name="max_concurrency" type="number" class="inp" value="0"></div>
+    </div>
+    <div class="f2">
+      <div class="fg"><label>超时时间（秒，0=无限等待）</label><input name="timeout_seconds" type="number" class="inp" value="120" min="0"></div>
+      <div class="fg" id="daily-fields"><label id="refresh-label">每日刷新时间（HH:MM，北京时间）</label><input name="refresh_time" class="inp" placeholder="00:00"></div>
+    </div>
+    <div id="gift-fields" class="hidden">
+      <div class="form-sec">余额返还制</div>
+      <div class="f2">
+        <div class="fg"><label>每日返还上限（火山"每日采集额度"，超出不返还）</label><input name="gift_grant_cap" type="number" class="inp" min="0" step="100000" placeholder="5000000"></div>
+        <div class="fg"><label>人工校准（独立窗口 · 对齐火山控制台实际值）</label><button type="button" class="btn btn-ghost" style="width:100%;justify-content:center" onclick="showGiftCalibrate()">🛠 打开人工校准窗口</button><div class="hint" style="margin-top:4px">逐项填写，未填项保持不变，防误改</div></div>
+      </div>
+    </div>
+    <div id="once-fields" class="hidden">
+      <div class="f3">
+        <div class="fg"><label>一次性·最大 Token（总额度上限，0=不限）</label><input name="max_tokens" type="number" class="inp" value="0"></div>
+        <div class="fg"><label>一次性·存活时长（秒）</label><input name="ttl_seconds" type="number" class="inp" value="0"></div>
+        <div class="fg"><label>一次性·过期日期（北京时间）</label><input name="expire_date" type="date" class="inp"></div>
+      </div>
+    </div>
+    <div class="form-sec">流式与输出选项</div>
+    <div class="opt-grid">
+      <label class="opt"><input type="checkbox" name="json_output" id="f-json-output"><span><b>支持 JSON 格式输出</b>请求带 response_format(json) 时只路由到勾选的模型</span></label>
+      <label class="opt"><input type="checkbox" name="smart_estimate" id="f-smart-estimate" onchange="onSmartToggle()"><span><b>智能估算超时</b>按 token 量动态计算总超时，忽略手动秒数</span></label>
+      <label class="opt" id="f-headroom-opt" style="display:none"><input type="checkbox" name="headroom" id="f-headroom"><span><b>Headroom 上下文压缩</b>该模型接单时自动压缩出站大块工具输出省 token（服务端需装 headroom-ai，未装自动旁路）</span></label>
+      <label class="opt" style="position:relative;padding-right:36px"><input type="checkbox" name="cost_enabled" id="f-cost-enabled"><span><b>缓存 Token 计费统计</b>记录该模型调用的缓存命中 / 未命中 / 输出 token，用量统计卡片出现「预估费用」入口（付费模型固定显示），可自定义三者价格与高峰期时段</span><button type="button" class="cost-gear" title="直接打开设置与计费界面：配置单价与高峰期分段计价" onclick="openCostSettings(event)">⚙</button></label>
+    </div>
+    <div id="smart-live" class="hidden" style="font-size:12px;color:var(--ink-muted);margin-bottom:13px;line-height:1.6"></div>
+    <div class="fg" id="reasoning-map-fg"><label>思考映射 reasoning_map（JSON，可选）：统一档位 off/minimal/low/medium/high/max → 透传上游的请求体片段；留空 = 不注入（embedding/rerank 模型不适用）</label><textarea name="reasoning_map" rows="5" class="inp mono" placeholder='{"off": {"thinking": {"type": "disabled"}}, "medium": {"thinking": {"type": "enabled"}}}'></textarea><div id="reasoning-probe-strip" style="margin-top:6px"></div></div>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-ghost" id="m-test-btn" onclick="testConnectivity()">🔌 测试连接</button>
+      <span class="right"><button type="button" class="btn btn-secondary" onclick="modelModal.close()">取消</button>
+      <button type="submit" class="btn btn-primary" id="model-submit-btn">添加</button></span>
+    </div>
+  </form>`;
+}
+function showAdd() {
+  editingId = null;
+  modelModal = HMG.modal({ title: "添加模型", body: mformHtml(), wide: true, maskClose: false });
+  document.getElementById("model-submit-btn").textContent = "添加";
+  document.getElementById("mform").gift_grant_cap.value = 5000000;
+  const _jdef = document.getElementById("f-json-output"); if (_jdef) _jdef.checked = true;
+  document.getElementById("f-model-id").disabled = false;
+  renderReasoningStrip(null);
+  populateProviderSelect("").then(() => { onBillingChange(); onProviderSelect(); });
+  onIsFreeChange(); onModalityChange(); onSmartToggle();
+}
+async function showAddUnder(pid) {
+  editingId = null;
+  modelModal = HMG.modal({ title: "在供应商下添加模型", body: mformHtml(), wide: true, maskClose: false });
+  document.getElementById("model-submit-btn").textContent = "添加";
+  document.getElementById("mform").gift_grant_cap.value = 5000000;
+  const _jdef = document.getElementById("f-json-output"); if (_jdef) _jdef.checked = true;
+  document.getElementById("f-model-id").disabled = false;
+  document.getElementById("f-model-id").placeholder = "例如: glm-4.7-flash（供应商将自动前缀）";
+  renderReasoningStrip(null);
+  await populateProviderSelect(pid);
+  onBillingChange(); onProviderSelect(); onIsFreeChange(); onModalityChange(); onSmartToggle();
+}
+async function populateProviderSelect(selected) {
+  let providers = cachedProviders;
+  if (!providers) {
+    const data = await api("/admin/providers");
+    if (!data) return;
+    providers = data.providers; cachedProviders = providers;
+  }
+  const sel = document.getElementById("f-provider-id");
+  if (!sel) return;
+  const opts = ["<option value=\"\">— 独立模型（内联填写）—</option>"];
+  providers.forEach(p => opts.push(`<option value="${esc(p.id)}">${esc(p.name)}（${esc(p.id)}）</option>`));
+  sel.innerHTML = opts.join("");
+  sel.value = selected || "";
+}
+function onModalityChange() {
+  const f = document.getElementById("mform");
+  const el = document.getElementById("reasoning-map-fg");
+  if (!f || !el) return;
+  const v = (f.modality && f.modality.value) || "text";
+  el.classList.toggle("hidden", v === "embedding" || v === "rerank");
+}
+function onSmartToggle() {
+  const f = document.getElementById("mform");
+  const smart = document.getElementById("f-smart-estimate");
+  const live = document.getElementById("smart-live");
+  if (!f || !smart || !live) return;
+  const t = f.timeout_seconds;
+  t.disabled = smart.checked;
+  if (!smart.checked) { live.classList.add("hidden"); live.innerHTML = ""; return; }
+  live.classList.remove("hidden");
+  live.textContent = "校准数据加载中…";
+  if (!editingId) {
+    live.innerHTML = '<span style="color:var(--warning)">新模型暂无校准样本：先按保守 30 tok/s 估计，积累 10 个样本后自动校准</span>';
+    return;
+  }
+  api("/admin/model/" + encodeURIComponent(editingId).replace(/%2F/g, "/") + "/metrics").then(d => {
+    if (!d) { live.textContent = ""; return; }
+    if (!d.sample_count) {
+      live.innerHTML = '<span style="color:var(--warning)">预热中：暂无校准样本，先按保守 30 tok/s 估计；积累 10 个样本后自动启用 EMA 校准</span>';
+      return;
+    }
+    const tp = d.throughput ? Math.round(d.throughput) : null;
+    const small = tp ? Math.max(1, Math.round(2000 / tp)) : null;
+    const large = tp ? Math.max(1, Math.round(50000 / tp)) : null;
+    live.innerHTML = "实测吞吐 <b>" + (tp || "?") + " tok/s</b> · 样本 <b>" + d.sample_count + "</b> · 平均输出 <b>" + (d.avg_completion ? Math.round(d.avg_completion) + " tok" : "?") + "</b><br>预测耗时：小请求(2k tok)≈" + (small ?? "?") + "s / 大请求(50k tok)≈" + (large ?? "?") + "s"
+      + (d.sample_count < 10 ? ' · <span style="color:var(--warning)">样本不足 10，暂回退固定超时</span>' : "");
+  }).catch(() => { live.textContent = ""; });
+}
+async function fetchModelCached(id) {
+  let m = (cachedModels || []).find(x => x.id === id);
+  if (m) return m;
+  const data = await api("/admin/models");
+  if (data) { cachedModels = data.models; m = (cachedModels || []).find(x => x.id === id); }
+  return m;
+}
+async function editModel(id) {
+  const m = await fetchModelCached(id);
+  if (!m) return;
+  editingId = id;
+  modelModal = HMG.modal({ title: "编辑模型", body: mformHtml(), wide: true, maskClose: false });
+  document.getElementById("model-submit-btn").textContent = "保存";
+  const f = document.getElementById("mform");
+  f.id.value = m.id; f.name.value = m.name; f.provider.value = m.provider || "openai";
+  f.base_url.value = m.base_url || ""; f.api_key.value = m.api_key || "";
+  f.billing_mode.value = m.billing_mode || "token"; f.is_free.value = m.is_free ? "true" : "false";
+  onIsFreeChange();  // 先按收费标注切换令牌类型选项集（免费/付费两套）
+  f.token_type.value = (!m.is_free && !PAID_TOKEN_TYPES.includes(m.token_type)) ? "all_day" : m.token_type;
+  f.modality.value = m.modality || "text";
+  const _jc = document.getElementById("f-json-output"); if (_jc) _jc.checked = !!m.json_output;
+  const _rm = m.reasoning_map || {};
+  if (f.reasoning_map) f.reasoning_map.value = Object.keys(_rm).length ? JSON.stringify(_rm, null, 2) : "";
+  f.daily_token_limit.value = m.daily_token_limit || 0; f.rpm_limit.value = m.rpm_limit || 0;
+  f.tpm_limit.value = m.tpm_limit || 0; f.context_window.value = m.context_window || 0;
+  f.timeout_seconds.value = (m.timeout_seconds == null ? 120 : m.timeout_seconds);
+  const _se = document.getElementById("f-smart-estimate"); if (_se) _se.checked = !!m.smart_estimate;
+  const _hr = document.getElementById("f-headroom"); if (_hr) _hr.checked = !!m.headroom;
+  const _ce = document.getElementById("f-cost-enabled");
+  if (_ce) _ce.checked = (m.cost_enabled === undefined) ? !m.is_free : !!m.cost_enabled;
+  hrSavedValue = !!m.headroom;
+  f.max_concurrency.value = m.max_concurrency ?? 10; f.refresh_time.value = m.refresh_time || "";
+  f.gift_grant_cap.value = m.gift_grant_cap || 5000000;
+  f.max_tokens.value = m.max_tokens || 0; f.ttl_seconds.value = m.ttl_seconds || 0;
+  f.expire_date.value = m.expire_date || "";
+  f.valve_pct.value = m.valve_pct ?? 100;
+  const _pk = m.cost_peak || {};
+  const _pkf = document.getElementById("f-peak-windows");
+  if (_pkf) _pkf.value = _pk.windows || "";
+  const _pkw = document.getElementById("f-peak-weekdays");
+  if (_pkw) _pkw.value = _pk.weekdays || "";
+  const _pke = document.getElementById("f-peak-exdates");
+  if (_pke) _pke.value = _pk.exdates || "";
+  if (f.summary_pool) f.summary_pool.value = (m.summary_pool === undefined || m.summary_pool === null) ? "mm" : m.summary_pool;
+  if (f.summary_length) f.summary_length.value = m.summary_length || "";
+  onTokenTypeChange(); onSmartToggle();
+  document.getElementById("f-model-id").disabled = true;
+  await populateProviderSelect(m.provider_id || "");
+  onBillingChange(); onProviderSelect(); onModalityChange();
+  reasoningTouched = false;
+  renderReasoningStrip(id);
+}
+async function submitModel(e) {
+  e.preventDefault();
+  const body = Object.fromEntries(new FormData(document.getElementById("mform")).entries());
+  ["daily_token_limit","rpm_limit","tpm_limit","context_window","max_concurrency","max_tokens","ttl_seconds"].forEach(k => body[k] = parseInt(body[k]) || 0);
+  body.gift_grant_cap = parseInt(body.gift_grant_cap) || 5000000;
+  const _vp = parseInt(body.valve_pct);
+  body.valve_pct = Number.isFinite(_vp) ? Math.max(0, Math.min(100, _vp)) : 100;
+  body.timeout_seconds = parseInt(body.timeout_seconds) || 0;
+  body.is_free = body.is_free === "true";
+  body.json_output = document.getElementById("f-json-output") ? document.getElementById("f-json-output").checked : false;
+  body.smart_estimate = document.getElementById("f-smart-estimate") ? document.getElementById("f-smart-estimate").checked : false;
+  body.cost_enabled = document.getElementById("f-cost-enabled") ? document.getElementById("f-cost-enabled").checked : false;
+  body.headroom = hrMasterEnabled ? (document.getElementById("f-headroom") ? document.getElementById("f-headroom").checked : false) : hrSavedValue;
+  body.extra_params = {};
+  const _rmRaw = (body.reasoning_map || "").trim();
+  body.reasoning_map = {};
+  if (_rmRaw) {
+    try {
+      const _rmParsed = JSON.parse(_rmRaw);
+      if (typeof _rmParsed !== "object" || _rmParsed === null || Array.isArray(_rmParsed)) throw new Error("必须是 JSON 对象（键为档位，值为请求体片段）");
+      body.reasoning_map = _rmParsed;
+    } catch (err) { toast("思考映射 JSON 格式错误：" + err.message, "err"); return; }
+  }
+  delete body.timezone;
+  delete body.peak_windows; delete body.peak_weekdays; delete body.peak_exdates;
+  if (body.token_type === "all_day" || body.token_type === "idle_only") {
+    const _pwRaw = ((document.getElementById("f-peak-windows") || {}).value || "").trim();
+    if (_pwRaw && !_parsePeakWindows(_pwRaw).length) { toast("每日高峰时段无法解析出有效时段段，请按「9:00-12:00;14:00-16:00」格式填写", "err"); return; }
+    body.cost_peak = {
+      windows: _pwRaw ? _peakLabel(_parsePeakWindows(_pwRaw)) : "",
+      weekdays: _normPeakWeekdays((document.getElementById("f-peak-weekdays") || {}).value),
+      exdates: _normPeakExdates((document.getElementById("f-peak-exdates") || {}).value),
+    };
+  }
+  let ok;
+  if (editingId) ok = await api("/admin/models/" + pathEnc(editingId), { method: "PUT", body: JSON.stringify(body) });
+  else ok = await api("/admin/models", { method: "POST", body: JSON.stringify(body) });
+  if (!ok) return;
+  modelModal.close();
+  toast(editingId ? "模型已更新" : "模型已添加", "ok");
+  loadModels();
+}
+
+/* ═══════════ 思考参数探测（编辑界面查询；建议只辅助填空） ═══════════ */
+let reasoningInfo = null, reasoningTouched = false;
+async function fetchReasoningInfo(force) {
+  if (reasoningInfo && !force) return reasoningInfo;
+  const data = await api("/admin/reasoning");
+  if (data) reasoningInfo = data;
+  return reasoningInfo;
+}
+async function renderReasoningStrip(modelId, opts = {}) {
+  const strip = document.getElementById("reasoning-probe-strip");
+  if (!strip) return;
+  if (!modelId) {
+    strip.innerHTML = '<span class="hint">🧠 模型添加后，这里会显示云端思考参数探测结论，可一键填入/重测</span>';
+    strip.dataset.built = "";
+    return;
+  }
+  if (!strip.dataset.built) {
+    strip.innerHTML = '<div id="reasoning-probe-text" class="hint" style="margin-bottom:4px">🧠 探测结论加载中…</div>'
+      + '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:4px">'
+      + '<button type="button" class="btn btn-ghost btn-sm" id="reasoning-fill-btn" onclick="fillReasoningSuggestion()">📥 填入建议</button>'
+      + '<button type="button" class="btn btn-ghost btn-sm" id="reasoning-probe-btn" onclick="reprobeReasoning()">🔄 重新探测</button>'
+      + '<button type="button" class="btn btn-ghost btn-sm" onclick="renderReasoningStrip(editingId, {force:true})" title="重新拉取探测结论（纯本地缓存，不发上游请求）">⟳</button>'
+      + '<span id="reasoning-probe-status" class="hint"></span></div>';
+    strip.dataset.built = "1";
+    const ta = document.querySelector('#mform textarea[name="reasoning_map"]');
+    if (ta) ta.addEventListener("input", () => { reasoningTouched = true; });
+  }
+  const info = await fetchReasoningInfo(opts.force);
+  if (editingId !== modelId) return;
+  const txt = document.getElementById("reasoning-probe-text");
+  if (!txt) return;
+  const statusEl = document.getElementById("reasoning-probe-status");
+  if (statusEl) statusEl.textContent = "";
+  const rec = info ? info.models[modelId] : undefined;
+  if (!info) txt.textContent = "🧠 探测结论加载失败";
+  else if (!rec || !rec.probed) txt.innerHTML = "🧠 探测结论：<b>未探测</b>（点「🔄 重新探测」实测该云端模型支持的思考参数写法）";
+  else if (rec.default_thinking && String(rec.default_thinking).indexOf("不可用") === 0)
+    txt.innerHTML = '🧠 探测结论：<span style="color:var(--danger)">' + esc(rec.default_thinking) + "</span>（可点「🔄 重新探测」重试）";
+  else {
+    const bits = ["🧠 探测于 " + esc((rec.probe_time || "").slice(0, 10) || "?")];
+    bits.push(rec.param_family ? "参数族 <b>" + esc(rec.param_family) + "</b>" : "不支持思考控制");
+    bits.push("默认思考" + esc(rec.default_thinking || "?"));
+    bits.push(rec.levels_effective ? "六档梯度有效" : "仅开/关两档");
+    bits.push(esc(rec.off_behavior || ""));
+    txt.innerHTML = bits.join(" · ");
+    txt.title = (rec.notes || []).join("\n");
+  }
+  const fillBtn = document.getElementById("reasoning-fill-btn");
+  if (fillBtn) fillBtn.disabled = !(rec && rec.suggested);
+  const probeBtn = document.getElementById("reasoning-probe-btn");
+  if (probeBtn) { probeBtn.disabled = false; probeBtn.textContent = "🔄 重新探测"; }
+  const status = document.getElementById("reasoning-probe-status");
+  if (rec && rec.suggested && !reasoningTouched) {
+    const f = document.getElementById("mform");
+    if (f && f.reasoning_map && !f.reasoning_map.value.trim()) {
+      f.reasoning_map.value = JSON.stringify(rec.suggested, null, 2);
+      if (status) status.textContent = "已按探测建议预填，可修改或清空";
+    }
+  }
+}
+async function fillReasoningSuggestion() {
+  const rec = reasoningInfo && editingId ? reasoningInfo.models[editingId] : null;
+  if (!rec || !rec.suggested) { toast("该模型暂无探测建议（可先「重新探测」）", "err"); return; }
+  const f = document.getElementById("mform");
+  if (!f || !f.reasoning_map) return;
+  const sug = JSON.stringify(rec.suggested, null, 2);
+  const cur = f.reasoning_map.value.trim();
+  if (cur && cur !== sug && !await HMG.confirm("将覆盖当前已填的思考映射，继续？")) return;
+  f.reasoning_map.value = sug;
+  reasoningTouched = true;
+  const status = document.getElementById("reasoning-probe-status");
+  if (status) status.textContent = "已填入探测建议，可继续修改后保存";
+}
+async function reprobeReasoning() {
+  if (!editingId) return;
+  const btn = document.getElementById("reasoning-probe-btn");
+  const status = document.getElementById("reasoning-probe-status");
+  if (btn) { btn.disabled = true; btn.textContent = "探测中…"; }
+  if (status) status.textContent = "向云端发探测请求（约 30~60 秒）…";
+  const r = await api("/admin/reasoning/probe", { method: "POST", body: JSON.stringify({ model_id: editingId }) });
+  if (btn) { btn.disabled = false; btn.textContent = "🔄 重新探测"; }
+  if (!r) { if (status) status.textContent = ""; return; }
+  if (status) status.textContent = "重测已开始，完成后点「⟳」刷新结论";
+  toast("后台重测已开始", "ok");
+}
+async function delModel(id) {
+  if (!await HMG.confirm(`确定删除模型 "<b>${esc(id)}</b>" 吗？将同时从所有池中移除。`, { danger: true, okLabel: "删除" })) return;
+  const ok = await api("/admin/models/" + pathEnc(id), { method: "DELETE" });
+  if (!ok) return;
+  toast("模型已删除", "ok"); loadModels();
+}
+
+/* ═══════════ 供应商排序拖拽 ═══════════ */
+function bindProviderDrag() {
+  const list = document.getElementById("models-list");
+  if (!list) return;
+  if (list.dataset.dragBoundProv) return;
+  list.dataset.dragBoundProv = "1";
+  let dragged = null;
+  list.addEventListener("dragstart", e => {
+    const el = e.target.closest(".provider-card[draggable]");
+    if (!el) { e.preventDefault(); return; }
+    dragged = el;
+    dragged.style.opacity = "0.4";
+    e.dataTransfer.effectAllowed = "move";
+    try { e.dataTransfer.setData("text/plain", el.dataset.providerDrag); } catch (err) {}
+  });
+  list.addEventListener("dragover", e => {
+    e.preventDefault();
+    if (!dragged || !list.contains(dragged)) return;
+    if (e.target.closest(".model-row")) return;
+    const card = e.target.closest(".provider-card");
+    if (card && card !== dragged) {
+      const rect = card.getBoundingClientRect();
+      const before = e.clientY < rect.top + rect.height / 2;
+      card.parentNode.insertBefore(dragged, before ? card : card.nextSibling);
+      return;
+    }
+    const sec = e.target.closest(".grp-section");
+    if (sec) {
+      const body = sec.querySelector(".grp-body");
+      if (body && body !== dragged.parentNode) body.appendChild(dragged);
+    }
+  });
+  list.addEventListener("dragend", async e => {
+    if (!dragged) return;
+    dragged.style.opacity = "";
+    dragged = null;
+    grpSyncFromDOM("providerGroups", list, ".provider-card[draggable]", "providerDrag");
+    const ids = [...list.querySelectorAll(".provider-card[draggable]")].map(el => el.dataset.providerDrag);
+    const ok = await api("/admin/providers/reorder", { method: "PUT", body: JSON.stringify({ provider_ids: ids }) });
+    if (ok) { toast("供应商顺序已更新", "ok"); }
+    loadModels();
+  });
+}
+
+/* ═══════════ 余量监控（卡片内联 + 供应商编辑弹窗配置） ═══════════ */
+let quotaBindings = [], quotaPlatforms = {}, quotaProviders = [], quotaProvAt = 0;
+function qFmtNum(n) { return Number(n).toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function qFmtReset(resetAt) {
+  if (!resetAt) return "";
+  const diff = resetAt - Math.floor(Date.now() / 1000);
+  if (diff <= 0) return "已重置";
+  const h = Math.floor(diff / 3600), m = Math.floor((diff % 3600) / 60);
+  return (h > 0 ? h + " 小时 " : "") + m + " 分后重置";
+}
+function pqFmtAbs(n) {
+  n = Number(n) || 0;
+  return Math.abs(n) >= 100 ? Math.round(n).toLocaleString("zh-CN")
+                            : n.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function pqiCls(rem) { return rem >= 50 ? "pqi-ok" : rem >= 20 ? "pqi-warn" : "pqi-err"; }
+function provQuotaInlineHtml(b) {
+  const snap = (b && b.snapshot) || {};
+  const s = snap.status || "pending";
+  if (!b || !b.enabled) return "";
+  if (s === "ok" && Array.isArray(snap.bars) && snap.bars.length) {
+    return snap.bars.map(bar => {
+      const rem = Math.round(bar.remaining_pct);
+      const label = (bar.label || "额度").replace(/\s+/g, "");
+      const val = bar.total > 0 ? `${pqFmtAbs(bar.used)}/${pqFmtAbs(bar.total)}` : `剩 ${rem}%`;
+      const tip = [bar.detail || "", bar.reset_at ? qFmtReset(bar.reset_at) : ""].filter(Boolean).join(" · ");
+      return `<span class="pqi-item ${pqiCls(rem)}"${tip ? ` title="${esc(label)}：${esc(tip)}"` : ""}>${esc(label)} ${val}</span>`;
+    }).join("");
+  }
+  if (s === "ok" && snap.balance != null) {
+    const bal = Number(snap.balance) || 0;
+    const cls = bal <= 0 ? "pqi-err" : (snap.available === false ? "pqi-warn" : "pqi-ok");
+    return `<span class="pqi-item ${cls}" title="${esc(snap.sub || "")}">剩余余额：${esc(snap.symbol || "")}${qFmtNum(bal)}</span>`;
+  }
+  if (s === "error") return `<span class="pqi-item pqi-err" title="${esc((snap.error || "").slice(0, 160))}">⚠ 余量获取失败</span>`;
+  if (s === "unset") return `<span class="pqi-item pqi-warn" title="余量监控凭证未配置，在供应商编辑里完善">余量未配置</span>`;
+  return `<span class="pqi-item" title="等待轮询，编辑供应商可手动保存立即查询">余量待刷新</span>`;
+}
+async function decorateProvQuota() {
+  if (!quotaBindings.length && Date.now() - quotaProvAt > 60000) {
+    quotaProvAt = Date.now();
+    const d = await api("/admin/quota/bindings");
+    if (d && d.bindings) quotaBindings = d.bindings;
+  }
+  const byProv = {};
+  quotaBindings.forEach(b => {
+    if (b.source === "provider" && b.provider_id && !byProv[b.provider_id]) byProv[b.provider_id] = b;
+  });
+  document.querySelectorAll("[data-pq-inline]").forEach(el => {
+    const html = provQuotaInlineHtml(byProv[el.dataset.pqInline] || null);
+    if (el.__lastHtml !== html) { el.__lastHtml = html; el.innerHTML = html; }
+  });
+}
+async function pqSyncBindings() {
+  const d = await api("/admin/quota/bindings");
+  if (d) {
+    quotaBindings = d.bindings || [];
+    if (d.platforms) quotaPlatforms = d.platforms;
+    if (d.providers) quotaProviders = d.providers;
+  }
+  decorateProvQuota();
+}
+async function pqEnsureBase() {
+  if (!Object.keys(quotaPlatforms).length || !quotaProviders.length) {
+    const d = await api("/admin/quota/bindings");
+    if (d) {
+      if (d.platforms) quotaPlatforms = d.platforms;
+      if (d.providers) quotaProviders = d.providers;
+      if (d.bindings) quotaBindings = d.bindings;
+    }
+  }
+  if (!window._pqqScripts) {
+    const sd = await api("/admin/quota/scripts");
+    window._pqqScripts = (sd && sd.scripts) || [];
+  }
+  if (!window._pqqIv) {
+    const st = await api("/admin/quota/settings");
+    window._pqqIv = (st && st.settings && st.settings.interval_minutes) || 30;
+  }
+}
+async function pqFillEditSection(pid) {
+  const sec = document.getElementById("pqq-section");
+  if (!sec) return;
+  await pqEnsureBase();
+  window._pqqPid = pid;
+  const b = quotaBindings.find(x => x.source === "provider" && x.provider_id === pid) || null;
+  window._pqqBinding = b;
+  window._pqqCurExtra = b ? (b.extra || {}) : {};
+  sec.style.display = "";
+  document.getElementById("pqq-state").textContent =
+    b ? ((b.enabled ? "已开启 · " : "已绑定 · 停用中 · ") + ((quotaPlatforms[b.platform] || {}).label || b.platform)) : "未开启";
+  document.getElementById("pqq-del").style.display = b ? "" : "none";
+  document.getElementById("pqq-on").checked = !!(b && b.enabled);
+  document.getElementById("pqq-fields").style.display = (b && b.enabled) ? "" : "none";
+  document.getElementById("pqq-mode").value = (b && b.platform === "custom") ? "custom" : "auto";
+  const platSel = document.getElementById("pqq-platform");
+  platSel.innerHTML = Object.entries(quotaPlatforms).map(([k, v]) => `<option value="${k}">${esc(v.label)}</option>`).join("");
+  platSel.value = (b && b.platform && b.platform !== "custom") ? b.platform : (Object.keys(quotaPlatforms)[0] || "");
+  pqPlatformChange();
+  const scriptSel = document.getElementById("pqq-script");
+  const scripts = window._pqqScripts || [];
+  scriptSel.innerHTML = scripts.length
+    ? scripts.map(s => `<option value="${esc(s.id)}">${esc(s.id)}</option>`).join("")
+    : "<option value=\"\">（scripts/quota_providers/ 暂无脚本）</option>";
+  if (b && b.script_id) scriptSel.value = b.script_id;
+  const paramsEl = document.getElementById("pqq-params");
+  paramsEl.value = "";
+  paramsEl.placeholder = (b && b.has_params) ? "已设置，留空保持原值" : "userId:1234567;passToken:V1:xxxxx;";
+  document.getElementById("pqq-interval").value = String(window._pqqIv || 30);
+}
+function pqOnToggle() {
+  document.getElementById("pqq-fields").style.display = document.getElementById("pqq-on").checked ? "" : "none";
+}
+function pqModeChange() {
+  const m = document.getElementById("pqq-mode").value;
+  document.getElementById("pqq-auto").classList.toggle("hidden", m !== "auto");
+  document.getElementById("pqq-custom").classList.toggle("hidden", m !== "custom");
+}
+function pqPlatformChange() {
+  const p = quotaPlatforms[document.getElementById("pqq-platform").value] || {};
+  document.getElementById("pqq-extra").innerHTML = qExtraFields(p, window._pqqCurExtra || {});
+  document.getElementById("pqq-note").textContent = p.note || "";
+}
+async function pqSaveFromEdit(pid) {
+  const b = window._pqqBinding;
+  const on = document.getElementById("pqq-on") && document.getElementById("pqq-on").checked;
+  if (!on && !b) return true;
+  if (!on && b) {
+    const d0 = await api("/admin/quota/bindings/" + b.id, { method: "PUT", body: JSON.stringify({ platform: b.platform, enabled: false }) });
+    if (!d0) return false;
+    toast("余量监控已停用", "ok");
+    await pqSyncBindings();
+    return true;
+  }
+  const mode = document.getElementById("pqq-mode").value;
+  const prov = quotaProviders.find(p => p.id === pid);
+  const name = ((prov && prov.name) || pid) + " 余量";
+  let body;
+  if (mode === "custom") {
+    const script_id = document.getElementById("pqq-script").value;
+    if (!script_id) { toast("余量监控：请选择脚本（scripts/quota_providers/ 目录为空）", "err"); return false; }
+    body = { platform: "custom", name, source: "provider", provider_id: pid, enabled: true, script_id };
+    const raw = document.getElementById("pqq-params").value;
+    if (raw) body.params_raw = raw;
+  } else {
+    const platform = document.getElementById("pqq-platform").value;
+    const meta = quotaPlatforms[platform] || {};
+    const extra = {};
+    (meta.requires || []).concat(meta.optional || []).forEach(k => {
+      const el = document.getElementById("qb-x-" + k);
+      if (el && el.value.trim()) extra[k] = el.value.trim();
+    });
+    body = { platform, name, source: "provider", provider_id: pid, enabled: true, extra };
+  }
+  const d = b ? await api("/admin/quota/bindings/" + b.id, { method: "PUT", body: JSON.stringify(body) })
+              : await api("/admin/quota/bindings", { method: "POST", body: JSON.stringify(body) });
+  if (!d) return false;
+  if (d.binding) window._pqqBinding = d.binding;
+  const iv = parseInt(document.getElementById("pqq-interval").value, 10) || 30;
+  window._pqqIv = iv;
+  await api("/admin/quota/settings", { method: "PUT", body: JSON.stringify({ interval_minutes: iv }) });
+  const r = d.result || {};
+  toast(r.status === "ok" ? "余量监控已保存并查询"
+       : r.status === "unset" ? "余量监控已保存（凭证未配齐：" + (r.error || "") + "）"
+       : "余量监控已保存，但查询失败：" + (r.error || ""), r.status !== "ok" ? "warn" : "ok");
+  await pqSyncBindings();
+  return true;
+}
+async function pqDeleteFromEdit() {
+  const b = window._pqqBinding;
+  if (!b) return;
+  if (!await HMG.confirm("解除该供应商的余量监控绑定？其历史记录一并删除。", { danger: true, okLabel: "解除" })) return;
+  if (await api("/admin/quota/bindings/" + b.id, { method: "DELETE" })) {
+    window._pqqBinding = null;
+    document.getElementById("pqq-on").checked = false;
+    pqOnToggle();
+    document.getElementById("pqq-state").textContent = "未开启";
+    document.getElementById("pqq-del").style.display = "none";
+    toast("已解除绑定", "ok");
+    await pqSyncBindings();
+  }
+}
+function qExtraFields(plat, cur) {
+  const defs = {
+    user_id:    { label: "小米账号 userId（数字，F12 → Cookies → account.xiaomi.com）", type: "text" },
+    pass_token: { label: "passToken（约 30 天不运行才失效，程序自动续期；留空 = 保持原值）", type: "password" },
+    access_key: { label: "AccessKey（AK，百度智能云控制台右上角 → 安全认证）", type: "password" },
+    secret_key: { label: "SecretKey（SK，与 AK 同页；留空 = 保持原值）", type: "password" },
+    cookie:     { label: "网页 Cookie（可选兜底，从浏览器 DevTools 复制）", type: "textarea" },
+  };
+  const req = (plat.requires || []), opt = (plat.optional || []);
+  if (!req.length && !opt.length) return "";
+  return req.concat(opt).map(k => {
+    const d = defs[k]; if (!d) return "";
+    const val = (cur && cur[k]) || "";
+    const required = req.includes(k) && !val ? "required" : "";
+    const star = req.includes(k) ? "（必填）" : "（可选）";
+    if (d.type === "textarea") {
+      return `<div class="fg"><label>${esc(d.label)}${star}</label><textarea id="qb-x-${k}" class="inp" rows="2" placeholder="${val ? "已设置，留空保持原值" : ""}"></textarea></div>`;
+    }
+    return `<div class="fg"><label>${esc(d.label)}${star}</label><input id="qb-x-${k}" class="inp" type="${d.type}" autocomplete="new-password" ${required} placeholder="${val ? "已设置，留空保持原值" : ""}"></div>`;
+  }).join("");
+}
+
+/* ═══════════ Headroom 门控（插件停用→勾选框隐藏；配置数据保留不抹除） ═══════════ */
+let hrMasterEnabled = false, hrSavedValue = false;
+async function refreshHeadroomGate() {
+  const d = await api("/admin/headroom");
+  hrMasterEnabled = !!(d && d.enabled);
+  applyHeadroomGate();
+}
+function applyHeadroomGate() {
+  const cb = document.getElementById("f-headroom-opt");
+  if (!cb) return;
+  cb.style.display = hrMasterEnabled ? "" : "none";
+  if (!hrMasterEnabled) { const _c = document.getElementById("f-headroom"); if (_c) _c.checked = false; }
+}
+
+/* ═══════════ 初始化 ═══════════ */
+HMG.grpReload = () => { loadModels(); };
+refreshHeadroomGate();
+gwGroupsBoot().finally(loadModels);
+</script>
+</body>
+</html>
