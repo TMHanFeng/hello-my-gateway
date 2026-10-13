@@ -51,6 +51,14 @@ async def lifespan(app: FastAPI):
     await init_db()
     await sync_all_refresh_times()
     start_scheduler()
+    # 余量监控工位：启动即覆盖落一份当前状态（cheackresult.json 恒存在）+ 独立刷新服务端口
+    from app.core import quota_server
+    from app.core.quota_providers import write_result_file
+    try:
+        await write_result_file()
+    except Exception:
+        logger.exception("[余量] 启动落盘 cheackresult.json 失败")
+    await quota_server.start()
     # 插件中心：触发已启用插件的 on_startup（如 Headroom 预热库加载；未装库/未启用静默旁路）
     plugin_center.startup(app)
     host, port = server_bind()
@@ -58,6 +66,7 @@ async def lifespan(app: FastAPI):
     logger.info(f"Model Gateway 启动 | 后台: {base}/admin/  {base}/hfadmin | 插件: {base}/admin/plugins | 日志: {LOG_FILE}")
     yield
     plugin_center.shutdown()
+    await quota_server.stop()
     await pool.close_all()
     await close_db()
 

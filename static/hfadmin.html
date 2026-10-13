@@ -659,6 +659,18 @@ select { max-width: 100%; }
 
 /* 网格排布：供应商卡片 */
 .provider-card { margin-bottom: 18px; }
+/* 供应商卡片头部内联余量（v2.22.6）：协议徽章右侧一句话显示（剩余余额 / 各 bar 已用/总量），
+   配置入口收进供应商编辑弹窗——卡片保持整洁，无独立监控区块 */
+.pq-inline { display: inline-flex; align-items: baseline; gap: 10px; margin-left: 8px; font-size: 12px; font-weight: 400; cursor: pointer; vertical-align: 1px; }
+.pqi-item { white-space: nowrap; color: var(--muted, #888); }
+.pqi-item.pqi-ok { color: #1f8a3b; }
+.pqi-item.pqi-warn { color: #b26a00; }
+.pqi-item.pqi-err { color: #c0392b; }
+/* 供应商编辑弹窗「套餐/余额监控」配置区（v2.22.6，自卡片区块迁入） */
+.pqx-head { display: flex; align-items: center; gap: 8px; margin: 14px 0 8px; padding-top: 12px; border-top: 1px dashed rgba(120,120,128,.3); }
+.pqx-head label { font-weight: 600; }
+.pqx-state { font-size: 12px; opacity: .75; }
+.pqx-head .btn { margin-left: auto; }
 .provider-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 
 @media (max-width: 760px) {
@@ -1211,6 +1223,32 @@ select { max-width: 100%; }
         </div>
         <span id="proxy-test-result" class="th-hint"></span>
       </div>
+      <!-- 🔋 套餐/余额监控（v2.22.6 自卡片区块迁入；仅编辑态显示，新增态无 provider_id 不可绑。
+           勾选开启随「保存」创建/更新绑定并立即查询；取消勾选随保存停用（凭证保留）；🗑 解除绑定并删历史 -->
+      <div id="pqq-section" style="display:none">
+        <div class="pqx-head">
+          <label>🔋 套餐/余额监控</label>
+          <label class="hr-switch" title="开启后随「保存」创建/更新绑定并立即查询；取消勾选随保存停用"><input type="checkbox" id="pqq-on" onchange="pqOnToggle()"><span class="hr-track"></span></label>
+          <span class="pqx-state" id="pqq-state"></span>
+          <button type="button" class="btn btn-ghost btn-sm" id="pqq-del" style="display:none" onclick="pqDeleteFromEdit()" title="解除绑定并删除历史记录">🗑</button>
+        </div>
+        <div id="pqq-fields" style="display:none">
+          <div class="fg"><label>获取方式</label><select id="pqq-mode" onchange="pqModeChange()"><option value="auto">自动参数获取（内置平台）</option><option value="custom">自定义获取（脚本）</option></select></div>
+          <div id="pqq-auto">
+            <div class="fg"><label>平台类型</label><select id="pqq-platform" onchange="pqPlatformChange()"></select></div>
+            <div id="pqq-extra"></div>
+            <div class="hint" id="pqq-note" style="margin:2px 0 8px"></div>
+          </div>
+          <div id="pqq-custom" class="hidden">
+            <div class="fg"><label>脚本（scripts/quota_providers/ 目录扫描，文件名即脚本 id）</label><select id="pqq-script"></select></div>
+            <div class="fg"><label>参数串（原样透传：网关不解析不过滤，多余参数由脚本自决取舍；name:value; 分号分隔；留空 = 保持原值）</label>
+              <textarea id="pqq-params" rows="6" placeholder="userId:1234567;passToken:V1:xxxxx;"></textarea></div>
+            <div class="hint" style="margin:2px 0 8px">脚本异常/超时/输出非 JSON 视为查询失败；脚本可回传 updated_params，网关原样写回绑定。</div>
+          </div>
+          <div class="fg"><label>轮询间隔（全局，所有绑定共用）</label><select id="pqq-interval"><option value="30">30 分钟</option><option value="60">1 小时</option><option value="1440">每天</option></select></div>
+          <div class="hint">随弹窗底部「保存」一并生效；取消勾选再保存 = 停用监控（凭证保留）；删除点右上 🗑。</div>
+        </div>
+      </div>
       <div class="modal-actions">
         <button type="button" class="btn btn-ghost" onclick="closeModal('overlay-provider')">取消</button>
         <button type="submit" class="btn btn-amber">保存</button>
@@ -1545,7 +1583,7 @@ async function loadModels() {
     <div class="card provider-card" draggable="true" data-provider-drag="${esc(p.id)}" style="cursor:grab" title="拖拽排序供应商">
       <div class="card-head provider-head">
         <div>
-          <div class="card-title"><span class="drag-handle">⠿</span> ${esc(p.name)} ${provBadge(p.protocol)}</div>
+          <div class="card-title"><span class="drag-handle">⠿</span> ${esc(p.name)} ${provBadge(p.protocol)}<span class="pq-inline" data-pq-inline="${esc(p.id)}"></span></div>
           <div class="card-sub mono">${esc(p.id)} · ${esc(p.base_url)}${p.proxy_url ? ` <span class="badge" style="background:rgba(175,82,222,.12);color:#7d26a8" title="代理: ${esc(p.proxy_url)}">🛡️ 代理</span>` : ''}</div>
         </div>
         <div class="btn-row">
@@ -1575,6 +1613,7 @@ async function loadModels() {
   setInnerIfChanged(document.getElementById('models-list'), html);
   bindProviderDrag();
   bindModelDrag();
+  decorateProvQuota();  // 卡片头部内联余量（v2.22.6，fire-and-forget）
 }
 
 /* 拖拽：模型管理列表内排序（问题 5 修复） */
@@ -1724,6 +1763,7 @@ function showAddProvider() {
   document.getElementById('prov-modal-title').textContent = '添加供应商';
   document.getElementById('pform').reset();
   document.getElementById('prov-id').disabled = false;
+  const _pqs = document.getElementById('pqq-section'); if (_pqs) _pqs.style.display = 'none';  // 新增态不可绑余量（v2.22.6）
   provJoinGroupRender();
   document.getElementById('overlay-provider').classList.add('show');
 }
@@ -1778,6 +1818,7 @@ async function editProvider(id) {
   const _pbt2 = document.getElementById('proxy-test-result');
   if (_pbt2) { _pbt2.textContent = ''; _pbt2.className = 'th-hint'; }
   document.getElementById('prov-id').disabled = true;
+  pqFillEditSection(id);  // 🔋 余量监控区回填（v2.22.6，异步不阻塞弹窗打开）
   document.getElementById('overlay-provider').classList.add('show');
 }
 /* #56 添加供应商时可选加入分组：仅分组收纳启用时显示下拉（不加入/现有分组/新建） */
@@ -1818,6 +1859,9 @@ async function submitProvider(e) {
   else { newProv = await api('/admin/providers', { method: 'POST', body: JSON.stringify(body) }); ok = newProv; }
   if (!ok) return;
   if (newProv && newProv.provider) provJoinGroupApply(newProv.provider.id);   // #56 新增供应商按选择入组
+  // 🔋 余量监控随「保存」一并提交（v2.22.6；仅编辑态，新增态区块隐藏）
+  const _pqs = document.getElementById('pqq-section');
+  if (editingProviderId && _pqs && _pqs.style.display !== 'none') await pqSaveFromEdit(editingProviderId);
   closeModal('overlay-provider'); toast(editingProviderId ? '供应商已更新' : '供应商已添加');
   loadModels();
 }
@@ -3783,6 +3827,7 @@ const REASON_BASE = {
   rpm_limited: ['RPM 触顶', 'rsn-skip'],
   tpm_limited: ['TPM 触顶', 'rsn-skip'],
   valve_exceeded: ['安全阀触顶', 'rsn-skip'],
+  provider_quota_exhausted: ['余量熔断', 'rsn-skip'],
   cooldown: ['冷却中', 'rsn-warn'],
   context_exceeded: ['超上下文窗口', 'rsn-skip'],
   context_overflow: ['上下文超限·不冷却透传', 'rsn-warn'],
@@ -3822,6 +3867,9 @@ function formatDetail(reason, d) {
       }
       if (d.reason_detail) return tail(d.reason_detail);
       return '';
+    case 'provider_quota_exhausted':
+      if (d.remaining_sec != null) return tail(`剩 ${d.remaining_sec}s 后重置`);
+      return d.reason_detail ? tail(d.reason_detail) : '';
     case 'cooldown':
       return d.remaining_sec != null ? tail(`剩 ${d.remaining_sec}s`) : '';
     case 'context_exceeded':
@@ -5024,6 +5072,225 @@ async function savePluginConfig() {
   if (d) { toast('已保存并热生效'); closeModal('overlay-pcset'); loadPluginCenter(); }
 }
 refreshPluginState();
+
+/* ═══════════ 余量监控（卡片内联显示 + 供应商编辑弹窗配置；v2.22.7 起无独立页签）═══════════ */
+let quotaBindings = [], quotaPlatforms = {}, quotaProviders = [], quotaProvAt = 0;
+function qFmtNum(n) { return Number(n).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function qFmtReset(resetAt) {
+  if (!resetAt) return '';
+  const diff = resetAt - Math.floor(Date.now() / 1000);
+  if (diff <= 0) return '已重置';
+  const h = Math.floor(diff / 3600), m = Math.floor((diff % 3600) / 60);
+  return (h > 0 ? h + ' 小时 ' : '') + m + ' 分后重置';
+}
+
+/* ── 卡片头部内联余量（v2.22.6）：协议徽章右侧一句话显示，配置入口收进供应商编辑弹窗 ── */
+function pqFmtAbs(n) {
+  // 内联文本绝对值：≥100 千分位取整，<100 保留 2 位小数
+  n = Number(n) || 0;
+  return Math.abs(n) >= 100 ? Math.round(n).toLocaleString('zh-CN')
+                            : n.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function pqiCls(rem) { return rem >= 50 ? 'pqi-ok' : rem >= 20 ? 'pqi-warn' : 'pqi-err'; }
+function provQuotaInlineHtml(b) {
+  const snap = (b && b.snapshot) || {};
+  const s = snap.status || 'pending';
+  if (!b || !b.enabled) return '';  // 未绑定/停用不显示，卡片保持整洁
+  if (s === 'ok' && Array.isArray(snap.bars) && snap.bars.length) {
+    return snap.bars.map(bar => {
+      const rem = Math.round(bar.remaining_pct);
+      const label = (bar.label || '额度').replace(/\s+/g, '');
+      const val = bar.total > 0 ? `${pqFmtAbs(bar.used)}/${pqFmtAbs(bar.total)}` : `剩 ${rem}%`;
+      const tip = [bar.detail || '', bar.reset_at ? qFmtReset(bar.reset_at) : ''].filter(Boolean).join(' · ');
+      return `<span class="pqi-item ${pqiCls(rem)}"${tip ? ` title="${esc(label)}：${esc(tip)}"` : ''}>${esc(label)} ${val}</span>`;
+    }).join('');
+  }
+  if (s === 'ok' && snap.balance != null) {
+    const bal = Number(snap.balance) || 0;
+    const cls = bal <= 0 ? 'pqi-err' : (snap.available === false ? 'pqi-warn' : 'pqi-ok');
+    return `<span class="pqi-item ${cls}" title="${esc(snap.sub || '')}">剩余余额：${esc(snap.symbol || '')}${qFmtNum(bal)}</span>`;
+  }
+  if (s === 'error') return `<span class="pqi-item pqi-err" title="${esc((snap.error || '').slice(0, 160))}">⚠ 余量获取失败</span>`;
+  if (s === 'unset') return `<span class="pqi-item pqi-warn" title="余量监控凭证未配置，在供应商编辑里完善">余量未配置</span>`;
+  return `<span class="pqi-item" title="等待轮询，编辑供应商可手动保存立即查询">余量待刷新</span>`;
+}
+/* 卡片内联余量回填（v2.22.6）：loadModels 载入点 + pqSyncBindings 同步点调用；
+   数据取 /admin/quota/bindings，从未取过时按 60s 节流自取一次 */
+async function decorateProvQuota() {
+  if (!quotaBindings.length && Date.now() - quotaProvAt > 60000) {
+    quotaProvAt = Date.now();
+    const d = await api('/admin/quota/bindings');
+    if (d && d.bindings) quotaBindings = d.bindings;
+  }
+  const byProv = {};
+  quotaBindings.forEach(b => {
+    if (b.source === 'provider' && b.provider_id && !byProv[b.provider_id]) byProv[b.provider_id] = b;
+  });
+  document.querySelectorAll('[data-pq-inline]').forEach(el => {
+    const html = provQuotaInlineHtml(byProv[el.dataset.pqInline] || null);
+    if (el.__lastHtml !== html) { el.__lastHtml = html; el.innerHTML = html; }  // 内容未变零写入
+  });
+}
+async function pqSyncBindings() {
+  // 编辑弹窗保存/停用/解除后重拉绑定三缓存并回填卡片内联（v2.22.7 起页签删除，此为唯一刷新通道）
+  const d = await api('/admin/quota/bindings');
+  if (d) {
+    quotaBindings = d.bindings || [];
+    if (d.platforms) quotaPlatforms = d.platforms;
+    if (d.providers) quotaProviders = d.providers;
+  }
+  decorateProvQuota();
+}
+
+/* ── 供应商编辑弹窗「套餐/余额监控」区（v2.22.6）：勾选开启随「保存」创建/更新绑定并立即查询，
+   取消勾选随保存停用（凭证保留，🗑 解除绑定）；新增供应商无 id 不可绑，区块隐藏 ── */
+async function pqEnsureBase() {
+  if (!Object.keys(quotaPlatforms).length || !quotaProviders.length) {
+    const d = await api('/admin/quota/bindings');
+    if (d) {
+      if (d.platforms) quotaPlatforms = d.platforms;
+      if (d.providers) quotaProviders = d.providers;
+      if (d.bindings) quotaBindings = d.bindings;
+    }
+  }
+  if (!window._pqqScripts) {
+    const sd = await api('/admin/quota/scripts');
+    window._pqqScripts = (sd && sd.scripts) || [];
+  }
+  if (!window._pqqIv) {
+    const st = await api('/admin/quota/settings');
+    window._pqqIv = (st && st.settings && st.settings.interval_minutes) || 30;
+  }
+}
+async function pqFillEditSection(pid) {
+  const sec = document.getElementById('pqq-section');
+  if (!sec) return;
+  await pqEnsureBase();
+  window._pqqPid = pid;
+  const b = quotaBindings.find(x => x.source === 'provider' && x.provider_id === pid) || null;
+  window._pqqBinding = b;
+  window._pqqCurExtra = b ? (b.extra || {}) : {};
+  sec.style.display = '';
+  document.getElementById('pqq-state').textContent =
+    b ? ((b.enabled ? '已开启 · ' : '已绑定 · 停用中 · ') + ((quotaPlatforms[b.platform] || {}).label || b.platform)) : '未开启';
+  document.getElementById('pqq-del').style.display = b ? '' : 'none';
+  document.getElementById('pqq-on').checked = !!(b && b.enabled);
+  document.getElementById('pqq-fields').style.display = (b && b.enabled) ? '' : 'none';
+  document.getElementById('pqq-mode').value = (b && b.platform === 'custom') ? 'custom' : 'auto';
+  const platSel = document.getElementById('pqq-platform');
+  platSel.innerHTML = Object.entries(quotaPlatforms).map(([k, v]) => `<option value="${k}">${esc(v.label)}</option>`).join('');
+  platSel.value = (b && b.platform && b.platform !== 'custom') ? b.platform : (Object.keys(quotaPlatforms)[0] || '');
+  pqPlatformChange();
+  const scriptSel = document.getElementById('pqq-script');
+  const scripts = window._pqqScripts || [];
+  scriptSel.innerHTML = scripts.length
+    ? scripts.map(s => `<option value="${esc(s.id)}">${esc(s.id)}</option>`).join('')
+    : '<option value="">（scripts/quota_providers/ 暂无脚本）</option>';
+  if (b && b.script_id) scriptSel.value = b.script_id;
+  const paramsEl = document.getElementById('pqq-params');
+  paramsEl.value = '';
+  paramsEl.placeholder = (b && b.has_params) ? '已设置，留空保持原值' : 'userId:1234567;passToken:V1:xxxxx;';
+  document.getElementById('pqq-interval').value = String(window._pqqIv || 30);
+}
+function pqOnToggle() {
+  document.getElementById('pqq-fields').style.display = document.getElementById('pqq-on').checked ? '' : 'none';
+}
+function pqModeChange() {
+  const m = document.getElementById('pqq-mode').value;
+  document.getElementById('pqq-auto').classList.toggle('hidden', m !== 'auto');
+  document.getElementById('pqq-custom').classList.toggle('hidden', m !== 'custom');
+}
+function pqPlatformChange() {
+  const p = quotaPlatforms[document.getElementById('pqq-platform').value] || {};
+  document.getElementById('pqq-extra').innerHTML = qExtraFields(p, window._pqqCurExtra || {});
+  document.getElementById('pqq-note').textContent = p.note || '';
+}
+async function pqSaveFromEdit(pid) {
+  // 随供应商编辑弹窗「保存」一并提交；失败只 toast 不阻断供应商本身的保存
+  const b = window._pqqBinding;
+  const on = document.getElementById('pqq-on') && document.getElementById('pqq-on').checked;
+  if (!on && !b) return true;   // 未开启且无绑定：无事发生
+  if (!on && b) {               // 取消勾选 = 停用（凭证保留；删除走 🗑）
+    const d0 = await api('/admin/quota/bindings/' + b.id, { method: 'PUT', body: JSON.stringify({ platform: b.platform, enabled: false }) });
+    if (!d0) return false;
+    toast('余量监控已停用');
+    await pqSyncBindings();
+    return true;
+  }
+  const mode = document.getElementById('pqq-mode').value;
+  const prov = quotaProviders.find(p => p.id === pid);
+  const name = ((prov && prov.name) || pid) + ' 余量';
+  let body;
+  if (mode === 'custom') {
+    const script_id = document.getElementById('pqq-script').value;
+    if (!script_id) { toast('余量监控：请选择脚本（scripts/quota_providers/ 目录为空）', true); return false; }
+    body = { platform: 'custom', name, source: 'provider', provider_id: pid, enabled: true, script_id };
+    const raw = document.getElementById('pqq-params').value;
+    if (raw) body.params_raw = raw;  // 原样提交：不 trim 不解析不过滤（R6）
+  } else {
+    const platform = document.getElementById('pqq-platform').value;
+    const meta = quotaPlatforms[platform] || {};
+    const extra = {};
+    (meta.requires || []).concat(meta.optional || []).forEach(k => {
+      const el = document.getElementById('qb-x-' + k);
+      if (el && el.value.trim()) extra[k] = el.value.trim();
+    });
+    body = { platform, name, source: 'provider', provider_id: pid, enabled: true, extra };
+  }
+  const d = b ? await api('/admin/quota/bindings/' + b.id, { method: 'PUT', body: JSON.stringify(body) })
+              : await api('/admin/quota/bindings', { method: 'POST', body: JSON.stringify(body) });
+  if (!d) return false;
+  if (d.binding) window._pqqBinding = d.binding;  // 保存成功即换新，后续解除/停用指向现绑定
+  const iv = parseInt(document.getElementById('pqq-interval').value, 10) || 30;
+  window._pqqIv = iv;
+  await api('/admin/quota/settings', { method: 'PUT', body: JSON.stringify({ interval_minutes: iv }) });
+  const r = d.result || {};
+  toast(r.status === 'ok' ? '余量监控已保存并查询'
+       : r.status === 'unset' ? '余量监控已保存（凭证未配齐：' + (r.error || '') + '）'
+       : '余量监控已保存，但查询失败：' + (r.error || ''), r.status !== 'ok');
+  await pqSyncBindings();
+  return true;
+}
+async function pqDeleteFromEdit() {
+  const b = window._pqqBinding;
+  if (!b) return;
+  if (!confirm('解除该供应商的余量监控绑定？其历史记录一并删除。')) return;
+  if (await api('/admin/quota/bindings/' + b.id, { method: 'DELETE' })) {
+    window._pqqBinding = null;
+    document.getElementById('pqq-on').checked = false;
+    pqOnToggle();
+    document.getElementById('pqq-state').textContent = '未开启';
+    document.getElementById('pqq-del').style.display = 'none';
+    toast('已解除绑定');
+    await pqSyncBindings();
+  }
+}
+
+function qExtraFields(plat, cur) {
+  // 平台专属人工字段（requires 必填）：千帆 AK/SK、小米 userId/passToken/cookie、MiniMax cookie
+  const defs = {
+    user_id:    { label: '小米账号 userId（数字，F12 → Cookies → account.xiaomi.com）', type: 'text' },
+    pass_token: { label: 'passToken（约 30 天不运行才失效，程序自动续期；留空 = 保持原值）', type: 'password' },
+    access_key: { label: 'AccessKey（AK，百度智能云控制台右上角 → 安全认证）', type: 'password' },
+    secret_key: { label: 'SecretKey（SK，与 AK 同页；留空 = 保持原值）', type: 'password' },
+    cookie:     { label: '网页 Cookie（可选兜底，从浏览器 DevTools 复制）', type: 'textarea' },
+  };
+  const req = (plat.requires || []), opt = (plat.optional || []);
+  if (!req.length && !opt.length) return '';
+  return req.concat(opt).map(k => {
+    const d = defs[k]; if (!d) return '';
+    const val = (cur && cur[k]) || '';
+    const required = req.includes(k) && !val ? 'required' : '';
+    const star = req.includes(k) ? '（必填）' : '（可选）';
+    if (d.type === 'textarea') {
+      return `<div class="fg"><label>${esc(d.label)}${star}</label><textarea id="qb-x-${k}" rows="2" placeholder="${val ? '已设置，留空保持原值' : ''}"></textarea></div>`;
+    }
+    return `<div class="fg"><label>${esc(d.label)}${star}</label><input id="qb-x-${k}" type="${d.type}" autocomplete="new-password" ${required} placeholder="${val ? '已设置，留空保持原值' : ''}"></div>`;
+  }).join('');
+}
+
+/* v2.22.7：余量页签专属的绑定弹窗/刷新/设置函数与 q- 卡片样式注入整组删除——
+   绑定的新建/编辑/停用/删除/刷新入口全部收敛到供应商编辑弹窗 pqq-section */
 </script>
 </body>
 </html>

@@ -20,6 +20,7 @@ from app.core.config import load_config, save_config  # re-export：旧调用方
 from app.core.paths import CONFIG_PATH  # 统一路径常量（项目根 config.json）
 from app.core import database as db
 from app.plugins.manager import plugin_center  # 插件中心：压缩等请求管线 hook 经此路由到插件
+from app.core.quota_providers import provider_circuit  # 供应商余量熔断（惰性推导）
 
 logger = logging.getLogger(__name__)
 
@@ -170,6 +171,9 @@ def _parse_peak_exdates(raw) -> set:
 # 该模型的每次调用计费后（log_request 处）立即失效，保证自身计数新鲜
 QUOTA_CACHE_TTL = 5.0
 
+# 供应商余量熔断判定缓存秒数：与配额预检同陈旧度，熔断经 provider 级 TTL 缓存减少快照重推
+PROVIDER_CIRCUIT_TTL = 5.0
+
 
 class ContextOverflowPassThrough(Exception):
     """上游 400 上下文超限：请求过大、与模型健康无关——不冷却；
@@ -262,6 +266,8 @@ class ModelPool:
         # 配额预检缓存：model_id -> (expires_at, ok, reason, detail, snap)
         # snap = {"used","limit"(,"balance")}：该分支已用/上限快照，供安全阀在缓存外逐请求判定（est 因请求而异，不入缓存键）
         self._quota_cache: dict[str, tuple[float, bool, str, dict | None, dict | None]] = {}
+        # 供应商余量熔断缓存：provider_id -> (expires_at, circuit|None)
+        self._pcircuit_cache: dict[str, tuple[float, dict | None]] = {}
         self._load()
 
     def _load(self):
@@ -431,6 +437,7 @@ class ModelPool:
             except RuntimeError:
                 pass  # 无运行中事件循环（极端调用场景）：退回 GC 回收，不影响正确性
         self._quota_cache.clear()
+        self._pcircuit_cache.clear()
         self.config = load_config()
         self.registry.clear()
         self.by_name.clear()
@@ -733,6 +740,25 @@ class ModelPool:
                         "peak_exdates": ex_label,
                         "reason_detail": "高峰时段（" + "；".join(parts) + "，北京时间）内不路由，仅闲时可用",
                     }
+
+        # 供应商余量熔断：余量工位查得该供应商耗尽（bars 任一条 100% 且未到 reset_at /
+        # 余额≤0）→ fail-close 整体跳过，reset_at 到期或下次刷新回升自动恢复。
+        # 判定经 provider 级 TTL 缓存（与配额预检同陈旧度），放在配额预检之前——被熔断的候选
+        # 不必再跑每候选 1-4 次的串行 sqlite 预检；内联 api_key 模型（无 provider_id）不参与熔断。
+        if entry.provider_id:
+            pc = self._pcircuit_cache.get(entry.provider_id)
+            if pc and pc[0] > now:
+                circ = pc[1]
+            else:
+                circ = await provider_circuit(entry.provider_id)
+                self._pcircuit_cache[entry.provider_id] = (now + PROVIDER_CIRCUIT_TTL, circ)
+            if circ:
+                return False, "provider_quota_exhausted", {
+                    "reset_at": int(circ["reset_at"]) if circ["reset_at"] else None,
+                    "remaining_sec": int(circ["reset_at"] - now) if circ["reset_at"] else None,
+                    "binding": circ["binding"], "bar": circ["bar"],
+                    "reason_detail": circ["detail"],
+                }
 
         # 配额/限速预检（问题19）：这部分需读 sqlite（每候选 1-4 次串行查询），
         # 结果短缓存 QUOTA_CACHE_TTL 秒；该模型每次调用计费后立即失效，自身计数保持新鲜

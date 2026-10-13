@@ -33,6 +33,19 @@ async def db_wal_checkpoint():
         logger.exception("[DB维护] WAL checkpoint 失败")
 
 
+async def quota_poll():
+    """余量监控工位周期轮询（间隔 config quota_monitor.interval_minutes，默认 30 分钟）：
+    刷新全部绑定并把最新状态覆盖写入 cheackresult.json；历史流水顺带裁剪。
+    任何异常只记日志，绝不阻塞调度（照 db_maintenance 口径）。"""
+    try:
+        from app.core.quota_providers import refresh_all
+        await refresh_all(enabled_only=True)
+        await db.trim_quota_history()
+        logger.info("[余量轮询] 完成")
+    except Exception:
+        logger.exception("[余量轮询] 失败")
+
+
 async def refresh_model(model_id: str):
     # 先同步 config 的 refresh_time 到 DB（防热加载后 DB 滞后）
     try:
@@ -154,6 +167,20 @@ def _add_jobs():
         id="db_wal_checkpoint",
         replace_existing=True,
     )
+    # 余量监控工位：周期轮询（enabled / interval_minutes 存 config quota_monitor 节点，
+    # 改设置走 PUT /admin/quota/settings → restart_scheduler 即时生效）
+    qcfg = config.get("quota_monitor") or {}
+    if qcfg.get("enabled", True):
+        try:
+            minutes = max(1, min(1440, int(qcfg.get("interval_minutes", 30) or 30)))
+        except (TypeError, ValueError):
+            minutes = 30
+        scheduler.add_job(
+            quota_poll,
+            IntervalTrigger(minutes=minutes),
+            id="quota_poll",
+            replace_existing=True,
+        )
 
 
 def start_scheduler():

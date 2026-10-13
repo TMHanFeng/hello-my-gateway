@@ -36,3 +36,6 @@ backup/*
 dev8651.pid
 # 运行时数据目录（库/缓存/pid）
 data/
+
+# 余量监控工位：运行时结果文件（网关启动/每次刷新覆盖写入）
+cheackresult.json

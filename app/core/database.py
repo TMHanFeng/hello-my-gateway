@@ -350,6 +350,52 @@ async def init_db():
             )
         """)
         await db.execute("CREATE INDEX IF NOT EXISTS idx_responses_store_expires ON responses_store(expires_at)")
+        # 余量监控工位：绑定（平台×凭证声明）/ 最新快照（每绑定一行 UPSERT）/ 历史流水。
+        # 凭证只存人工字段与手动 Key（provider 来源的 api_key 查询时实时取 config，不冗余入库）。
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS quota_bindings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                platform TEXT NOT NULL,
+                name TEXT NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                source TEXT NOT NULL DEFAULT 'provider',
+                provider_id TEXT NOT NULL DEFAULT '',
+                api_key TEXT NOT NULL DEFAULT '',
+                base_url TEXT NOT NULL DEFAULT '',
+                extra TEXT NOT NULL DEFAULT '{}',
+                mimo_service_cookie TEXT NOT NULL DEFAULT '',
+                script_id TEXT NOT NULL DEFAULT '',
+                params_raw TEXT NOT NULL DEFAULT '',
+                created_at REAL NOT NULL DEFAULT 0,
+                updated_at REAL NOT NULL DEFAULT 0
+            )
+        """)
+        # 存量库升级（幂等）：缺 script_id / params_raw 列则补（v2.22.5 自定义脚本绑定）
+        _qcols = [r[1] for r in await (await db.execute("PRAGMA table_info(quota_bindings)")).fetchall()]
+        for _new in ("script_id", "params_raw"):
+            if _new not in _qcols:
+                await db.execute(f"ALTER TABLE quota_bindings ADD COLUMN {_new} TEXT NOT NULL DEFAULT ''")
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS quota_snapshots (
+                binding_id INTEGER PRIMARY KEY,
+                status TEXT NOT NULL DEFAULT 'pending',
+                plan TEXT NOT NULL DEFAULT '',
+                payload TEXT NOT NULL DEFAULT '{}',
+                error TEXT NOT NULL DEFAULT '',
+                fetched_at REAL NOT NULL DEFAULT 0
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS quota_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                binding_id INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                payload TEXT NOT NULL DEFAULT '{}',
+                fetched_at REAL NOT NULL DEFAULT 0
+            )
+        """)
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_quota_history_binding ON quota_history(binding_id, fetched_at)")
         await db.commit()
 
 
@@ -1506,3 +1552,148 @@ async def delete_response(resp_id: str) -> bool:
         removed = cursor.rowcount or 0
         await _commit(db)
     return removed > 0
+
+
+# ── 余量监控工位（绑定 / 快照 / 历史）─────────────────────────────────
+
+QUOTA_BINDING_FIELDS = {"platform", "name", "enabled", "source", "provider_id",
+                        "api_key", "base_url", "extra", "mimo_service_cookie",
+                        "script_id", "params_raw"}
+
+
+async def create_quota_binding(fields: dict) -> int:
+    now = time.time()
+    cols = {"enabled": 1, "source": "provider", "provider_id": "", "api_key": "",
+            "base_url": "", "extra": "{}", "mimo_service_cookie": "",
+            "created_at": now, "updated_at": now}
+    cols.update({k: v for k, v in fields.items() if k in QUOTA_BINDING_FIELDS})
+    async with _maybe_lock():
+        db = await _get_conn()
+        cursor = await db.execute(
+            f"""INSERT INTO quota_bindings ({', '.join(cols)}, platform, name)
+                VALUES ({', '.join('?' * len(cols))}, ?, ?)""",
+            list(cols.values()) + [fields["platform"], fields["name"]],
+        )
+        await _commit(db)
+        return cursor.lastrowid
+
+
+async def update_quota_binding(binding_id: int, fields: dict):
+    """按键更新（仅白名单字段；extra 由调用方合并后整串传入）。"""
+    sets, vals = [], []
+    for k, v in fields.items():
+        if k in QUOTA_BINDING_FIELDS:
+            sets.append(f"{k} = ?")
+            vals.append(v)
+    if not sets:
+        return
+    sets.append("updated_at = ?")
+    vals.extend([time.time(), binding_id])
+    async with _maybe_lock():
+        db = await _get_conn()
+        await db.execute(f"UPDATE quota_bindings SET {', '.join(sets)} WHERE id = ?", vals)
+        await _commit(db)
+
+
+async def delete_quota_binding(binding_id: int) -> bool:
+    async with _maybe_lock():
+        db = await _get_conn()
+        cursor = await db.execute("DELETE FROM quota_bindings WHERE id = ?", (binding_id,))
+        removed = cursor.rowcount or 0
+        await db.execute("DELETE FROM quota_snapshots WHERE binding_id = ?", (binding_id,))
+        await db.execute("DELETE FROM quota_history WHERE binding_id = ?", (binding_id,))
+        await _commit(db)
+    return removed > 0
+
+
+async def list_quota_bindings() -> list[dict]:
+    async with _maybe_lock():
+        db = await _get_conn()
+        cursor = await db.execute("SELECT * FROM quota_bindings ORDER BY id")
+        return [dict(r) for r in await cursor.fetchall()]
+
+
+async def get_quota_binding(binding_id: int) -> dict | None:
+    async with _maybe_lock():
+        db = await _get_conn()
+        cursor = await db.execute("SELECT * FROM quota_bindings WHERE id = ?", (binding_id,))
+        r = await cursor.fetchone()
+        return dict(r) if r else None
+
+
+async def upsert_quota_snapshot(binding_id: int, status: str, plan: str,
+                                payload: dict, error: str = ""):
+    async with _maybe_lock():
+        db = await _get_conn()
+        await db.execute(
+            """INSERT INTO quota_snapshots (binding_id, status, plan, payload, error, fetched_at)
+               VALUES (?, ?, ?, ?, ?, ?)
+               ON CONFLICT(binding_id) DO UPDATE SET
+                   status = excluded.status, plan = excluded.plan,
+                   payload = excluded.payload, error = excluded.error,
+                   fetched_at = excluded.fetched_at""",
+            (binding_id, status, plan, json.dumps(payload, ensure_ascii=False),
+             error, time.time()),
+        )
+        await _commit(db)
+
+
+async def append_quota_history(binding_id: int, status: str, payload: dict, fetched_at: float):
+    async with _maybe_lock():
+        db = await _get_conn()
+        await db.execute(
+            "INSERT INTO quota_history (binding_id, status, payload, fetched_at) VALUES (?, ?, ?, ?)",
+            (binding_id, status, json.dumps(payload, ensure_ascii=False), fetched_at),
+        )
+        await _commit(db)
+
+
+async def set_mimo_credentials(binding_id: int, service_cookie: str, pass_token: str = ""):
+    """小米 302 链自动续期回写：整组 service cookie；pass_token 非空（服务端轮换）才覆盖。"""
+    sets = ["mimo_service_cookie = ?", "updated_at = ?"]
+    vals: list = [service_cookie, time.time()]
+    if pass_token:
+        extra = await get_quota_binding(binding_id)
+        merged = {}
+        if extra:
+            try:
+                merged = json.loads(extra.get("extra") or "{}")
+            except Exception:
+                pass
+        merged["pass_token"] = pass_token
+        sets.append("extra = ?")
+        vals.append(json.dumps(merged, ensure_ascii=False))
+    vals.append(binding_id)
+    async with _maybe_lock():
+        db = await _get_conn()
+        await db.execute(f"UPDATE quota_bindings SET {', '.join(sets)} WHERE id = ?", vals)
+        await _commit(db)
+
+
+async def trim_quota_history(max_age_days: int = 30):
+    cutoff = time.time() - max_age_days * 86400
+    async with _maybe_lock():
+        db = await _get_conn()
+        await db.execute("DELETE FROM quota_history WHERE fetched_at < ?", (cutoff,))
+        await _commit(db)
+
+
+async def list_quota_with_snapshots() -> list[dict]:
+    """绑定 LEFT JOIN 最新快照（无快照时快照列为 None），供结果文件与管理列表用。"""
+    async with _maybe_lock():
+        db = await _get_conn()
+        cursor = await db.execute(
+            """SELECT b.*, s.status AS snap_status, s.error AS snap_error,
+                      s.fetched_at AS snap_fetched_at, s.payload AS snap_payload
+               FROM quota_bindings b LEFT JOIN quota_snapshots s ON s.binding_id = b.id
+               ORDER BY b.id""")
+        rows = await cursor.fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d["payload"] = json.loads(d.pop("snap_payload") or "{}")
+        except Exception:
+            d["payload"] = {}
+        out.append(d)
+    return out

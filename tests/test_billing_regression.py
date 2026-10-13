@@ -232,6 +232,26 @@ class MockHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(out_b)
 
+    def do_GET(self):
+        # T39（v2.16.10）余量监控：DeepSeek 平台查询器打 GET {base_url}/user/balance
+        # （绑定 base_url 指向本 mock，真实 DeepSeek 余额响应形状）
+        if self.path == "/user/balance":
+            out_b = json.dumps({"is_available": True, "balance_infos": [
+                {"currency": "CNY", "total_balance": "124.11", "granted_balance": "",
+                 "topped_up_balance": ""}]}, ensure_ascii=False).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(out_b)))
+            self.end_headers()
+            self.wfile.write(out_b)
+            return
+        out_b = b'{"error": {"message": "mock: no such GET endpoint"}}'
+        self.send_response(404)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(out_b)))
+        self.end_headers()
+        self.wfile.write(out_b)
+
     def log_message(self, *a):
         pass
 
@@ -246,6 +266,8 @@ DB = sqlite3.connect(os.path.join(REPO, "data", "gateway.db"))
 DB.row_factory = sqlite3.Row
 # T23：生产 search_summary.caller_key 原值（用例内临时改写，结束时/deep_clean 必须原样还原）
 CK0 = (cfg.get("search_summary") or {}).get("caller_key") or ""
+# T39：生产 quota_monitor 节点原值（用例内改写 port/circuit_enabled，结束时/deep_clean 原样还原）
+QM0 = json.loads(json.dumps(cfg.get("quota_monitor") or {}, ensure_ascii=False))
 
 RESULTS = []
 
@@ -337,6 +359,9 @@ TEST_MODELS = [
     # T30f-h（v2.16.1）openai_responses 上游协议：mock 以 Responses 格式收发
     {"id": "zzbt/echo-resp", "name": "mock-resp", "provider_id": "zzmockr", "modality": "text",
      "is_free": True, "daily_token_limit": 1000000000},
+    # T39（v2.16.10）余量熔断专用：大 daily_token_limit 防既有 token quota_exhausted 抢跑掩盖熔断原因
+    {"id": "zzbt/echo-pq", "name": "mock-echo-pq", "provider_id": "zzmock", "modality": "text",
+     "is_free": True, "daily_token_limit": 1000000000},
 ]
 TEST_IDS = [m["id"] for m in TEST_MODELS]
 
@@ -357,8 +382,13 @@ def deep_clean():
     for pn in ("zzreq", "zzonce", "zzsmart", "zznso", "zzgift", "zzrpm", "zzvalve", "zzvnl", "zzqfp", "zzqfp2",
                "zzqfws2", "zzsump", "zzbad", "zzlocal", "zzswitch", "zzhr", "zzhrctl", "zzsw", "zzsw2",
                "zzswsubl", "zzswsubn", "zzswnest", "zzswnestn", "zzcost", "zzpaid", "zzpaid2", "zzpaid3",
-               "zzresp", "zztool", "zzrespp", "zzaff", "zzaffsw", "zzaffemb"):
+               "zzresp", "zztool", "zzrespp", "zzaff", "zzaffsw", "zzaffemb", "zzpq"):
         c.get("pools", {}).pop(pn, None)
+    # T39：还原 quota_monitor 节点为生产原值（用例内改写 port/circuit_enabled，崩溃时兜底）
+    if QM0:
+        c["quota_monitor"] = json.loads(json.dumps(QM0, ensure_ascii=False))
+    else:
+        c.pop("quota_monitor", None)
     # T31：affinity 插件状态还原为未配置（default_enabled=false → 停用；生产用户后续自行开启）
     if isinstance(c.get("plugins"), dict):
         c["plugins"].pop("affinity", None)
@@ -413,6 +443,11 @@ def deep_clean():
         db_exec("DELETE FROM api_keys WHERE name IN ('zzkey','zzkey2','zzkey3','zzkey4','zzkey9','zzkey10')")
         db_exec("DELETE FROM api_key_usage WHERE key_id NOT IN (SELECT id FROM api_keys)")
         db_exec("DELETE FROM api_key_hourly_usage WHERE key_id NOT IN (SELECT id FROM api_keys)")
+    # T39（v2.16.10）余量监控：清理测试绑定（zz 前缀命名）及其快照/历史（级联一致性兜底）
+    if "quota_bindings" in _tables:
+        db_exec("DELETE FROM quota_bindings WHERE name LIKE 'zz-%'")
+        db_exec("DELETE FROM quota_snapshots WHERE binding_id NOT IN (SELECT id FROM quota_bindings)")
+        db_exec("DELETE FROM quota_history WHERE binding_id NOT IN (SELECT id FROM quota_bindings)")
 
 
 def chat(model, effort=None, stream=False, content="hi", max_tokens=2000, auth=None, timeout=60):
@@ -531,35 +566,55 @@ def main():
                              "strategy": "sequential", "switch_enabled": True}
     c["pools"]["zzaffemb"] = {"model_ids": ["zzbt/echo-emb2", "zzbt/echo-emb", "zzbt/echo-token"],
                               "strategy": "sequential"}
+    # T39（v2.16.10）余量熔断：大限额专用模型池（provider=zzmock 供熔断命中）
+    c["pools"]["zzpq"] = {"model_ids": ["zzbt/echo-pq"], "strategy": "sequential"}
+    # T39：余量刷新端口用套件专用 18655——8655 可能被同机其他网关实例占用（占用时新实例优雅降级，
+    # 套件的 8655 断言就会打到别人家实例上）；host 收敛 127.0.0.1 不对局域网开口
+    c["quota_monitor"] = {"enabled": True, "interval_minutes": 30, "circuit_enabled": True,
+                          "server_enabled": True, "host": "127.0.0.1", "port": 18655, "token": ""}
     json.dump(c, open(os.path.join(REPO, "config.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=2)
 
     # 启动隔离实例
     # 端口预清理（v2.16.5 安全化）：先 taskkill 再复扫，仍存活者=外部进程——
     # 报错中止而非误杀（教训：无差别强杀会杀掉 TV 助手类 node 代理，其守护数分钟内
     # 重占回归端口，套件请求全打到代理返回非 JSON，断言连挂——2026-10-09 实证）
-    def _port_listeners(port):
+    def _port_listeners(port, exclude_pid=None):
         out = []
         if os.name == "nt":
             _ns = subprocess.run(["netstat", "-ano"], capture_output=True).stdout.decode("utf-8", "ignore")
             for _ln in _ns.splitlines():
                 if f":{port}" in _ln and "LISTENING" in _ln.upper():
-                    out.append(_ln.split()[-1])
+                    _pid = _ln.split()[-1]
+                    if exclude_pid is not None and _pid == str(exclude_pid):
+                        continue  # 本进程自己的监听（mock 在模块导入即绑定）不进清理名单——否则自 Kill
+                    out.append(_pid)
         return out
     try:
         if os.name == "nt":
             for _pid in _port_listeners(8678):
                 subprocess.run(["taskkill", "/PID", _pid, "/F"], capture_output=True)
+            for _pid in _port_listeners(MOCK_PORT, exclude_pid=os.getpid()):
+                subprocess.run(["taskkill", "/PID", _pid, "/F"], capture_output=True)
         else:
             # Linux/macOS：fuser 按端口清理（psmisc；缺失则跳过——干净环境本就无占用）
             subprocess.run(["fuser", "-k", "8678/tcp"], capture_output=True)
+            subprocess.run(["fuser", "-k", f"{MOCK_PORT}/tcp"], capture_output=True)
     except FileNotFoundError:
         pass                            # 清理工具缺失不阻塞套件：干净环境端口本就空闲
+    time.sleep(1)
+    # 复扫 8125（8678 复扫在下方）——孤儿套件进程（上次异常退出未释放）会以 SO_REUSEADDR
+    # 与本次 mock 双绑定共存，请求被孤儿 mock 抢走 → captured_bodies 恒空（T8 一类假失败，
+    # 见 docs/v2.16.9-问题修复报告.md「回归假失败」条）；外部进程占用则报错中止不误杀
+    _left_mock = _port_listeners(MOCK_PORT, exclude_pid=os.getpid())
+    if _left_mock:
+        print(f"[suite] mock 端口 {MOCK_PORT} 仍被非本套件进程占用 PID={','.join(_left_mock)}，中止（请处理后重跑）", flush=True)
+        sys.exit(1)
     time.sleep(1)
     _left = _port_listeners(8678)
     if _left:
         print(f"[suite] 回归端口 8678 仍被非本套件进程占用 PID={','.join(_left)}，中止（不误杀外部进程，请处理占用后重跑）", flush=True)
         sys.exit(1)
-    env = dict(os.environ, MODEL_GATEWAY_PORT="8678")
+    env = dict(os.environ, MODEL_GATEWAY_PORT="8678", PYTHONFAULTHANDLER="1")
     os.makedirs(os.path.join(REPO, "logs"), exist_ok=True)  # 全新克隆无 logs/，子进程 stdout 落盘前先建
     proc = subprocess.Popen([sys.executable, "-m", "app.main"], cwd=REPO, env=env,
                             stdout=open(os.path.join(REPO, "logs", "regression_8678.log"), "ab"),
@@ -654,9 +709,15 @@ def main():
         used0 = token_used("zzbt/echo-token")
         import concurrent.futures
         def one(i):
-            if i % 2 == 0:
-                return chat("zzall", stream=True, max_tokens=500).status_code
-            return chat("zzall", max_tokens=500).status_code
+            # 单请求网络层异常（满载机器上 mock backlog 溢出的间歇 RST）返回 0 交由断言判失败，
+            # 不让异常炸出整轮套件（崩掉后 finally 半途滞留会毒化下一次运行——见 finally 注释）
+            try:
+                if i % 2 == 0:
+                    return chat("zzall", stream=True, max_tokens=500).status_code
+                return chat("zzall", max_tokens=500).status_code
+            except Exception as _e:
+                print(f"[suite] T7 并发单请求网络异常: {_e!r}", flush=True)
+                return 0
         with concurrent.futures.ThreadPoolExecutor(max_workers=10) as ex:
             codes = list(ex.map(one, range(10)))
         delta = token_used("zzbt/echo-token") - used0
@@ -2230,6 +2291,140 @@ def main():
               and "setStatTxt(el, '.stat-id', x.m.id)" in _idx
               and "setStatTxt(el, '.stat-name', x.m.name + ' · ' + x.billing)" in _idx, None)
 
+        # ===== T39（v2.16.10 自 hellonew v2.22.8 回移）：余量监控工位（绑定/端点/刷新端口结果文件/调度熔断）=====
+        _qres_file = os.path.join(REPO, "cheackresult.json")
+        r = httpx.get(f"{BASE}/admin/quota/platforms", headers=ADMIN, timeout=15)
+        _plats = r.json().get("platforms") or {}
+        check("T39a 六平台元数据在位(deepseek/openrouter余额型+智谱bars型)",
+              r.status_code == 200 and set(_plats) == {"minimax", "zhipu", "mimo", "qianfan", "deepseek", "openrouter"}
+              and _plats.get("deepseek", {}).get("kind") == "balance"
+              and _plats.get("openrouter", {}).get("kind") == "balance"
+              and _plats.get("zhipu", {}).get("kind") == "bars", (r.status_code, sorted(_plats)))
+        # custom 绑定：建→立即查询 unset「执行器未启用」（零网络零外呼）；自定义模式不走平台枚举
+        r = httpx.post(f"{BASE}/admin/quota/bindings", headers=ADMIN, json={
+            "platform": "custom", "name": "zz-quota-custom", "source": "provider", "provider_id": "zzmock",
+            "enabled": True, "script_id": "zzdemo", "params_raw": "userId:123456;passToken:V1:zzsecret;"}, timeout=15)
+        _cb = r.json()
+        _cbid = _cb.get("id")
+        check("T39b custom绑定建完即查unset执行器未启用(script_id/has_params回显)",
+              r.status_code == 200 and _cbid
+              and (_cb.get("result") or {}).get("status") == "unset"
+              and "执行器未启用" in ((_cb.get("result") or {}).get("error") or "")
+              and (_cb.get("binding") or {}).get("script_id") == "zzdemo"
+              and (_cb.get("binding") or {}).get("has_params") is True,
+              (r.status_code, (_cb.get("result") or {}).get("status")))
+        r = httpx.get(f"{BASE}/admin/quota/bindings", headers=ADMIN, timeout=15)
+        _ql = r.json()
+        _cbv = next((b for b in _ql.get("bindings", []) if b.get("id") == _cbid), {})
+        check("T39c 绑定列表三合一(snapshot.status/error+platforms+providers)",
+              r.status_code == 200 and _cbv
+              and (_cbv.get("snapshot") or {}).get("status") == "unset"
+              and "执行器未启用" in ((_cbv.get("snapshot") or {}).get("error") or "")
+              and "deepseek" in (_ql.get("platforms") or {})
+              and any(p.get("id") == "zzmock" for p in _ql.get("providers", [])),
+              (r.status_code, (_cbv.get("snapshot") or {}).get("status")))
+        # 显式提交才覆盖：params_raw 留空 = 保持原值（不 trim 不解析）；停用 enabled=0 凭证保留
+        r = httpx.put(f"{BASE}/admin/quota/bindings/{_cbid}", headers=ADMIN,
+                      json={"platform": "custom", "params_raw": ""}, timeout=15)
+        _row = DB.execute("SELECT params_raw, enabled FROM quota_bindings WHERE id=?", (_cbid,)).fetchone()
+        _kept = _row["params_raw"] if _row else ""
+        r2 = httpx.put(f"{BASE}/admin/quota/bindings/{_cbid}", headers=ADMIN,
+                       json={"platform": "custom", "enabled": False}, timeout=15)
+        _row2 = DB.execute("SELECT params_raw, enabled FROM quota_bindings WHERE id=?", (_cbid,)).fetchone()
+        check("T39d PUT留空params_raw原值保持+停用enabled=0凭证保留",
+              r.status_code == 200 and _kept == "userId:123456;passToken:V1:zzsecret;"
+              and r2.status_code == 200 and _row2["enabled"] == 0 and _row2["params_raw"] == _kept,
+              (r.status_code, _kept, r2.status_code, _row2["enabled"] if _row2 else None))
+        r = httpx.delete(f"{BASE}/admin/quota/bindings/{_cbid}", headers=ADMIN, timeout=15)
+        _left = DB.execute("SELECT COUNT(*) c FROM quota_snapshots WHERE binding_id=?", (_cbid,)).fetchone()["c"]
+        _lefth = DB.execute("SELECT COUNT(*) c FROM quota_history WHERE binding_id=?", (_cbid,)).fetchone()["c"]
+        rs = httpx.get(f"{BASE}/admin/quota/scripts", headers=ADMIN, timeout=15)
+        check("T39e DELETE级联删快照历史零残留+scripts空目录返回[]",
+              r.status_code == 200 and _left == 0 and _lefth == 0
+              and rs.status_code == 200 and rs.json().get("scripts") == [],
+              (r.status_code, _left, _lefth, rs.json().get("scripts")))
+        # manual 绑定（DeepSeek 平台、base_url 指向本 mock 的 /user/balance）：建→查 ok 余额两位小数 + Key 掩码
+        r = httpx.post(f"{BASE}/admin/quota/bindings", headers=ADMIN, json={
+            "platform": "deepseek", "name": "zz-quota-ds", "source": "manual",
+            "api_key": "sk-zztest-secret-xyz", "base_url": f"http://127.0.0.1:{MOCK_PORT}"}, timeout=15)
+        _ds = r.json()
+        _dsid = _ds.get("id")
+        check("T39f deepseek manual建→查ok余额124.11+api_key掩码无明文",
+              r.status_code == 200 and (_ds.get("result") or {}).get("status") == "ok"
+              and (_ds.get("result") or {}).get("balance") == 124.11
+              and (_ds.get("binding") or {}).get("api_key_masked") == "sk-z…-xyz"
+              and "sk-zztest-secret-xyz" not in json.dumps(_ds, ensure_ascii=False),
+              (r.status_code, (_ds.get("result") or {}).get("balance"), (_ds.get("binding") or {}).get("api_key_masked")))
+        # cheackresult.json 落仓库根且绝不含密钥；独立刷新端口 health/result/单条 refresh（token 未设不鉴权）
+        _qtxt = open(_qres_file, encoding="utf-8").read() if os.path.exists(_qres_file) else ""
+        rh = httpx.get("http://127.0.0.1:18655/health", timeout=10)
+        rr = httpx.get("http://127.0.0.1:18655/result", timeout=10)
+        rp = httpx.post(f"http://127.0.0.1:18655/refresh?binding_id={_dsid}", timeout=30)
+        _qdoc = json.loads(_qtxt) if _qtxt else {}
+        _rrdoc = rr.json() if rr.status_code == 200 else {}
+        _rpdoc = rp.json() if rp.status_code == 200 else {}
+        _rpb = next((b for b in _rpdoc.get("bindings", []) if b.get("id") == _dsid), {})
+        check("T39g cheackresult无密钥+刷新端口三端点(health/result与文件一致/refresh单条触发)",
+              "sk-zztest-secret-xyz" not in _qtxt and "V1:zzsecret" not in _qtxt
+              and rh.status_code == 200 and rh.json().get("ok") is True
+              and rr.status_code == 200 and _rrdoc.get("generated_at") == _qdoc.get("generated_at")
+              and rp.status_code == 200 and (_rpdoc.get("count") or 0) >= 1
+              and _rpb.get("balance") == 124.11,
+              (rh.status_code, rr.status_code, rp.status_code, "secret" in _qtxt,
+               _qdoc.get("generated_at"), _rrdoc.get("generated_at"),
+               _rpb.get("status"), _rpb.get("error"), _rpb.get("balance")))
+        # 熔断：直写快照（bars 任一条 used_pct=100 且 reset_at 未到）→ 专用大限额池请求 503 + 决策原因码
+        _now = time.time()
+        db_exec("""INSERT INTO quota_bindings (platform, name, enabled, source, provider_id, created_at, updated_at)
+                   VALUES ('custom', 'zz-quota-circ', 1, 'provider', 'zzmock', ?, ?)""", (_now, _now))
+        circ_bid = DB.execute("SELECT id FROM quota_bindings WHERE name='zz-quota-circ'").fetchone()["id"]
+        _fuse_payload = json.dumps({"bars": [{"label": "测试窗口", "total": 100, "used": 100,
+                                              "used_pct": 100.0, "remaining_pct": 0.0,
+                                              "detail": "T39 熔断夹具", "reset_at": _now + 3600}]}, ensure_ascii=False)
+        db_exec("""INSERT OR REPLACE INTO quota_snapshots (binding_id, status, plan, payload, error, fetched_at)
+                   VALUES (?, 'ok', '', ?, '', ?)""", (circ_bid, _fuse_payload, _now))
+        httpx.post(f"{BASE}/admin/reload", headers=ADMIN, timeout=30)
+        time.sleep(0.5)
+        r = chat("zzpq")
+        _steprow = DB.execute("SELECT steps FROM decision_log WHERE pool_name='zzpq' ORDER BY id DESC LIMIT 1").fetchone()
+        check("T39h 供应商余量熔断503(bars任一条100%且reset_at未到→provider_quota_exhausted)",
+              r.status_code == 503 and _steprow is not None
+              and "provider_quota_exhausted" in (_steprow["steps"] or ""),
+              (r.status_code, "provider_quota_exhausted" in (_steprow["steps"] or "") if _steprow else None))
+        # error 快照不熔断（无证据不误杀）
+        db_exec("UPDATE quota_snapshots SET status='error', payload='{}', error='mock' WHERE binding_id=?", (circ_bid,))
+        httpx.post(f"{BASE}/admin/reload", headers=ADMIN, timeout=30)
+        time.sleep(0.5)
+        r = chat("zzpq")
+        check("T39i error快照不熔断(无证据不误杀,恢复200)", r.status_code == 200, r.status_code)
+        # reset_at 到期自动恢复
+        _expired = json.dumps({"bars": [{"label": "测试窗口", "total": 100, "used": 100, "used_pct": 100.0,
+                                         "remaining_pct": 0.0, "detail": "", "reset_at": _now - 1}]}, ensure_ascii=False)
+        db_exec("UPDATE quota_snapshots SET status='ok', payload=? WHERE binding_id=?", (_expired, circ_bid))
+        httpx.post(f"{BASE}/admin/reload", headers=ADMIN, timeout=30)
+        time.sleep(0.5)
+        r = chat("zzpq")
+        check("T39j reset_at到期自动恢复(熔断解除200)", r.status_code == 200, r.status_code)
+        # circuit_enabled=false 完全旁路（熔断快照在位仍 200），测后还原 true
+        db_exec("UPDATE quota_snapshots SET payload=? WHERE binding_id=?", (_fuse_payload, circ_bid))
+        httpx.put(f"{BASE}/admin/quota/settings", headers=ADMIN, json={"circuit_enabled": False}, timeout=15)
+        httpx.post(f"{BASE}/admin/reload", headers=ADMIN, timeout=30)
+        time.sleep(0.5)
+        r = chat("zzpq")
+        check("T39k circuit_enabled=false完全旁路(熔断快照在位仍200,测后还原true)", r.status_code == 200, r.status_code)
+        httpx.put(f"{BASE}/admin/quota/settings", headers=ADMIN, json={"circuit_enabled": True}, timeout=15)
+        # 双面板前端：无页签 + 挂载点位置分立（hfadmin 徽章后 / index 名字+ID 后，均不在按钮行）+ 弹窗配置区与四接线
+        check("T39l 双面板前端在位(无页签/pq-inline位置分立/pqq-section/pqFill·Save·Sync·decorate接线/原因码chip)",
+              "tab-quotas" not in _idx and "tab-quotas" not in _hf
+              and '<div class="card-title"><span class="drag-handle">⠿</span> ${esc(p.name)} ${provBadge(p.protocol)}<span class="pq-inline" data-pq-inline="${esc(p.id)}"></span></div>' in _hf
+              and '<div class="card-title"><span class="drag-handle" title="拖拽排序">⠿</span> 🔌 ${esc(p.name)}<span class="provider-id-tag">${esc(p.id)}</span><span class="pq-inline" data-pq-inline="${esc(p.id)}"></span></div>' in _idx
+              and all(s in _idx for s in ("pqq-section", "pqFillEditSection", "pqSaveFromEdit", "pqDeleteFromEdit",
+                                          "decorateProvQuota", "pqSyncBindings", "provider_quota_exhausted",
+                                          "余量监控已保存并查询", "余量监控已停用"))
+              and all(s in _hf for s in ("pqq-section", "pqFillEditSection", "pqSaveFromEdit", "pqDeleteFromEdit",
+                                         "decorateProvQuota", "pqSyncBindings", "provider_quota_exhausted",
+                                         "余量监控已保存并查询", "余量监控已停用")), None)
+
     finally:
         try:
             deep_clean()
@@ -2240,7 +2435,14 @@ def main():
             proc.wait(timeout=10)
         except Exception:
             pass
-        srv.shutdown()
+        print(f"[suite] gateway proc returncode={proc.poll()}", flush=True)
+        try:
+            # shutdown() 放后台 daemon 线程执行（它要等 serve_forever 循环退出，可能等在途请求），
+            # 主流程随即 server_close() 关监听套接字——既不滞留进程，也不留半关套接字的线程噪音。
+            threading.Thread(target=srv.shutdown, daemon=True).start()
+            srv.server_close()
+        except Exception:
+            pass
 
     fails = [n for n, okk in RESULTS if not okk]
     print(f"\n===== 回归套件 {len(RESULTS) - len(fails)}/{len(RESULTS)} 通过 =====", flush=True)

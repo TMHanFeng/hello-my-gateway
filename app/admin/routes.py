@@ -1707,3 +1707,301 @@ async def delete_user(user_id: int, _=Depends(verify_admin)):
     from app.core import database as db
     await db.delete_user(user_id)
     return {"ok": True}
+
+
+# ── 余量监控工位（六平台余量/余额查询：MiniMax/智谱/小米MiMo/百度千帆/DeepSeek/OpenRouter）──
+# 绑定 = 平台类型(5选1) × 凭证来源(从供应商选 / 手动填) + 平台专属人工字段（千帆 AK/SK、
+# 小米 userId/passToken）。查询规格与刷新编排见 app/core/quota_providers.py；每次刷新后
+# 全量状态覆盖写入仓库根 cheackresult.json，独立端口服务见 app/core/quota_server.py。
+
+import json  # noqa: E402  （本区块 extra/payload 均为 JSON 串存储）
+
+_QUOTA_SECRET_KEYS = {"api_key", "pass_token", "secret_key"}
+_QUOTA_EXTRA_KEYS = {"cookie", "user_id", "pass_token", "access_key", "secret_key"}
+
+
+def _quota_mask(v: str) -> str:
+    """密钥脱敏：前 4…后 4；短值显示「已设置」。空串返回空。"""
+    v = v or ""
+    if not v:
+        return ""
+    if len(v) <= 12:
+        return "已设置"
+    return f"{v[:4]}…{v[-4:]}"
+
+
+def _quota_binding_view(row: dict) -> dict:
+    """绑定行 → 面板视图：密钥类字段脱敏（编辑弹窗「留空保持不变」），extra 解析回 dict。"""
+    try:
+        extra = json.loads(row.get("extra") or "{}")
+    except Exception:
+        extra = {}
+    view_extra = {}
+    for k, v in extra.items():
+        view_extra[k] = _quota_mask(v) if k in _QUOTA_SECRET_KEYS and v else v
+    return {
+        "id": row["id"], "platform": row["platform"], "name": row["name"],
+        "enabled": bool(row["enabled"]), "source": row["source"],
+        "provider_id": row["provider_id"] or "",
+        "api_key_masked": _quota_mask(row.get("api_key")) if row.get("source") == "manual" else "",
+        "base_url": row["base_url"] or "", "extra": view_extra,
+        "has_api_key": bool(row.get("api_key")),
+        # 自定义脚本绑定：script_id 可回显；params_raw 含凭证不明文回传（留空=保持原值）
+        "script_id": row.get("script_id") or "",
+        "has_params": bool(row.get("params_raw")),
+        "mimo_service_cookie_set": bool(row.get("mimo_service_cookie")),
+        "created_at": row["created_at"], "updated_at": row["updated_at"],
+    }
+
+
+def _quota_validate(body: dict, config: dict, *, creating: bool, old: dict | None = None) -> dict:
+    """创建/更新的校验与规整。返回允许写库的字段 dict（extra 已 JSON 串化）。
+
+    更新为「显式提交才覆盖」：source/provider_id/api_key 未提交时沿用旧行参与校验，
+    api_key/extra 空值即保持原值（密码框「留空保持不变」）。"""
+    from app.core.quota_providers import PLATFORMS
+    out: dict = {}
+    platform = str(body.get("platform") or (old or {}).get("platform") or "").strip()
+    # 自定义脚本模式：不走内置平台枚举与 requires 校验——
+    # script_id 必选，params_raw 原样落库不解析不过滤，由脚本自决取舍（执行器暂不实现）。
+    if platform == "custom":
+        out["platform"] = platform
+        name = str(body.get("name") or "").strip()
+        if creating and not name:
+            raise HTTPException(status_code=400, detail="缺少绑定名称")
+        if name:
+            out["name"] = name
+        source = str(body.get("source") or (old or {}).get("source") or "provider").strip()
+        if source not in ("provider", "manual"):
+            raise HTTPException(status_code=400, detail="source 必须为 provider 或 manual")
+        if source != (old or {}).get("source", source) or "source" in body:
+            out["source"] = source
+        if "enabled" in body:
+            out["enabled"] = 1 if body.get("enabled") else 0
+        if "base_url" in body:
+            out["base_url"] = str(body.get("base_url") or "").strip()
+        script_id = str(body.get("script_id") or (old or {}).get("script_id") or "").strip()
+        if not script_id:
+            raise HTTPException(status_code=400, detail="自定义模式必须选择脚本")
+        if script_id != (old or {}).get("script_id") or "script_id" in body:
+            out["script_id"] = script_id
+        if source == "provider":
+            pid = str(body.get("provider_id") or (old or {}).get("provider_id") or "").strip()
+            if not pid:
+                raise HTTPException(status_code=400, detail="缺少 provider_id（请选择供应商）")
+            if not any(p.get("id") == pid for p in config.get("providers", [])):
+                raise HTTPException(status_code=404, detail=f"供应商 '{pid}' 不存在")
+            if pid != (old or {}).get("provider_id") or "provider_id" in body:
+                out["provider_id"] = pid
+        # params_raw 原样落库：仅显式提交且非空才覆盖（留空 = 保持原值，与密钥框同惯例）
+        raw = body.get("params_raw")
+        if raw is not None and str(raw).strip() and str(raw) != (old or {}).get("params_raw"):
+            out["params_raw"] = str(raw)
+        return out
+    if platform not in PLATFORMS:
+        raise HTTPException(status_code=400,
+                            detail=f"非法 platform '{platform}'：仅支持 {'/'.join(PLATFORMS)}")
+    out["platform"] = platform
+    meta = PLATFORMS[platform]
+    name = str(body.get("name") or "").strip()
+    if creating and not name:
+        raise HTTPException(status_code=400, detail="缺少绑定名称")
+    if name:
+        out["name"] = name
+    source = str(body.get("source") or (old or {}).get("source") or "provider").strip()
+    if source not in ("provider", "manual"):
+        raise HTTPException(status_code=400, detail="source 必须为 provider 或 manual")
+    if source != (old or {}).get("source", source) or "source" in body:
+        out["source"] = source
+    if "enabled" in body:
+        out["enabled"] = 1 if body.get("enabled") else 0
+    if "base_url" in body:
+        out["base_url"] = str(body.get("base_url") or "").strip()
+    # api_key：手动来源必填（千帆例外——余额查询用 AK/SK，api_key 仅存档）；供应商来源忽略该字段
+    api_key = str(body.get("api_key") or "").strip() or ((old or {}).get("api_key") or "")
+    if source == "provider":
+        pid = str(body.get("provider_id") or (old or {}).get("provider_id") or "").strip()
+        if not pid:
+            raise HTTPException(status_code=400, detail="缺少 provider_id（请选择供应商）")
+        if not any(p.get("id") == pid for p in config.get("providers", [])):
+            raise HTTPException(status_code=404, detail=f"供应商 '{pid}' 不存在")
+        if pid != (old or {}).get("provider_id") or "provider_id" in body:
+            out["provider_id"] = pid
+    elif not api_key:
+        if creating and platform != "qianfan":
+            raise HTTPException(status_code=400, detail="手动来源必须填写 api_key")
+        if not creating and platform != "qianfan":
+            raise HTTPException(status_code=400, detail="手动来源 api_key 为空（原绑定也没有 Key），请填写")
+    elif api_key != (old or {}).get("api_key"):
+        out["api_key"] = str(body.get("api_key") or "").strip()
+    # extra：平台专属人工字段（只接受白名单键；与旧行合并后按 requires 校验必填）
+    extra_in = body.get("extra") or {}
+    if not isinstance(extra_in, dict):
+        raise HTTPException(status_code=400, detail="extra 必须为对象")
+    old_extra = {}
+    try:
+        old_extra = json.loads((old or {}).get("extra") or "{}")
+    except Exception:
+        pass
+    extra = {k: str(v).strip() for k, v in extra_in.items()
+             if k in _QUOTA_EXTRA_KEYS and str(v).strip()}
+    merged = {**old_extra, **extra}
+    missing = [k for k in meta["requires"] if not merged.get(k)]
+    if missing:
+        raise HTTPException(status_code=400,
+                            detail=f"平台 {meta['label']} 必须填写: {'/'.join(missing)}（{meta['note']}）")
+    if extra:
+        out["extra"] = json.dumps(merged, ensure_ascii=False)
+    return out
+
+
+@router.get("/quota/platforms")
+async def quota_platforms(_=Depends(verify_admin)):
+    from app.core.quota_providers import PLATFORMS
+    return {"platforms": PLATFORMS}
+
+
+@router.get("/quota/scripts")
+async def quota_scripts(_=Depends(verify_admin)):
+    """扫描 scripts/quota_providers/*.py 供自定义模式脚本下拉（文件名即 script_id）。
+    目录不存在或为空返回空列表——自定义脚本机制落地后由脚本自动出现在下拉里。"""
+    scripts_dir = REPO_DIR / "scripts" / "quota_providers"
+    items = []
+    if scripts_dir.is_dir():
+        for f in sorted(scripts_dir.glob("*.py")):
+            if f.name.startswith("_"):
+                continue
+            items.append({"id": f.stem, "file": f.name})
+    return {"scripts": items}
+
+
+@router.get("/quota/bindings")
+async def quota_bindings_list(_=Depends(verify_admin)):
+    from app.core.quota_providers import PLATFORMS
+    config = load_config()
+    provs = {p["id"]: p for p in config.get("providers", [])}
+    out = []
+    for row in await db.list_quota_with_snapshots():
+        view = _quota_binding_view(row)
+        prov = provs.get(view["provider_id"]) or {}
+        view["provider_name"] = prov.get("name", "")
+        result = row.get("payload") or {}
+        view["snapshot"] = {
+            "status": row.get("snap_status") or "pending",
+            "plan": result.get("plan") or "",
+            "bars": result.get("bars"),
+            "balance": result.get("balance"), "symbol": result.get("symbol") or "",
+            "sub": result.get("sub") or "", "available": result.get("available"),
+            "error": row.get("snap_error") or "",
+            "fetched_at": int(row.get("snap_fetched_at") or 0),
+        }
+        out.append(view)
+    return {"bindings": out, "platforms": PLATFORMS,
+            "providers": [{"id": p["id"], "name": p.get("name", ""), "protocol": p.get("protocol", "")}
+                          for p in config.get("providers", [])]}
+
+
+@router.post("/quota/bindings")
+async def quota_binding_create(request: Request, _=Depends(verify_admin)):
+    from app.core.quota_providers import refresh_binding, write_result_file
+    body = await request.json()
+    fields = _quota_validate(body, load_config(), creating=True)
+    bid = await db.create_quota_binding(fields)
+    row = await db.get_quota_binding(bid)
+    result = await refresh_binding(row)  # 建完即查，所见即所得
+    await write_result_file()
+    return {"ok": True, "id": bid, "binding": _quota_binding_view(row), "result": result}
+
+
+@router.put("/quota/bindings/{binding_id}")
+async def quota_binding_update(binding_id: int, request: Request, _=Depends(verify_admin)):
+    from app.core.quota_providers import refresh_binding, write_result_file
+    row = await db.get_quota_binding(binding_id)
+    if not row:
+        raise HTTPException(status_code=404, detail=f"绑定 #{binding_id} 不存在")
+    body = await request.json()
+    fields = _quota_validate(body, load_config(), creating=False, old=row)
+    await db.update_quota_binding(binding_id, fields)
+    row = await db.get_quota_binding(binding_id)
+    result = await refresh_binding(row)
+    await write_result_file()
+    return {"ok": True, "binding": _quota_binding_view(row), "result": result}
+
+
+@router.delete("/quota/bindings/{binding_id}")
+async def quota_binding_delete(binding_id: int, _=Depends(verify_admin)):
+    from app.core.quota_providers import write_result_file
+    if not await db.delete_quota_binding(binding_id):
+        raise HTTPException(status_code=404, detail=f"绑定 #{binding_id} 不存在")
+    await write_result_file()
+    return {"ok": True}
+
+
+@router.post("/quota/bindings/{binding_id}/refresh")
+async def quota_binding_refresh(binding_id: int, _=Depends(verify_admin)):
+    from app.core.quota_providers import refresh_binding, write_result_file
+    row = await db.get_quota_binding(binding_id)
+    if not row:
+        raise HTTPException(status_code=404, detail=f"绑定 #{binding_id} 不存在")
+    result = await refresh_binding(row)
+    await write_result_file()
+    return {"ok": True, "result": result}
+
+
+@router.post("/quota/refresh")
+async def quota_refresh_all(async_mode: str = "1", _=Depends(verify_admin)):
+    """全部刷新：默认后台执行受理即返回（面板轮询取结果）；async_mode=0 时等待完成。"""
+    from app.core.quota_providers import refresh_all
+    if async_mode in ("0", "false"):
+        results = await refresh_all(enabled_only=True)
+        return {"ok": True, "results": results}
+    asyncio.create_task(_quota_refresh_bg())
+    return {"ok": True, "started": True}
+
+
+async def _quota_refresh_bg():
+    try:
+        from app.core.quota_providers import refresh_all
+        await refresh_all(enabled_only=True)
+    except Exception:
+        logging.getLogger(__name__).exception("[余量] 后台全量刷新失败")
+
+
+def _quota_settings_view() -> dict:
+    """quota_monitor 节点 → 面板设置视图（token 永不明文回传，只给 token_set）。"""
+    cur = dict(load_config().get("quota_monitor") or {})
+    try:
+        port = int(cur.get("port", 8655) or 8655)
+    except (TypeError, ValueError):
+        port = 8655
+    try:
+        interval = int(cur.get("interval_minutes", 30) or 30)
+    except (TypeError, ValueError):
+        interval = 30
+    return {"enabled": bool(cur.get("enabled", True)),
+            "interval_minutes": interval,
+            "circuit_enabled": bool(cur.get("circuit_enabled", True)),
+            "server_enabled": bool(cur.get("server_enabled", True)),
+            "host": cur.get("host") or "0.0.0.0",
+            "port": port, "token_set": bool(cur.get("token") or "")}
+
+
+@router.get("/quota/settings")
+async def quota_settings_get(_=Depends(verify_admin)):
+    return {"settings": _quota_settings_view()}
+
+
+@router.put("/quota/settings")
+async def quota_settings_put(request: Request, _=Depends(verify_admin)):
+    body = await request.json()
+    config = load_config()
+    cur = dict(config.get("quota_monitor") or {})
+    for k in ("enabled", "interval_minutes", "circuit_enabled", "server_enabled", "host", "port", "token"):
+        if k in body:
+            cur[k] = body[k]
+    config["quota_monitor"] = cur
+    save_config(config)
+    restart_scheduler()  # 轮询开关/间隔即时生效
+    server_changed = any(k in body for k in ("server_enabled", "host", "port", "token"))
+    return {"ok": True, "settings": _quota_settings_view(),
+            "note": "刷新端口的地址/开关/Token 修改需重启网关生效" if server_changed else ""}

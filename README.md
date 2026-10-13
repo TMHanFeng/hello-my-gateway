@@ -90,7 +90,7 @@ data/ 运行时数据（gateway.db、探测缓存、dev pid），与代码隔离
 
 | 🧠 统一思考控制 | 🧪 计费回归安全网 | 📐 智能估算超时 |
 |:---|:---|:---|
-| `reasoning_effort` 六档 → 按模型 `reasoning_map` 换算上游思考参数；思考内容统一回传 `reasoning_content` / `thinking` | 258 断言计费回归套件（`test_billing_regression.py`）：流式/非流式/一次性/RPM 触顶/安全阀/并发入账零丢失，任何改动先跑套件再上线 | `smart_estimate` 模型按 token 量动态计算超时（吞吐 EMA 校准），样本不足自动回退固定值 |
+| `reasoning_effort` 六档 → 按模型 `reasoning_map` 换算上游思考参数；思考内容统一回传 `reasoning_content` / `thinking` | 270 断言计费回归套件（`test_billing_regression.py`）：流式/非流式/一次性/RPM 触顶/安全阀/并发入账零丢失，任何改动先跑套件再上线 | `smart_estimate` 模型按 token 量动态计算超时（吞吐 EMA 校准），样本不足自动回退固定值 |
 
 | 📡 Embedding / Rerank | 🔑 用户密钥管理 | 📄 JSON 输出路由 |
 |:---|:---|:---|
@@ -171,7 +171,7 @@ python -m app.main
 >
 > 💡 **Ubuntu / Linux**：`python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt && python3 -m app.main`，或直接 `./start_gateway.sh`（自动选 venv/系统解释器；停止 `./stop_gateway.sh`）。代码本身跨平台：运行时目录（data/ logs/ backup/）首次启动自动创建，路径处理与日志滚动均适配 POSIX 文件系统。回归套件同样可在 Linux 运行：`python tests/test_billing_regression.py`。
 >
-> 🧪 **改动计费相关代码后**：`python tests/test_billing_regression.py` 运行 258 断言计费回归套件（自动在 8678 起隔离实例 + mock 上游，不触碰生产端口），全绿再上线。
+> 🧪 **改动计费相关代码后**：`python tests/test_billing_regression.py` 运行 270 断言计费回归套件（自动在 8678 起隔离实例 + mock 上游，不触碰生产端口），全绿再上线。
 
 ---
 
@@ -219,7 +219,7 @@ hello-my-gateway/
 │   ├── index.html                # 传统管理后台（/admin）
 │   └── hfadmin.html              # 科技感管理面板（/hfadmin）
 ├── tests/
-│   └── test_billing_regression.py # 计费回归套件（258 断言，隔离实例 + mock 上游）
+│   └── test_billing_regression.py # 计费回归套件（270 断言，隔离实例 + mock 上游）
 ├── start_gateway.cmd             # Windows 启动入口（自动选解释器，幂等）
 ├── stop_gateway.cmd              # 停止入口（身份核验，只停本仓库网关）
 ├── start_gateway.sh              # Linux/macOS 启动入口（语义同 .cmd：选解释器 + 已运行自检）
@@ -479,6 +479,7 @@ Anthropic 适配器自动完成：
 | RPM 触顶 · 60/60 RPM | RPM 触发上限 |
 | TPM 触顶 · 120,000/100,000 TPM | TPM 触发上限 |
 | 安全阀触顶 · 已用 95,000 + 预估 5,020 ≥ k上限 80,000（k=80%） | 使用量安全阀：本请求预估消耗后将越过 k×最大量限制，跳过该模型 |
+| **余量熔断 · 剩 3,600s 后重置**（或 · 「5小时窗口」已用尽） | 供应商余量工位查得该供应商耗尽（套餐任一条 100% 且未到 reset_at，或余额≤0）——整供应商 fail-close 跳过，到期或余量回升自动恢复（`provider_quota_exhausted`，v2.16.10） |
 | 冷却中 · 剩 45s | 上游刚报错，临时跳过 |
 | 超上下文窗口 · 请求估算 150,000 tok，上限 128,000 | 请求过长 |
 | 不支持图片 · 模型为 text，请求含图 | 纯文本模型遇到图片请求 |
@@ -498,6 +499,7 @@ Anthropic 适配器自动完成：
 | `quota_exhausted` (rolling_5h) | `{used, limit, window_remaining_sec}` |
 | `rpm_limited` / `tpm_limited` | `{current, limit}` |
 | `valve_exceeded` | `{used, estimated, limit, valve_pct, effective_limit, reason_detail}`（安全阀：已用+预估 ≥ k×上限） |
+| `provider_quota_exhausted` | `{reset_at, remaining_sec, binding, bar, reason_detail}`（余量熔断：reset_at=null 表示无固定时刻，轮询回升即恢复） |
 | `cooldown` | `{remaining_sec}` |
 | `context_exceeded` | `{estimated, window}` |
 | `no_vision` | `{modality}` |
@@ -644,6 +646,7 @@ SQLite（`gateway.db`）持久化以下表：
 
 ### 最新
 
+**`v2.16.10`** — **🔋 余量监控工位（自 hellonew v2.22.8 移植工作单整卡移植）**：六平台套餐/余额查询（MiniMax / 智谱 GLM / 小米 MiMo / 百度千帆 / DeepSeek / OpenRouter）。①**用户可见仅三处**（无页签、无卡片监控区块——中间批次 UI 已被源仓推翻，移植按 v2.22.8 最终态）：供应商卡片头部内联余量（bars 型逐条「5小时窗口 1,100/28,000」千分位+三色分级+悬停倒计时 / 余额型「剩余余额：¥124.11」两位小数 / error·unset·pending 弱提示 / 未绑定完全空白；**挂载点双面板位置分立**——hfadmin 白天版在协议徽章右侧、index 暗黑版在卡片标题供应商名+ID 右侧（徽章在按钮行，跟徽章放会带离名字）；供应商编辑弹窗「🔋 套餐/余额监控」配置区（主开关+获取方式自动/自定义+平台条件字段+全局轮询间隔，勾选随「保存」建/更绑定并立即查询，取消勾选随保存停用凭证保留，🗑 解绑删历史，新增供应商整块隐藏）；调度熔断（绑定供应商耗尽 → 该供应商整体 503 `provider_quota_exhausted` → reset_at 到期或余额回升自动恢复；error/unset 快照不熔断）。②**后端**：三张 SQLite 表（quota_bindings/ snapshots/history，存量库幂等升级补 script_id/params_raw 列）+ 11 个读写函数；`app/core/quota_providers.py`（841 行：PLATFORMS 六平台元数据驱动前端下拉零改动、`_epoch()` 兼容毫秒/秒/剩余时长、千帆 BCE v1 HMAC 签名、小米 302 登录链自动续期回写、智谱 401/403 Bearer 重试、provider 来源实时取 config 不做快照、refresh_binding 永不抛异常、`provider_circuit` 零状态表惰性重推）与 `app/core/quota_server.py`（174 行：8655 独立端口 /health·/refresh·/result，token 可选鉴权，**socket 预探测——端口被占优雅降级只记日志绝不拖崩 lifespan**）；九个 `/admin/quota/*` 管理端点（密钥脱敏前4…后4、更新显式提交才覆盖/空值保持原值、params_raw 原样落库不解析）；30 分钟轮询 quota_poll（照 db_maintenance 口径绝不阻塞调度，改间隔走 PUT settings 即时生效）；**每次刷新全量落盘仓库根 `cheackresult.json`（绝不含密钥）**。③**修源仓带入 bug 一处**：`build_result_document` 对 `list_quota_with_snapshots` 已解析成 dict 的 payload 二次 `json.loads`——TypeError 被吞成空对象，cheackresult.json 对外的 bars/balance/plan 恒 null（仅 status/error 幸存；即源仓工作单坑实录 #1 的镜像位），本仓改为直接用 dict。④**配置**：`quota_monitor` 节点七键全默认值（enabled/interval_minutes/circuit_enabled/server_enabled/host/port 8655/token，config.json 已显式落一份；改端口需重启网关，其余 PUT settings 即时生效）；根目录新增「开通余量刷新端口.bat」（netsh 放行 TCP 8655，管理员运行）。⑤回归 **258→270** 全绿（T39a-l：六平台元数据/custom 绑定即查 unset 执行器未启用/列表三合一/PUT 留空保持+停用凭证保留/DELETE 级联零残留+scripts 空目录/deepseek manual 建查 ok 余额 124.11+Key 掩码/结果文件无密钥+刷新端口三端点/熔断 503+决策原因码/error 不熔断/reset_at 到期恢复/circuit_enabled=false 旁路/双面板前端位置分立+四接线）；套件配套加固：mock 端口 8125 预清理（排除自身 PID）+ 刷新端口套件专用 18655（8655 可能被同机其他网关占用）+ finally server_close 防 shutdown 悬挂滞留毒化下轮 + T7 并发单请求网络异常降级为断言失败 + 网关 returncode 打点；双面板内联 JS node 语法检查过；8660 实测见提交说明。生效说明：**需重启网关**（新表/新端口/熔断挂点）；面板刷新即见。
 **`v2.16.9`** — **用户用量历史全量记录 + 统计首开提速 + 按模型池嵌套池改版 + 调用记录筛选守卫（四项体验修复批次）**：①**用户 Key 用量历史恒记**（问题1）：`charge_key_usage` 原对管理员 Key 与未限额 Key 直接早退——`api_key_hourly_usage` 小时桶恒空，面板「用量历史」弹窗除管理员伪 Key#0（decision_log 口径）外全空；改为限额计量仍按原语义跳过、**小时桶记录对所有带 Key 的调用恒写**，`main.py` 四计费点（chat 流式/非流式 + embeddings + rerank）`is_user_key` 判定放宽为带 Key 即入账（管理员类型 Key 同样落账，服务器密钥无 key 记录仍走 decision_log 口径），`search_summary` 专门 Key 挂账注释同步。②**统计首开提速**（问题2）：`loadStats` 原 `await /stats` 后才并行拉视图元数据（providers/pools/models）——串行两轮往返，慢链路（远程/手机）首开白等一倍 RTT；改为 `/stats` 与元数据**同拍并行发起**（TTL 缓存照旧），双面板同构。③**按模型池视图嵌套池改版**（问题3）：原「取第一个收录该模型的全局池」导致嵌套池/多池归属的模型全页只显示一次；改为模型在其直接所属的**每个**全局池各出现一次（卡片键 `模型id@池名`，防增量刷新同卡被多组争抢）；父池组内的子池不再展开模型，以一张**子池计费卡片**代替（`stat-subcard`：虚线边框/紫色侧条/「子池」徽章/无进度条，聚合整棵子树去重后的今日 token，右下「含 N 个模型」，树聚合带防环），专属池仍不参与，未入池模型照旧落「未入池」组。④**调用记录筛选序号守卫**（问题4）：`loadDecisions` 原无并发守卫——切池筛选与 5s 轮询并发时旧筛选的晚到响应覆盖当前视图（具体池视图显示旧数据、"全部池比具体池更新得快"的观感）；加 `_logLoadSeq` 序号守卫（与 `loadStats` `_statLoadSeq` 同款），旧响应直接丢弃。⑤**顺修 index 统计卡片增量字段残留**：v2.16.6 移植引入的 `statUpdateCard` 用 `x.id/x.name`（stats 条目无此字段）两处漏网（v2.16.8 T37c 只修了卡片键），经典面板每 5s 增量刷新把模型名/ID 写成 "undefined"，修正为 `x.m.id/x.m.name`。⑥回归 **251→258** 全绿（T38a-h：无限额Key小时桶恒写/管理员类型Key入账/最近调用不回归/首开并行拉取接线/按池嵌套改版接线/筛选守卫接线/增量字段修正）；README 断言计数三处 248→258（v2.16.7/v2.16.8 两批漏同步）；双面板内联 JS node 语法检查过；8660 重启实测四项：hu（无限额）Key 真实调用后用量历史 18 tok + 调用记录可见、default 组四张子池卡（`pool:netmodel` 聚合 216 tok 正确）、`GLMAPI/glm-5.3-flash` 四处出现且增量刷新零重复、auto 池筛选视图轮询带出新记录、付费视图四请求 t=0 并行发出。生效说明：①需重启网关（keyauth/main 计费路径）；②③④⑤纯面板改动刷新即见。
 
 **`v2.16.8`** — **分组管理入口改版 + 统计外层系统组嵌套（自 hellonew v2.22.3/v2.22.4 回移，纯面板零后端）**：①**设置弹窗交互重排**（双面板同构）：分组收纳每行开关右缘「⚙️ 管理」按钮——点击展开该维度自己的管理盒（模型管理/模型池互斥单开、按钮高亮、开关勾选态不受影响，label 内嵌 button 经 preventDefault 不误触开关），盒内 ↑↓ 排序（首末行禁用）、点名称重命名（复用 `grpRename`）、**🗑 删除分组**（confirm 确认，仅拆组——成员卡片回「未分组」，模型/池本身不动）；收纳开关与分组数据独立（关开关仍可管理删组）；v2.16.7 的弹窗底部合并管理区移除。②**统计页按供应商/按模型池嵌套「分组收纳」系统组**：外层组序=`ui_groups` 数组序（与设置弹窗 ↑↓ 调序联动）、组头=组名+模型数+今日 token 合计、折叠按维度持久化（`gw_statgrp.ocollapsed`）、未归组/auto/兜底/未入池/独立模型落「未分组」垫底、空组不渲染、无分组老用户零感知（回退平铺）；**外层随收纳开关联动**：对应维度开关关闭即不套系统组壳（回内层平铺）、重开原样恢复，两维度互不影响；内层 ⠿ 拖拽限同外层组内调序（dragover 同父守卫，跨外层=改收纳归属去分组页操作）。③**顺修 index 面板统计卡片增量键 bug**：v2.16.6 移植四视图时 index 的 `statCardEnsure/statRenderFlat/statRenderGrouped` 用 `x.id`（stats 条目无此字段），经典面板统计页每 5s 增量刷新退化为整卡销毁重建闪屏，修正为 `x.m.id`（hfadmin 一直正确）。④移植与验证：533 行补丁双面板零冲突整贴（v2.16.7 遗留的表单文案行本次随补丁归位）；回归 **248→251** 全绿（T37a-c：⚙️管理入口在位/outerOn 门+嵌套元素在位/index 增量键修正）；双面板内联 JS node 语法检查过；8660 浏览器实测 cog 互斥展开/开关不误触/删组/关开关外层消失与重开恢复。生效说明：纯面板改动刷新即见，无需重启网关。
