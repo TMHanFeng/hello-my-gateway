@@ -2499,8 +2499,14 @@ def main():
               all(s in _hmgcss for s in ("html::before", "ambientDrift", "feTurbulence", "feColorMatrix",
                   "264px 264px", "rgba(4, 5, 9, .38)",
                   "rgba(178, 118, 235, .09)", "rgba(64, 205, 255, .07)",
-                  'data-theme="light"]::before', "rgba(148, 84, 220, .05)",
+                  'data-theme="light"]::before', "rgba(148, 84, 220, .055)",
                   "html::before, body::after { filter: blur(26px); }")), None)
+        # v2.17.9 亮色主题同构淡彩版：三向辉光提亮 + 粉彩极光启用（原 display:none）+ 噪点/大网格上白底 + --noise-url 双主题共用
+        check("T40o 亮色氛围同构淡彩版(三向辉光/粉彩极光替代display:none/噪点变量共用/大网格/html淡晕提亮)",
+              all(s in _hmgcss for s in ('data-theme="light"] body::after',
+                  "rgba(94, 106, 210, .14)", "rgba(148, 84, 220, .09)",
+                  "rgba(94, 106, 210, .09)", "rgba(64, 205, 255, .06)",
+                  "rgba(38, 158, 215, .055)", "var(--noise-url)")), None)
         # v2.17.8 拖拽丝滑化：FLIP 换位滑移（hmg.js 共享助手）+ rAF 合帧 + 异步变淡保拖影 + Firefox setData + 落点仅在保存失败时重渲
         check("T40n 拖拽丝滑化(FLIP助手flipMove/四拖拽面接线/rAF合帧/异步变淡/setData/失败才重渲/.dragging标记)",
               all(s in _hmgjs for s in ("function hmgFlipMove", "flipMove: hmgFlipMove", "prefers-reduced-motion: reduce"))

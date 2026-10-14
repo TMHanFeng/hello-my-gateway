@@ -90,7 +90,7 @@ data/ 运行时数据（gateway.db、探测缓存、dev pid），与代码隔离
 
 | 🧠 统一思考控制 | 🧪 计费回归安全网 | 📐 智能估算超时 |
 |:---|:---|:---|
-| `reasoning_effort` 六档 → 按模型 `reasoning_map` 换算上游思考参数；思考内容统一回传 `reasoning_content` / `thinking` | 284 断言计费回归套件（`test_billing_regression.py`）：流式/非流式/一次性/RPM 触顶/安全阀/并发入账零丢失，任何改动先跑套件再上线 | `smart_estimate` 模型按 token 量动态计算超时（吞吐 EMA 校准），样本不足自动回退固定值 |
+| `reasoning_effort` 六档 → 按模型 `reasoning_map` 换算上游思考参数；思考内容统一回传 `reasoning_content` / `thinking` | 285 断言计费回归套件（`test_billing_regression.py`）：流式/非流式/一次性/RPM 触顶/安全阀/并发入账零丢失，任何改动先跑套件再上线 | `smart_estimate` 模型按 token 量动态计算超时（吞吐 EMA 校准），样本不足自动回退固定值 |
 
 | 📡 Embedding / Rerank | 🔑 用户密钥管理 | 📄 JSON 输出路由 |
 |:---|:---|:---|
@@ -171,7 +171,7 @@ python -m app.main
 >
 > 💡 **Ubuntu / Linux**：`python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt && python3 -m app.main`，或直接 `./start_gateway.sh`（自动选 venv/系统解释器；停止 `./stop_gateway.sh`）。代码本身跨平台：运行时目录（data/ logs/ backup/）首次启动自动创建，路径处理与日志滚动均适配 POSIX 文件系统。回归套件同样可在 Linux 运行：`python tests/test_billing_regression.py`。
 >
-> 🧪 **改动计费相关代码后**：`python tests/test_billing_regression.py` 运行 284 断言计费回归套件（自动在 8678 起隔离实例 + mock 上游，不触碰生产端口），全绿再上线。
+> 🧪 **改动计费相关代码后**：`python tests/test_billing_regression.py` 运行 285 断言计费回归套件（自动在 8678 起隔离实例 + mock 上游，不触碰生产端口），全绿再上线。
 
 ---
 
@@ -219,7 +219,7 @@ hello-my-gateway/
 │   ├── index.html                # 传统管理后台（/admin）
 │   └── hfadmin.html              # 科技感管理面板（/hfadmin）
 ├── tests/
-│   └── test_billing_regression.py # 计费回归套件（284 断言，隔离实例 + mock 上游）
+│   └── test_billing_regression.py # 计费回归套件（285 断言，隔离实例 + mock 上游）
 ├── start_gateway.cmd             # Windows 启动入口（自动选解释器，幂等）
 ├── stop_gateway.cmd              # 停止入口（身份核验，只停本仓库网关）
 ├── start_gateway.sh              # Linux/macOS 启动入口（语义同 .cmd：选解释器 + 已运行自检）
@@ -645,6 +645,8 @@ SQLite（`gateway.db`）持久化以下表：
 ## 📜 版本
 
 ### 最新
+
+**`v2.17.9`** — **🎨 hmg-admin 亮色主题同构淡彩版（反馈：白天显得很单调——v2.17.7 把噪点/暗角/极光都给了暗色，亮色只剩三团 .04-.06 的淡晕，白底近乎素纸）**：亮色配方对齐暗色的**层结构**、全族降 alpha 防脏——①body::before 从 4 层扩到 **8 层**：三向辉光（靛蓝 `.06→.09` 顶部 + **新增青 `.06`** 右上 + 紫 `.04→.055` 右下）+ **纸张噪点上白底**（与暗色共用同一 feTurbulence data URI，抽 `--noise-url` 变量双主题引用）+ 44px 细网格 + **264px 大网格**（暗线 `.012`，蓝图感）；暗角白底退场（边缘压暗读作屏幕脏，刻意不给）。②**粉彩极光启用**：`body::after` 从 `display:none` 改为同位同动画（auroraDrift 26s）仅换色——靛 `.14`/紫 `.09` 白底甜点感（对比暗色 `.16/.10` 全族降档）。③html::before 第二漂移层淡晕提亮：紫 `.05→.07`/青 `.04→.055`，38s 漂移在白天也可见。回归 **284→285** 全绿（T40m 一锚点随配方升级 `.05→.055` 同步 + 新增 T40o：亮色极光规则/三向辉光/噪声变量共用/大网格锚点）；8660 DOM 断言：亮色 body::before 八层 backgroundSize（噪点/三辉光/44+264 双网格）+ 无暗角残留 + 极光 `display:block auroraDrift@26s` 粉彩双色在位 + html::before 淡晕无暗色值 + 对比 **17.9:1** 不变（辉光只压底比率只升）；截图 gui-test-screenshots/v2_17_9_desktop_light.png。纯资产改动**刷新即见**。
 
 **`v2.17.8`** — **🪄 hmg-admin 拖拽丝滑化（反馈：拖模型/供应商/池改顺序不丝滑；四个拖拽面统一治理，纯前端刷新即见）**：病灶四件——①换位瞬跳（dragover 中点判定 `insertBefore` 直改 DOM，零过渡且易振荡）；②**双重变淡拖影**（dragstart 同步设 `opacity:.4`，Chromium 拖影快照在事件处理后拍→拖影本身半透明+原地也淡，糊成一团）；③落点后**全量重渲闪放**（供应商 `loadModels()`/池 `loadPools()` 无条件重拉，入场瀑布全体重播）；④模型行/池条目/池卡 dragstart **无 setData，Firefox 拖不动**。修法：**hmg.js 共享 FLIP 助手 `hmgFlipMove(container, match, insertFn)`**（换位前抓可见兄弟 top→换位→dy 反向 `translateY` 内联→下一帧 `.18s var(--ease-out)` 过渡归零→transitionend 清内联；`.dragging` 标记排除被拖元素、`prefers-reduced-motion` 直接换位不动画）——瞬跳变 180ms 滑移；dragover **rAF 合帧**（`pendingEv` 最新意图胜出，`preventDefault`/`dropEffect="move"` 仍同步）；变淡改**异步**（拖影快照后 rAF 内加 `.dragging` 在位守卫——极速落下不残淡）；成功路径**不再重渲**（DOM 已是所存顺序，仅 api 失败才 `loadModels()/loadPools()` 回拉）；四处补 `setData("text/plain", id)`。回归 **283→284** 全绿（T40n：flipMove 助手+导出/四拖拽面接线/失败才重渲/setData/.dragging 锚点）；hmg.js+四内联脚本 node --check 过；8660 合成 DragEvent 实证：FLIP 单元断言（真实换位后 b/c 兄弟内联 `translateY(45px/45.67px)` 反向位移、换回零残留）、四链路 `.dragging` 生命周期 + setData + PUT 净零（顺序未变时落库为无害 no-op）、**供应商/池拖完 spy 实测 `loadModels/loadPools` 0 调用**（闪烁根源已除）；IAB 环境两事实记录：rAF 被遮挡节流冻结（rAF 门控换位无法端到端，中间帧数学由单元断言覆盖；真实浏览器 rAF 正常）、页内 `await`/定时器被拉长（测试一律 node 侧编排+页内纯同步分段）。
 

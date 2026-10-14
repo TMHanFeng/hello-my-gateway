@@ -596,9 +596,10 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
    全部 transform/opacity 动画（合成器线程，emil：恒动只留给氛围不留给交互）；
    噪点（feTurbulence 去饱和）/暗角/大网格为静态层——抗色带、加纵深，打破纯平底色；
    两个漂移层周期 26s/38s 互质不锁步，且分踞上部与下部（覆盖全视口）。
-   亮色主题：辉光降为极淡双色晕（白底高饱和会变脏），噪点/暗角退场；
-   reduced-motion 由全局冻结规则接管。
+   亮色主题同构淡彩版：三向辉光 + 粉彩极光 + 噪点/大网格上白底（高饱和会脏，全族降 alpha），
+   暗角白底退场（边缘压暗读作屏幕脏）；reduced-motion 由全局冻结规则接管。
    注：html::before 的 position:fixed 在老 Safari 可能退化为随滚动（辉光位置略移，可容忍）。 */
+:root { --noise-url: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='180'%20height='180'%3E%3Cfilter%20id='n'%3E%3CfeTurbulence%20type='fractalNoise'%20baseFrequency='0.8'%20numOctaves='2'%20stitchTiles='stitch'/%3E%3CfeColorMatrix%20type='saturate'%20values='0'/%3E%3C/filter%3E%3Crect%20width='180'%20height='180'%20filter='url(%23n)'%20opacity='.05'/%3E%3C/svg%3E"); }
 html::before {
   content: ""; position: fixed; inset: -22%; z-index: -1; pointer-events: none;
   filter: blur(38px);
@@ -615,7 +616,7 @@ body::before {
   content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
   background:
     radial-gradient(130% 100% at 50% 28%, transparent 55%, rgba(4, 5, 9, .38) 100%),
-    url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='180'%20height='180'%3E%3Cfilter%20id='n'%3E%3CfeTurbulence%20type='fractalNoise'%20baseFrequency='0.8'%20numOctaves='2'%20stitchTiles='stitch'/%3E%3CfeColorMatrix%20type='saturate'%20values='0'/%3E%3C/filter%3E%3Crect%20width='180'%20height='180'%20filter='url(%23n)'%20opacity='.05'/%3E%3C/svg%3E"),
+    var(--noise-url),
     radial-gradient(720px 340px at 22% -6%, rgba(94, 106, 210, .11), transparent 70%),
     radial-gradient(860px 460px at 84% -14%, rgba(76, 159, 254, .07), transparent 70%),
     linear-gradient(rgba(255, 255, 255, .024) 1px, transparent 1px),
@@ -640,18 +641,27 @@ body::after {
 }
 :root[data-theme="light"] body::before {
   background:
-    radial-gradient(720px 340px at 22% -6%, rgba(94, 106, 210, .06), transparent 70%),
-    radial-gradient(640px 400px at 88% 110%, rgba(148, 84, 220, .04), transparent 70%),
+    var(--noise-url),
+    radial-gradient(720px 340px at 22% -6%, rgba(94, 106, 210, .09), transparent 70%),
+    radial-gradient(860px 420px at 84% -12%, rgba(64, 205, 255, .06), transparent 70%),
+    radial-gradient(640px 400px at 88% 110%, rgba(148, 84, 220, .055), transparent 70%),
     linear-gradient(rgba(22, 23, 27, .022) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(22, 23, 27, .022) 1px, transparent 1px);
-  background-size: auto, auto, 44px 44px, 44px 44px;
+    linear-gradient(90deg, rgba(22, 23, 27, .022) 1px, transparent 1px),
+    linear-gradient(rgba(22, 23, 27, .012) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(22, 23, 27, .012) 1px, transparent 1px);
+  background-size: 180px 180px, auto, auto, auto, 44px 44px, 44px 44px, 264px 264px, 264px 264px;
 }
-:root[data-theme="light"] body::after { display: none; }
+/* 亮色极光：display:none 改粉彩版（同位同动画，仅换色）——白底上的甜点感 */
+:root[data-theme="light"] body::after {
+  background:
+    radial-gradient(closest-side at 34% 46%, rgba(94, 106, 210, .14), transparent),
+    radial-gradient(closest-side at 68% 58%, rgba(148, 84, 220, .09), transparent);
+}
 /* 注意：:root 即 html，不能写 ":root[...] html::before"（自己不是自己的后代，永不匹配） */
 :root[data-theme="light"]::before {
   background:
-    radial-gradient(560px 420px at 78% 78%, rgba(148, 84, 220, .05), transparent 70%),
-    radial-gradient(640px 460px at 16% 90%, rgba(38, 158, 215, .04), transparent 70%);
+    radial-gradient(560px 420px at 78% 78%, rgba(148, 84, 220, .07), transparent 70%),
+    radial-gradient(640px 460px at 16% 90%, rgba(38, 158, 215, .055), transparent 70%);
 }
 /* 手机：大模糊层降 blur 半径省 GPU（视觉差异可忽略） */
 @media (max-width: 767px) { html::before, body::after { filter: blur(26px); } }
