@@ -17,6 +17,9 @@
   padding-bottom: 10px; border-bottom: 1px solid var(--hairline);
 }
 .card-sub { color: var(--ink-subtle); font-size: 12px; margin-top: 2px; overflow-wrap: anywhere; }
+/* v2.17.12：供应商 URL 单行截断 + title 保全量（§16.5：长 URL 曾断在连字符处打乱行节奏；§15 既定解法） */
+.card-sub.sub-clip { display: flex; align-items: center; gap: 6px; min-width: 0; flex-wrap: nowrap; }
+.card-sub.sub-clip .clip { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .drag-handle { cursor: grab; color: var(--ink-tertiary); opacity: .55; transition: opacity 150ms ease; }
 .provider-card:hover > .provider-head .drag-handle, .model-row:hover .drag-handle { opacity: 1; }
 .model-row {
@@ -28,8 +31,9 @@
 .model-row:hover { background: var(--wash); }
 .model-row:active { background: var(--surface-2); }
 .model-row .m-info { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
-.model-row .model-id { font-weight: 600; font-size: 13.5px; letter-spacing: -.1px; overflow-wrap: anywhere; }
-.model-row .model-name { color: var(--ink-subtle); font-size: 12.5px; overflow-wrap: anywhere; }
+/* v2.17.12：ID/名称单行截断（title 保全量）——此前 overflow-wrap:anywhere 让长名折行，把同行徽章挤到参差不齐；改为文字先收缩，徽章起始 y 恒一致 */
+.model-row .model-id { font-weight: 600; font-size: 13.5px; letter-spacing: -.1px; flex: 0 1 auto; min-width: 48px; max-width: 340px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.model-row .model-name { color: var(--ink-subtle); font-size: 12.5px; flex: 0 1 auto; min-width: 36px; max-width: 260px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .m-actions { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; }
 .sp-ok { color: var(--ok-ink); } .sp-mid { color: var(--warn-ink); } .sp-slow { color: var(--err-ink); }
 /* 余量内联（供应商卡头部协议徽章右侧） */
@@ -75,6 +79,7 @@
   position: absolute; right: 6px; top: 6px; width: 24px; height: 24px; border-radius: 6px;
   color: var(--ink-subtle); font-size: 13px; display: flex; align-items: center; justify-content: center;
 }
+.cost-gear svg { width: 14px; height: 14px; }  /* v2.17.12：⚙→线性 SVG 后的尺寸 */
 .cost-gear:hover { background: var(--surface-2); color: var(--ink); }
 /* .modal-actions 已上收共享 hmg.css（含 justify-content:flex-end 右下角通则）——页面零复制 */
 input[type="range"] { accent-color: var(--accent); width: 100%; }
@@ -132,16 +137,18 @@ function protocolLabel(p) { return ({ openai: "OpenAI Compatible", anthropic: "A
 function provBadge(p) {
   return '<span class="badge">' + esc(protocolLabel(p)) + "</span>";
 }
+/* v2.17.12（工作单 §16.5）：badge-warn 只留给真告警（限流/失败）；一次性/5h限额/仅闲时/余额返还制/付费
+   是中性属性不是告警，一律素徽章（说明入 title），不再与 latTag 的真告警同色同形。 */
 function typeBadge(m) {
-  if (m.token_type === "one_time") return '<span class="badge badge-warn">一次性</span>';
-  if (m.token_type === "rolling_5h") return '<span class="badge badge-warn">5h限额</span>';
+  if (m.token_type === "one_time") return '<span class="badge" title="一次性额度：用完即止">一次性</span>';
+  if (m.token_type === "rolling_5h") return '<span class="badge" title="5h 滚动限额窗口">5h限额</span>';
   if (m.token_type === "all_day") return '<span class="badge" title="付费模型：全天可用">全天可用</span>';
-  if (m.token_type === "idle_only") return '<span class="badge badge-warn" title="付费模型：仅闲时可用（高峰时段内不路由）">仅闲时</span>';
-  if (m.token_type === "gift") return '<span class="badge badge-warn" title="余额返还制：到账时刻按昨日消耗补回额度（上限封顶）">余额返还制</span>';
+  if (m.token_type === "idle_only") return '<span class="badge" title="付费模型：仅闲时可用（高峰时段内不路由）">仅闲时</span>';
+  if (m.token_type === "gift") return '<span class="badge" title="余额返还制：到账时刻按昨日消耗补回额度（上限封顶）">余额返还制</span>';
   if (m.token_type === "local") return '<span class="badge" title="本地模型：不计费不限量，仅记录用量">本地</span>';
   return "<span class=\"badge\">每日</span>";
 }
-function freeBadge(m) { return m.is_free ? '<span class="badge badge-ok">免费</span>' : '<span class="badge badge-warn" title="付费模型">付费</span>'; }
+function freeBadge(m) { return m.is_free ? '<span class="badge badge-ok">免费</span>' : '<span class="badge" title="付费模型">付费</span>'; }
 function modBadge(m) { return m.modality === "embedding" ? '<span class="badge badge-acc">embedding</span>' : m.modality === "rerank" ? '<span class="badge badge-acc">rerank</span>' : m.modality === "vision" ? '<span class="badge">多模态</span>' : "<span class=\"badge\">文本</span>"; }
 function latTag(id) {
   const s = speedCache[id];
@@ -171,13 +178,13 @@ async function loadModels() {
       <div class="provider-head">
         <div class="grow" style="min-width:220px">
           <div class="card-title"><span class="drag-handle">⠿</span> ${HMG.avatar(p.name, true)} ${esc(p.name)} ${provBadge(p.protocol)}<span class="pq-inline" data-pq-inline="${esc(p.id)}"></span></div>
-          <div class="card-sub mono">${esc(p.id)} · ${esc(p.base_url)}${p.proxy_url ? ` <span class="badge badge-acc" title="代理: ${esc(p.proxy_url)}">🛡️ 代理</span>` : ""}</div>
+          <div class="card-sub mono sub-clip" title="${esc(p.id)} · ${esc(p.base_url)}${p.proxy_url ? " · 代理: " + esc(p.proxy_url) : ""}"><span class="clip">${esc(p.id)} · ${esc(p.base_url)}</span>${p.proxy_url ? `<span class="badge badge-acc" title="代理: ${esc(p.proxy_url)}">${HMG_ICONS.shield} 代理</span>` : ""}</div>
         </div>
         <div class="row wrap">
           ${grpOn ? `<button class="btn btn-ghost btn-sm ic-btn" title="分组收纳" onclick="grpAssignMenu(event,'providerGroups','${jsq(p.id)}')">${HMG_ICONS.folder}</button>` : ""}
           <button class="btn btn-ghost btn-sm" onclick="editProvider('${jsq(p.id)}')">编辑</button>
           <button class="btn btn-danger btn-sm" onclick="delProvider('${jsq(p.id)}')">删除</button>
-          <button class="btn btn-primary btn-sm" onclick="showAddUnder('${jsq(p.id)}')">＋ 添加模型</button>
+          <button class="btn btn-secondary btn-sm" onclick="showAddUnder('${jsq(p.id)}')">＋ 添加模型</button>
         </div>
       </div>
       ${pmodels.map((m, i2) => modelRowHTML(m, i2, animRow)).join("") || '<div class="hint" style="padding:6px 2px">该供应商下暂无模型。</div>'}
@@ -270,8 +277,8 @@ function modelRowHTML(m, i, animate = true) {
   <div class="model-row" draggable="true" data-model-id="${esc(m.id)}"${animate ? ` style="animation:hmgIn 300ms ease-out ${Math.min(i * 40, 400)}ms backwards"` : ""}>
     <span class="drag-handle" title="拖拽排序">⠿</span>
     <div class="m-info">
-      <span class="model-id">${esc(m.id)}</span>
-      <span class="model-name">${esc(m.name)}</span>
+      <span class="model-id" title="${esc(m.id)}">${esc(m.id)}</span>
+      <span class="model-name" title="${esc(m.name)}">${esc(m.name)}</span>
       ${provBadge(m.provider || "openai")}
       ${freeBadge(m)}
       ${modBadge(m)}
@@ -282,7 +289,7 @@ function modelRowHTML(m, i, animate = true) {
       ${latTag(m.id)}
     </div>
     <div class="m-actions">
-      <button class="btn btn-ghost btn-sm" onclick="speedOne('${jsq(m.id)}')">⚡ 测速</button>
+      <button class="btn btn-ghost btn-sm" onclick="speedOne('${jsq(m.id)}')">${HMG_ICONS.bolt} 测速</button>
       <button class="btn btn-ghost btn-sm" onclick="editModel('${jsq(m.id)}')">编辑</button>
       <button class="btn btn-danger btn-sm" onclick="delModel('${jsq(m.id)}')">删除</button>
     </div>
@@ -367,7 +374,7 @@ function pformHtml() {
       <label>代理地址（可选）</label>
       <div class="row">
         <input name="proxy_url" class="inp" placeholder="http://127.0.0.1:7890" title="部分国外模型的供应商可配置 VPN/clash 代理；留空则直连" oninput="onProxyInput(this)">
-        <button type="button" class="btn btn-ghost btn-sm" id="proxy-test-btn" disabled onclick="testProviderProxy()" title="通过代理请求 BaseURL 测延迟，并读取 Clash 当前节点">🔍 连接测试</button>
+        <button type="button" class="btn btn-ghost btn-sm" id="proxy-test-btn" disabled onclick="testProviderProxy()" title="通过代理请求 BaseURL 测延迟，并读取 Clash 当前节点">${HMG_ICONS.search} 连接测试</button>
       </div>
       <span id="proxy-test-result" class="th-hint"></span>
     </div>
@@ -377,7 +384,7 @@ function pformHtml() {
       <div class="row wrap" style="margin-bottom:10px">
         <label class="switch" title="开启后随「保存」创建/更新绑定并立即查询；取消勾选随保存停用"><input type="checkbox" id="pqq-on" onchange="pqOnToggle()"><i></i></label>
         <span class="hint" style="margin:0" id="pqq-state"></span>
-        <button type="button" class="btn btn-ghost btn-sm" id="pqq-del" style="display:none" onclick="pqDeleteFromEdit()" title="解除绑定并删除历史记录">🗑</button>
+        <button type="button" class="btn btn-ghost btn-sm" id="pqq-del" style="display:none" onclick="pqDeleteFromEdit()" title="解除绑定并删除历史记录">${HMG_ICONS.trash}</button>
       </div>
       <div id="pqq-fields" style="display:none">
         <div class="fg"><label>获取方式</label><select id="pqq-mode" class="inp" onchange="pqModeChange()"><option value="auto">自动参数获取（内置平台）</option><option value="custom">自定义获取（脚本）</option></select></div>
@@ -393,7 +400,7 @@ function pformHtml() {
           <div class="hint" style="margin:2px 0 8px">脚本异常/超时/输出非 JSON 视为查询失败；脚本可回传 updated_params，网关原样写回绑定。</div>
         </div>
         <div class="fg"><label>轮询间隔（全局，所有绑定共用）</label><select id="pqq-interval" class="inp"><option value="30">30 分钟</option><option value="60">1 小时</option><option value="1440">每天</option></select></div>
-        <div class="hint">随弹窗底部「保存」一并生效；取消勾选再保存 = 停用监控（凭证保留）；删除点上方 🗑。</div>
+        <div class="hint">随弹窗底部「保存」一并生效；取消勾选再保存 = 停用监控（凭证保留）；删除点上方垃圾桶按钮。</div>
       </div>
     </div>
     <div class="modal-actions">
@@ -746,7 +753,7 @@ function mformHtml() {
       <div class="form-sec">余额返还制</div>
       <div class="f2">
         <div class="fg"><label>每日返还上限（火山"每日采集额度"，超出不返还）</label><input name="gift_grant_cap" type="number" class="inp" min="0" step="100000" placeholder="5000000"></div>
-        <div class="fg"><label>人工校准（独立窗口 · 对齐火山控制台实际值）</label><button type="button" class="btn btn-ghost" style="width:100%;justify-content:center" onclick="showGiftCalibrate()">🛠 打开人工校准窗口</button><div class="hint" style="margin-top:4px">逐项填写，未填项保持不变，防误改</div></div>
+        <div class="fg"><label>人工校准（独立窗口 · 对齐火山控制台实际值）</label><button type="button" class="btn btn-ghost" style="width:100%;justify-content:center" onclick="showGiftCalibrate()">${HMG_ICONS.wrench} 打开人工校准窗口</button><div class="hint" style="margin-top:4px">逐项填写，未填项保持不变，防误改</div></div>
       </div>
     </div>
     <div id="once-fields" class="hidden">
@@ -761,7 +768,7 @@ function mformHtml() {
       <label class="opt"><input type="checkbox" name="json_output" id="f-json-output"><span><b>支持 JSON 格式输出</b>请求带 response_format(json) 时只路由到勾选的模型</span></label>
       <label class="opt"><input type="checkbox" name="smart_estimate" id="f-smart-estimate" onchange="onSmartToggle()"><span><b>智能估算超时</b>按 token 量动态计算总超时，忽略手动秒数</span></label>
       <label class="opt" id="f-headroom-opt" style="display:none"><input type="checkbox" name="headroom" id="f-headroom"><span><b>Headroom 上下文压缩</b>该模型接单时自动压缩出站大块工具输出省 token（服务端需装 headroom-ai，未装自动旁路）</span></label>
-      <label class="opt" style="position:relative;padding-right:36px"><input type="checkbox" name="cost_enabled" id="f-cost-enabled"><span><b>缓存 Token 计费统计</b>记录该模型调用的缓存命中 / 未命中 / 输出 token，用量统计卡片出现「预估费用」入口（付费模型固定显示），可自定义三者价格与高峰期时段</span><button type="button" class="cost-gear" title="直接打开设置与计费界面：配置单价与高峰期分段计价" onclick="openCostSettings(event)">⚙</button></label>
+      <label class="opt" style="position:relative;padding-right:36px"><input type="checkbox" name="cost_enabled" id="f-cost-enabled"><span><b>缓存 Token 计费统计</b>记录该模型调用的缓存命中 / 未命中 / 输出 token，用量统计卡片出现「预估费用」入口（付费模型固定显示），可自定义三者价格与高峰期时段</span><button type="button" class="cost-gear" title="直接打开设置与计费界面：配置单价与高峰期分段计价" onclick="openCostSettings(event)">${HMG_ICONS.cog}</button></label>
     </div>
     <div id="smart-live" class="hidden" style="font-size:12px;color:var(--ink-muted);margin-bottom:13px;line-height:1.6"></div>
     <div class="fg" id="reasoning-map-fg"><label>思考映射 reasoning_map（JSON，可选）：统一档位 off/minimal/low/medium/high/max → 透传上游的请求体片段；留空 = 不注入（embedding/rerank 模型不适用）</label><textarea name="reasoning_map" rows="5" class="inp mono" placeholder='{"off": {"thinking": {"type": "disabled"}}, "medium": {"thinking": {"type": "enabled"}}}'></textarea><div id="reasoning-probe-strip" style="margin-top:6px"></div></div>
@@ -950,15 +957,15 @@ async function renderReasoningStrip(modelId, opts = {}) {
   const strip = document.getElementById("reasoning-probe-strip");
   if (!strip) return;
   if (!modelId) {
-    strip.innerHTML = '<span class="hint">🧠 模型添加后，这里会显示云端思考参数探测结论，可一键填入/重测</span>';
+    strip.innerHTML = '<span class="hint">模型添加后，这里会显示云端思考参数探测结论，可一键填入/重测</span>';
     strip.dataset.built = "";
     return;
   }
   if (!strip.dataset.built) {
-    strip.innerHTML = '<div id="reasoning-probe-text" class="hint" style="margin-bottom:4px">🧠 探测结论加载中…</div>'
+    strip.innerHTML = '<div id="reasoning-probe-text" class="hint" style="margin-bottom:4px">探测结论加载中…</div>'
       + '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:4px">'
-      + '<button type="button" class="btn btn-ghost btn-sm" id="reasoning-fill-btn" onclick="fillReasoningSuggestion()">📥 填入建议</button>'
-      + '<button type="button" class="btn btn-ghost btn-sm" id="reasoning-probe-btn" onclick="reprobeReasoning()">🔄 重新探测</button>'
+      + `<button type="button" class="btn btn-ghost btn-sm" id="reasoning-fill-btn" onclick="fillReasoningSuggestion()">${HMG_ICONS.download} 填入建议</button>`
+      + `<button type="button" class="btn btn-ghost btn-sm" id="reasoning-probe-btn" onclick="reprobeReasoning()">${HMG_ICONS.refresh} 重新探测</button>`
       + '<button type="button" class="btn btn-ghost btn-sm" onclick="renderReasoningStrip(editingId, {force:true})" title="重新拉取探测结论（纯本地缓存，不发上游请求）">⟳</button>'
       + '<span id="reasoning-probe-status" class="hint"></span></div>';
     strip.dataset.built = "1";
@@ -972,12 +979,12 @@ async function renderReasoningStrip(modelId, opts = {}) {
   const statusEl = document.getElementById("reasoning-probe-status");
   if (statusEl) statusEl.textContent = "";
   const rec = info ? info.models[modelId] : undefined;
-  if (!info) txt.textContent = "🧠 探测结论加载失败";
-  else if (!rec || !rec.probed) txt.innerHTML = "🧠 探测结论：<b>未探测</b>（点「🔄 重新探测」实测该云端模型支持的思考参数写法）";
+  if (!info) txt.textContent = "探测结论加载失败";
+  else if (!rec || !rec.probed) txt.innerHTML = "探测结论：<b>未探测</b>（点「重新探测」实测该云端模型支持的思考参数写法）";
   else if (rec.default_thinking && String(rec.default_thinking).indexOf("不可用") === 0)
-    txt.innerHTML = '🧠 探测结论：<span style="color:var(--danger)">' + esc(rec.default_thinking) + "</span>（可点「🔄 重新探测」重试）";
+    txt.innerHTML = '探测结论：<span style="color:var(--danger)">' + esc(rec.default_thinking) + "</span>（可点「重新探测」重试）";
   else {
-    const bits = ["🧠 探测于 " + esc((rec.probe_time || "").slice(0, 10) || "?")];
+    const bits = ["探测于 " + esc((rec.probe_time || "").slice(0, 10) || "?")];
     bits.push(rec.param_family ? "参数族 <b>" + esc(rec.param_family) + "</b>" : "不支持思考控制");
     bits.push("默认思考" + esc(rec.default_thinking || "?"));
     bits.push(rec.levels_effective ? "六档梯度有效" : "仅开/关两档");

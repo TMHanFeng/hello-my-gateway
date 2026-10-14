@@ -29,7 +29,13 @@
 .i-tip { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; border-radius: 50%; background: var(--surface-3); color: var(--ink-subtle); font-size: 10px; font-style: normal; cursor: help; flex: none; }
 .add-model-row { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
 .add-model-row select { flex: 1; min-width: 0; }
-.note-box { font-size: 12.5px; line-height: 1.6; color: var(--ink-muted); background: var(--surface-2); border: 1px solid var(--hairline); border-radius: 8px; padding: 8px 12px; margin-bottom: 8px; }
+/* v2.17.12（工作单 §16.5）：池卡头控件两行分组——上排状态开关/阈值（同质），下排动作按钮（虚线分隔），
+   替代 7 个异质控件一字长龙零分组；窄屏整体转左对齐铺满。 */
+.pool-head-ctls { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+.pool-switches, .pool-actions { display: flex; align-items: center; gap: 6px 14px; flex-wrap: wrap; justify-content: flex-end; }
+.pool-actions { padding-top: 8px; border-top: 1px dashed var(--hairline); }
+/* v2.17.12：note-box 从「整行加粗底色条」降为安静左线注（操作说明不占黄金位；完整解释仍在开关 title 里） */
+.note-box { font-size: 12px; line-height: 1.6; color: var(--ink-subtle); border-left: 2px solid var(--hairline-strong); padding: 2px 0 2px 10px; margin-bottom: 8px; }
 .threshold-ctl { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--ink-subtle); }
 .th-input-wrap { display: inline-flex; align-items: center; border: 1px solid var(--hairline); border-radius: 6px; background: var(--surface-1); overflow: hidden; }
 .th-input { width: 72px; border: none; background: transparent; padding: 5px 8px; font-size: 12.5px; color: var(--ink); }
@@ -43,6 +49,8 @@
 .fb-check input { accent-color: var(--accent); }
 @media (max-width: 767px) {
   .add-model-row { flex-direction: column; align-items: stretch; }
+  .pool-head-ctls { align-items: stretch; width: 100%; }
+  .pool-switches, .pool-actions { justify-content: flex-start; }
 }
 </style>
 </head>
@@ -146,7 +154,7 @@ async function loadPools() {
     const isFallback = name === "兜底池";
     const isDedicated = !!pool.owner_key_id;
     const isDraggable = !isAuto;
-    const dedicatedTag = isDedicated ? `<span class="badge badge-warn">专属池 · Key#${esc(pool.owner_key_id)}</span>` : "";
+    const dedicatedTag = isDedicated ? `<span class="badge" title="专属池：仅归属 Key#${esc(pool.owner_key_id)} 可用">专属池 · Key#${esc(pool.owner_key_id)}</span>` : "";
     const _cardHtml = `
     <div class="card" data-pool-card="${esc(name)}" ${isDraggable ? 'draggable="true"' : ""}>
       <div class="pool-card-head">
@@ -154,47 +162,51 @@ async function loadPools() {
           <div class="card-title">
             ${isDraggable ? '<span class="drag-handle" style="cursor:grab" title="拖拽排序">⠿</span>' : '<span style="opacity:.3">⠿</span>'}
             ${HMG.avatar(name, true)} 池：${esc(name)} <span class="badge">model="${esc(name)}" 可调用</span>
-            ${isFallback ? '<span class="badge badge-acc">🛟 兜底池</span>' : ""}
+            ${isFallback ? '<span class="badge badge-acc">兜底池</span>' : ""}
             ${isAuto ? '<span class="badge badge-acc">内置</span>' : ""}
             ${dedicatedTag}
           </div>
-          <div class="pool-card-sub">${pool.strategy === "sequential" ? "策略：按序调用" : (pool.strategy || "")} · 共 ${ids.length} 项${pool.auto_order ? " · ⚡ 自动择优" : ""}</div>
+          <div class="pool-card-sub">${pool.strategy === "sequential" ? "策略：按序调用" : (pool.strategy || "")} · 共 ${ids.length} 项${pool.auto_order ? " · 自动择优" : ""}</div>
         </div>
-        <div class="row wrap">
-          <label class="switch" title="开启后：先排除不可用接口，再按实时延迟从低到高优先调用">
-            <input type="checkbox" ${pool.auto_order ? "checked" : ""} onchange="toggleAutoOrder('${jsq(name)}', this.checked)"><i></i>
-          </label><span class="sw-label">自动择优</span>
-          <label class="switch" title="负载均衡：请求按池内顺序轮流分给每个模型/子池，避免集中在最快的模型上（与自动择优互斥）">
-            <input type="checkbox" ${pool.load_balance ? "checked" : ""} onchange="toggleLoadBalance('${jsq(name)}', this.checked)"><i></i>
-          </label><span class="sw-label">负载均衡</span>
-          ${PC_STATE.switch_pool === false ? "" : `
-          <label class="switch" title="Switch 切换：开启后客户端可 POST /池名 + switch=local|net 定向调用池内一侧（local=本地模型，net=其余云端模型）；要求池内两侧都有模型">
-            <input type="checkbox" ${pool.switch_enabled ? "checked" : ""} onchange="togglePoolSwitch('${jsq(name)}', this.checked)"><i></i>
-          </label><span class="sw-label">Switch</span>
-          `}
-          <span class="threshold-ctl" title="自动择优模式下，超过此延迟(ms)的模型排到末尾；0=不限">
-            <span>⏱ 阈值</span>
-            <span class="th-input-wrap">
-              <input type="number" class="th-input" min="0" step="100" value="${pool.slow_latency_threshold ?? 3000}"
-                onchange="setSlowThreshold('${jsq(name)}', this.value); updateThHint('${jsq(name)}', this.value); this.blur();">
-              <span class="th-unit">ms</span>
+        <div class="pool-head-ctls">
+          <div class="pool-switches">
+            <label class="switch" title="开启后：先排除不可用接口，再按实时延迟从低到高优先调用">
+              <input type="checkbox" ${pool.auto_order ? "checked" : ""} onchange="toggleAutoOrder('${jsq(name)}', this.checked)"><i></i>
+            </label><span class="sw-label">自动择优</span>
+            <label class="switch" title="负载均衡：请求按池内顺序轮流分给每个模型/子池，避免集中在最快的模型上（与自动择优互斥）">
+              <input type="checkbox" ${pool.load_balance ? "checked" : ""} onchange="toggleLoadBalance('${jsq(name)}', this.checked)"><i></i>
+            </label><span class="sw-label">负载均衡</span>
+            ${PC_STATE.switch_pool === false ? "" : `
+            <label class="switch" title="Switch 切换：开启后客户端可 POST /池名 + switch=local|net 定向调用池内一侧（local=本地模型，net=其余云端模型）；要求池内两侧都有模型">
+              <input type="checkbox" ${pool.switch_enabled ? "checked" : ""} onchange="togglePoolSwitch('${jsq(name)}', this.checked)"><i></i>
+            </label><span class="sw-label" title="Switch 切换：开启后客户端可 POST /池名 + switch=local|net 定向调用池内一侧（local=本地模型，net=其余云端模型）">Switch</span>
+            `}
+            <span class="threshold-ctl" title="自动择优模式下，超过此延迟(ms)的模型排到末尾；0=不限">
+              <span>阈值</span>
+              <span class="th-input-wrap">
+                <input type="number" class="th-input" min="0" step="100" value="${pool.slow_latency_threshold ?? 3000}"
+                  onchange="setSlowThreshold('${jsq(name)}', this.value); updateThHint('${jsq(name)}', this.value); this.blur();">
+                <span class="th-unit">ms</span>
+              </span>
+              <span class="th-hint" data-th-hint="${jsq(name)}"></span>
             </span>
-            <span class="th-hint" data-th-hint="${jsq(name)}"></span>
-          </span>
-          ${(!isAuto && !isFallback && grpOnP) ? `<button class="btn btn-ghost btn-sm ic-btn" title="分组收纳" onclick="grpAssignMenu(event,'poolGroups','${jsq(name)}')">${HMG_ICONS.folder}</button>` : ""}
-          <button class="btn btn-ghost btn-sm" onclick="speedPool('${jsq(name)}')">⚡ 测速本池</button>
-          ${isAuto ? `<button class="btn btn-primary btn-sm" onclick="openSingleMode()">🎯 一键单模型</button>` : ""}
-          ${isFallback ? `<button class="btn btn-ghost btn-sm" onclick="openFallbackTargets()">🛟 选择兜底对象</button>` : ""}
-          ${(!isAuto && !isFallback && !isDedicated) ? `<button class="btn btn-ghost btn-sm" onclick="renamePool('${jsq(name)}')">✏️ 重命名</button><button class="btn btn-danger btn-sm" onclick="delPool('${jsq(name)}')">删除池</button>` : ""}
+          </div>
+          <div class="pool-actions">
+            ${(!isAuto && !isFallback && grpOnP) ? `<button class="btn btn-ghost btn-sm ic-btn" title="分组收纳" onclick="grpAssignMenu(event,'poolGroups','${jsq(name)}')">${HMG_ICONS.folder}</button>` : ""}
+            <button class="btn btn-ghost btn-sm" onclick="speedPool('${jsq(name)}')">测速本池</button>
+            ${isAuto ? `<button class="btn btn-secondary btn-sm" onclick="openSingleMode()">一键单模型</button>` : ""}
+            ${isFallback ? `<button class="btn btn-ghost btn-sm" onclick="openFallbackTargets()">选择兜底对象</button>` : ""}
+            ${(!isAuto && !isFallback && !isDedicated) ? `<button class="btn btn-ghost btn-sm" onclick="renamePool('${jsq(name)}')">重命名</button><button class="btn btn-danger btn-sm" onclick="delPool('${jsq(name)}')">删除池</button>` : ""}
+          </div>
         </div>
       </div>
       <div id="single-active-${esc(name)}" class="single-banner hidden">
-        🔒 当前锁定模型：<strong class="mono" id="single-label-${esc(name)}"></strong>
-        <button class="btn btn-danger btn-sm" onclick="clearSingleMode('${jsq(name)}')">🔓 解除锁定</button>
+        ${HMG_ICONS.lock} 当前锁定模型：<strong class="mono" id="single-label-${esc(name)}"></strong>
+        <button class="btn btn-danger btn-sm" onclick="clearSingleMode('${jsq(name)}')">${HMG_ICONS.unlock} 解除锁定</button>
       </div>
-      ${pool.auto_order ? '<div class="note-box">⚡ 自动择优已开启：先排除不可用接口（用量用尽 / RPM·TPM 触顶），再在可用接口中按调用延迟从低到高优先调用。下方显示顺序保持不变，关闭后按设定顺序调用。</div>' : ""}
-      ${pool.load_balance ? '<div class="note-box">🔄 负载均衡已开启：每次请求按池内模型顺序轮流分配（第一个→第二个→…循环往复），请求均匀分摊到每个模型/子池。关闭后按设定顺序调用。</div>' : ""}
-      ${(PC_STATE.switch_pool !== false && pool.switch_enabled) ? '<div class="note-box">🔀 Switch 切换已开启：客户端可 POST <b>/{池名}</b> 并带 <b>switch=local|net</b> 定向调用一侧——local=令牌类型为 local 的本地模型，net=其余云端模型。同侧全不可用时报 503，不会跨侧调用；每次路由在调用记录里显示为 switch:local / switch:net。</div>' : ""}
+      ${pool.auto_order ? '<div class="note-box">自动择优已开启：先排除不可用接口（用量用尽 / RPM·TPM 触顶），再在可用接口中按调用延迟从低到高优先调用。下方显示顺序保持不变，关闭后按设定顺序调用。</div>' : ""}
+      ${pool.load_balance ? '<div class="note-box">负载均衡已开启：每次请求按池内模型顺序轮流分配（第一个→第二个→…循环往复），请求均匀分摊到每个模型/子池。关闭后按设定顺序调用。</div>' : ""}
+      ${(PC_STATE.switch_pool !== false && pool.switch_enabled) ? '<div class="note-box">Switch 切换已开启：客户端可 POST <b>/{池名}</b> 并带 <b>switch=local|net</b> 定向调用一侧——local=令牌类型为 local 的本地模型，net=其余云端模型。同侧全不可用时报 503，不会跨侧调用；每次路由在调用记录里显示为 switch:local / switch:net。</div>' : ""}
       <div class="pool-items" data-pool="${esc(name)}">
         ${ids.map((id, i) => poolItemHTML(name, id, i, onceItem)).join("") || '<div class="hint">该池为空，从下方添加接口或子池。</div>'}
       </div>
@@ -242,10 +254,10 @@ function poolItemHTML(name, id, i, animate = true) {
     <span class="drag" title="拖拽排序">⠿</span>
     <span class="pi-id">${esc(id)}</span>
     <span class="pi-tags">
-      ${isPoolRef ? '<span class="badge badge-warn">子池</span>' : (modelLookup[id] ? (modelLookup[id].is_free ? '<span class="badge badge-ok">免费</span>' : '<span class="badge badge-err">付费</span>') : '<span class="badge">未注册</span>')}
+      ${isPoolRef ? '<span class="badge" title="嵌套子池">子池</span>' : (modelLookup[id] ? (modelLookup[id].is_free ? '<span class="badge badge-ok">免费</span>' : '<span class="badge" title="付费模型">付费</span>') : '<span class="badge">未注册</span>')}
       ${infoTip(id)}
     </span>
-    <button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick="removeFromPool('${jsq(name)}', '${jsq(id)}')">✕</button>
+    <button class="btn btn-ghost btn-sm danger-hover" style="margin-left:auto" title="从池中移除" onclick="removeFromPool('${jsq(name)}', '${jsq(id)}')">✕</button>
   </div>`;
 }
 

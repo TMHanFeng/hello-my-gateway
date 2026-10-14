@@ -90,7 +90,7 @@ data/ 运行时数据（gateway.db、探测缓存、dev pid），与代码隔离
 
 | 🧠 统一思考控制 | 🧪 计费回归安全网 | 📐 智能估算超时 |
 |:---|:---|:---|
-| `reasoning_effort` 六档 → 按模型 `reasoning_map` 换算上游思考参数；思考内容统一回传 `reasoning_content` / `thinking` | 287 断言计费回归套件（`test_billing_regression.py`）：流式/非流式/一次性/RPM 触顶/安全阀/并发入账零丢失，任何改动先跑套件再上线 | `smart_estimate` 模型按 token 量动态计算超时（吞吐 EMA 校准），样本不足自动回退固定值 |
+| `reasoning_effort` 六档 → 按模型 `reasoning_map` 换算上游思考参数；思考内容统一回传 `reasoning_content` / `thinking` | 289 断言计费回归套件（`test_billing_regression.py`）：流式/非流式/一次性/RPM 触顶/安全阀/并发入账零丢失，任何改动先跑套件再上线 | `smart_estimate` 模型按 token 量动态计算超时（吞吐 EMA 校准），样本不足自动回退固定值 |
 
 | 📡 Embedding / Rerank | 🔑 用户密钥管理 | 📄 JSON 输出路由 |
 |:---|:---|:---|
@@ -171,7 +171,7 @@ python -m app.main
 >
 > 💡 **Ubuntu / Linux**：`python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt && python3 -m app.main`，或直接 `./start_gateway.sh`（自动选 venv/系统解释器；停止 `./stop_gateway.sh`）。代码本身跨平台：运行时目录（data/ logs/ backup/）首次启动自动创建，路径处理与日志滚动均适配 POSIX 文件系统。回归套件同样可在 Linux 运行：`python tests/test_billing_regression.py`。
 >
-> 🧪 **改动计费相关代码后**：`python tests/test_billing_regression.py` 运行 287 断言计费回归套件（自动在 8678 起隔离实例 + mock 上游，不触碰生产端口），全绿再上线。
+> 🧪 **改动计费相关代码后**：`python tests/test_billing_regression.py` 运行 289 断言计费回归套件（自动在 8678 起隔离实例 + mock 上游，不触碰生产端口），全绿再上线。
 
 ---
 
@@ -219,7 +219,7 @@ hello-my-gateway/
 │   ├── index.html                # 传统管理后台（/admin）
 │   └── hfadmin.html              # 科技感管理面板（/hfadmin）
 ├── tests/
-│   └── test_billing_regression.py # 计费回归套件（287 断言，隔离实例 + mock 上游）
+│   └── test_billing_regression.py # 计费回归套件（289 断言，隔离实例 + mock 上游）
 ├── start_gateway.cmd             # Windows 启动入口（自动选解释器，幂等）
 ├── stop_gateway.cmd              # 停止入口（身份核验，只停本仓库网关）
 ├── start_gateway.sh              # Linux/macOS 启动入口（语义同 .cmd：选解释器 + 已运行自检）
@@ -645,6 +645,10 @@ SQLite（`gateway.db`）持久化以下表：
 ## 📜 版本
 
 ### 最新
+
+### 最新
+
+**`v2.17.12`** — **🎨 hmg-admin 双主题色板定稿 + 徽章语义/布局分组 + emoji 换线性 SVG（按他线工作单《美化工作单-hmg-admin.md》§16 评审清单逐条核实实施，回填 §17）**：①**亮色塌陷修复**（评审实测 surface-1/2 仅 1.01:1 同色）：`--surface-2` #f6f7f7→#eceef1、surface-3/4→#e4e7ec/#dcdfe6（全梯 ΔL*≈2.5-2.8 均匀可辨，卡片/侧栏选中/徽章/次按钮不再糊成一片）、hairline 三档 #d5d9e0/#bfc5cf/#aab1bf（顺修 tertiary 反超 strong 的断梯）、卡片阴影 .05/.07→.06/.10；②**双主题 ink 提色 + 使用面约束**：暗 ink-subtle→#9ea4bb（surface-4 上 4.6:1 达 AA）、ink-tertiary→#7e859c，亮 ink-subtle→#5a5f6a、ink-tertiary→#6b707c（surface-1 上 4.6:1）；「ink-tertiary 只许 canvas/surface-1、抬升表面改用 ink-subtle」写入 token 注释，违规点 logs 页 `.rsn-neutral` 改 ink-subtle（AA 与第三级视觉层级不可兼得的评审结论落地）；③**徽章语义**（badge-warn 只留真告警）：模型一次性/5h限额/仅闲时/余额返还制/付费 与池 子池/专属池 全部素徽章（说明入 title），顺修评审漏记的池成员「付费」badge-err 红色滥用；④**池卡布局重排**：7 个异质控件一字长龙→`.pool-head-ctls` 两行分组（上排开关+阈值同质组/下排动作组虚线分隔右对齐，<768 左对齐铺满），note-box 从整行加粗底色条降为左 2px 线静默注（完整解释保留在开关 title），「Switch」标签补 title，供应商卡内「＋添加模型」与「一键单模型」btn-primary→btn-secondary（页头主 CTA 唯一实心紫）；⑤**emoji→线性 SVG**：58 处代理对普查后的按钮/徽章/状态行可见面全清（⚡🔍🗑🛠⚙📥🔄🔒🔓→HMG_ICONS 新 9 字形 bolt/shield/trash/refresh/download/wrench/lock/unlock/search；🛡️代理/🧠状态行/💡/🔀/🌐/💾 去装饰），弹窗标题按既定先例保留作个性、注释不动；静态 HTML 宿主走新增 `hmgInjectIcons` data-icon 注入器保持单源，`.btn svg`/`.badge svg` 尺寸规则配套；⑥**汉堡修复**（评审 §16.6）：`hmg-burger` 误带 `theme-btn` 类致每切一次主题菜单图标被换成太阳/月亮，去掉类（一行修）；⑦其余：原生 select `appearance:none`+data-URI chevron 自绘（跨平台外观收编设计系统）、池成员移除 ✕ 加 `.danger-hover` 悬停显险、供应商 URL `.sub-clip` 单行截断+title 保全量、模型行 ID/名称单行截断（文字先收缩修徽章被挤换行参差）、身份色哈希种子掺长度（同前缀名不系统性落邻相，8 相位鸽笼碰撞如实注释）。回归 **287→289** 全绿（T40r 色板定稿锚点全套 + T40s 徽章语义/池卡分组/图标注入器/汉堡/哈希种子）；node --check 过；8660 双主题×双视口 DOM 断言（亮 s1/s2=#f5f6f6/#eceef1 冻结动画 finish 后实锤、模型行 nowrap+ellipsis、池卡 column/flex-end/dashed、select appearance:none、badge-warn 页面计数 0）+ 四象限截图 `gui-test-screenshots/v2_17_12_*.png`；评审 §16.2 鉴权修复经 `git log -S` 核实已随 v2.17.4 入库本轮零改动。纯资产改动**刷新即见**。
 
 **`v2.17.11`** — **🔖 hmg-admin 品牌版本完整显示 + 余额查询就近化（反馈：①左上角版本没显示完全 ②供应商余额查询按钮太远布局不好）**：①**品牌行堆叠**：版本串含提交哈希（如 `v2.17.10 · 32e6f2c`，~17 字符）在 logo+网关名同行放不下，`flex:1+右对齐省略号`恒截断——改为 `.brand-txt` 列容器（名称上/版本下，logo 垂直居中跨两行），任何侧栏宽度完整可见；`.ver` 保留 ellipsis 仅作极端兜底；两处断点选择器同步（≤1199 图标条隐藏 `.brand-txt`、<767 抽屉恢复 `display:flex`）。②**余额查询就近化**：查明全面板**不存在独立查询按钮**（查询只随编辑弹窗「保存」触发——查询动作与保存耦合且离显示位最远）；供应商卡片头部余量徽章（`pq-inline`）后新增 **⟳ 立即查询**（`.pq-refresh` 22×18px 幽灵小钮，仅已绑定供应商渲染；`pqRefreshNow` PUT **原绑定字段** `platform/enabled` 原样回传——服务端「显式提交才覆盖」语义下其余字段保持原值，收到 PUT 即 `refresh_binding`+落盘结果文件；完成后走 `pqSyncBindings` 唯一通道重绘徽章，toast 反馈 ok/unset/失败三态；spin 态 `hmgSpin` 复用+disabled 防连点；零后端改动）。18px 高 <22.5px 标题行盒不膨胀（v2.17.5 行内三件套）。回归 **286→287** 全绿（T40q：brand 堆叠结构/旧单行标记移除/断点同步/pqRefreshNow/⟳ 注入/PUT 原字段锚点）；node --check 过；8660 实证：版本 `v2.17.2 · 1851e44` 完整可见（stacked+无截断 DOM 断言），⟳ 与余量徽章同容器就近在位，真点击 toast「余额已刷新」+spin 清理；截图 gui-test-screenshots/v2_17_11_brand_quota_refresh.png。纯资产改动**刷新即见**。
 

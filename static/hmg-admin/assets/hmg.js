@@ -22,6 +22,16 @@ const HMG_ICONS = {
   menu: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>',
   folder: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>',
   cog: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1"/></svg>',
+  /* v2.17.12（工作单 §16.5）：卡片内按钮/徽章 emoji 全量换线性 SVG（弹窗标题按 §13 先例保留作个性，注释不涉观感） */
+  bolt: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg>',
+  shield: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 4 5.5V11c0 5 3.4 8.6 8 10 4.6-1.4 8-5 8-10V5.5L12 2z"/></svg>',
+  trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>',
+  refresh: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.85 1 6.57 2.57L21 8"/><path d="M21 3v5h-5"/></svg>',
+  download: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg>',
+  wrench: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>',
+  lock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>',
+  unlock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.9-.9"/></svg>',
+  search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>',
 };
 /* 主题图标：暗色显太阳（点击切亮），亮色显月亮（点击切暗）——统一线性 SVG，不用 emoji（廉价感来源） */
 function hmgThemeIcon(t) { return (t === "light") ? HMG_ICONS.moon : HMG_ICONS.sun; }
@@ -109,9 +119,11 @@ function hmgEsc(s) {
   return String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 function hmgPathEnc(s) { return encodeURIComponent(String(s == null ? "" : s)); }
-/** 身份色相位（v2.17.4）：名字哈希 → 0..7，同名词恒同色（头像/池点/池 chip 共用）。 */
+/** 身份色相位（v2.17.4；v2.17.12 种子掺长度）：名字哈希 → 0..7，同名词恒同色（头像/池点/池 chip 共用）。
+    种子取长度：仅同前缀/同尾缀的名字不再系统性落邻相（如 auto/arkflash 同首字母曾挤邻相位）；
+    8 相位哈希碰撞在数学上不可免（鸽笼），此处只消解「同形又邻色」的扫读失效形态。 */
 function hmgHue(s) {
-  let h = 0;
+  let h = String(s == null ? "" : s).length;
   const str = String(s == null ? "" : s);
   for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) >>> 0;
   return h % 8;
@@ -371,7 +383,7 @@ function hmgRenderShell() {
   if (bar) {
     const cur = HMG_NAV.find(n => n.id === page);
     bar.innerHTML = `
-      <button class="btn btn-ghost theme-btn" id="hmg-burger" aria-label="菜单">${HMG_ICONS.menu}</button>
+      <button class="btn btn-ghost" id="hmg-burger" aria-label="菜单" title="菜单">${HMG_ICONS.menu}</button>
       <span class="pg">${hmgEsc(cur ? cur.label : "HMG 网关")}</span>
       <span class="sp"></span>
       <button class="theme-btn" onclick="hmgToggleTheme()">${hmgThemeIcon(hmgTheme())}</button>`;
@@ -381,6 +393,17 @@ function hmgRenderShell() {
   const mk = document.getElementById("hmg-drawermask");
   if (mk) mk.onclick = () => document.body.classList.remove("drawer-open");
 }
+
+/* v2.17.12：静态 HTML 宿主的图标注入——<button data-icon="refresh">文案</button> 首插线性 SVG（保持 HMG_ICONS 单源）；
+   动态渲染的内容直接用 ${HMG_ICONS.x} 插值，不走此通道。 */
+function hmgInjectIcons(root) {
+  (root || document).querySelectorAll("[data-icon]").forEach(el => {
+    const svg = HMG_ICONS[el.getAttribute("data-icon")];
+    if (svg && !el.__iconDone) { el.insertAdjacentHTML("afterbegin", svg); el.__iconDone = true; }
+  });
+}
+if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", () => hmgInjectIcons());
+else hmgInjectIcons();
 
 /* 全局暴露（页面业务 JS 直接用这些名字） */
 window.HMG = {
@@ -394,6 +417,7 @@ window.HMG = {
   renderShell: hmgRenderShell,
   hue: hmgHue, avatar: hmgAvatar, avatarDot: hmgAvatarDot, busy: hmgBusy,
   flipMove: hmgFlipMove,
+  injectIcons: hmgInjectIcons,
   isTouch: !!(window.matchMedia && window.matchMedia("(hover: none), (pointer: coarse)").matches),
 };
 
@@ -519,7 +543,7 @@ function grpWrapHtml(kind, items) {
         <span class="grp-count">${(g.members || []).length}</span>
         <button class="grp-x" title="删除分组（成员回到未分组）" onclick="event.stopPropagation();grpDelGroup('${kind}','${HMG.esc(g.id)}')">✕</button>
       </div>
-      <div class="grp-body">${members || '<div class="grp-empty">把卡片拖进来，或点卡片上的 📂 归组</div>'}</div>
+      <div class="grp-body">${members || '<div class="grp-empty">把卡片拖进来，或点卡片上的「归组」按钮</div>'}</div>
     </div>`;
   });
   const restItems = items.filter(i => !inGroup.has(i.id));
@@ -617,11 +641,11 @@ function grpMgmtRender() {
         <span class="grp-mgmt-ops">
           <button title="上移（展示顺序前移）"${i === 0 ? " disabled" : ""} onclick="grpMgmtMove('${kind}','${HMG.esc(g.id)}',-1)">↑</button>
           <button title="下移（展示顺序后移）"${i === gs.length - 1 ? " disabled" : ""} onclick="grpMgmtMove('${kind}','${HMG.esc(g.id)}',1)">↓</button>
-          <button class="grp-mgmt-del" title="删除分组（成员卡片回到未分组，不影响模型/池本身）" onclick="grpMgmtDelete('${kind}','${HMG.esc(g.id)}')">🗑</button>
+          <button class="grp-mgmt-del" title="删除分组（成员卡片回到未分组，不影响模型/池本身）" onclick="grpMgmtDelete('${kind}','${HMG.esc(g.id)}')">${HMG_ICONS.trash}</button>
         </span>
         <span class="grp-mgmt-name" title="点击重命名" onclick="grpMgmtRename('${kind}','${HMG.esc(g.id)}')">${HMG.esc(g.name)}</span>
         <span class="grp-mgmt-count">${(g.members || []).length} 成员</span>
-      </div>`).join("") : '<div class="grp-mgmt-empty">暂无分组——启用收纳后点卡片 📂 创建</div>');
+      </div>`).join("") : '<div class="grp-mgmt-empty">暂无分组——启用收纳后点卡片上的「归组」按钮创建</div>');
   });
 }
 function grpMgmtMove(kind, gid, dir) {
@@ -646,10 +670,10 @@ function grpOpenSettings() {
     title: "⚙️ 分组收纳设置",
     body: `
       <label class="chk" style="justify-content:space-between"><span style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="grp-set-models"> 启用「模型管理」分组收纳</span>
-        <button type="button" class="btn btn-ghost btn-sm grp-row-cog" data-kind="providerGroups" onclick="grpMgmtToggle('providerGroups')">⚙️ 管理</button></label>
+        <button type="button" class="btn btn-ghost btn-sm grp-row-cog" data-kind="providerGroups" onclick="grpMgmtToggle('providerGroups')">${HMG_ICONS.cog} 管理</button></label>
       <div class="grp-mgmt-box" id="grp-mgmt-providerGroups" hidden></div>
       <label class="chk" style="justify-content:space-between"><span style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="grp-set-pools"> 启用「模型池」分组收纳</span>
-        <button type="button" class="btn btn-ghost btn-sm grp-row-cog" data-kind="poolGroups" onclick="grpMgmtToggle('poolGroups')">⚙️ 管理</button></label>
+        <button type="button" class="btn btn-ghost btn-sm grp-row-cog" data-kind="poolGroups" onclick="grpMgmtToggle('poolGroups')">${HMG_ICONS.cog} 管理</button></label>
       <div class="grp-mgmt-box" id="grp-mgmt-poolGroups" hidden></div>
       <div class="hint">分组数据服务端镜像（全端共享），不影响调用、配额与后端排序持久化。「📊 分组查看」在用量统计页随时可用。</div>`,
     footer: [{ label: "关闭", cls: "btn btn-secondary", onClick: ({ close }) => close() }],

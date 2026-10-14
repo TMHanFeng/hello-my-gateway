@@ -2518,6 +2518,40 @@ def main():
               and ".hmg-brand .brand-txt" in _hmgcss and ".hmg-brand .ver {" in _hmgcss
               and all(s in _pages40["model"].text for s in ("function pqRefreshNow", 'class="pq-refresh"',
                   "platform: b.platform, enabled: !!b.enabled", ".pq-refresh.spin")), None)
+        # v2.17.12 双主题色板定稿（工作单 §16.3/§16.4）：亮色 surface-2 塌陷单值修复 + 全梯/hairline/阴影加深 + 双主题 ink 提色；
+        # 原生 select 自绘箭头收编设计系统；危险钮 hover 显险工具类；ink-tertiary 使用面约束落 rsn-neutral
+        check("T40r 色板定稿(亮surface阶梯+hairline+阴影/暗ink提色/select自绘/danger-hover/rsn-neutral约束)",
+              all(s in _hmgcss for s in ("--surface-2: #eceef1;", "--surface-3: #e4e7ec;", "--surface-4: #dcdfe6;",
+                  "--hairline: #d5d9e0;", "--hairline-strong: #bfc5cf;", "--hairline-tertiary: #aab1bf;",
+                  "--ink-subtle: #5a5f6a;", "--ink-tertiary: #6b707c;", "rgba(22, 23, 27, .06), 0 4px 16px -8px rgba(22, 23, 27, .10)",
+                  "--ink-subtle: #9ea4bb;", "--ink-tertiary: #7e859c;",
+                  "select.inp {\n  appearance: none;", ".btn-ghost.danger-hover:hover", ".btn svg { width: 14px"))
+              and "appearance: auto" not in _hmgcss
+              and "color: var(--ink-subtle); }  /* v2.17.12：surface-2 底按约束用 ink-subtle" in _pages40["logs"].text, None)
+        # v2.17.12 徽章语义/布局分组/emoji→线性 SVG（工作单 §16.5/§16.6/§16.8）：badge-warn 只留真告警、
+        # 池卡控件两行分组、note-box 降权、汉堡去 theme-btn、身份色哈希种子掺长度、data-icon 静态图标注入器
+        check("T40s 徽章语义+布局分组+emoji换SVG(badge-warn仅告警/池卡两行分组/note-box降权/汉堡修复/哈希种子/图标注入器)",
+              'badge badge-warn" title="付费模型' not in _pages40["model"].text
+              and all(s in _pages40["model"].text for s in (
+                  'if (m.token_type === "one_time") return \'<span class="badge" title="一次性额度：用完即止">一次性</span>\';',
+                  '<span class="badge" title="付费模型">付费</span>', 'badge badge-warn">${s.status === "rate_limited"',
+                  ".card-sub.sub-clip", ".model-row .model-id { font-weight: 600; font-size: 13.5px; letter-spacing: -.1px; flex: 0 1 auto; min-width: 48px; max-width: 340px; white-space: nowrap;",
+                  "${HMG_ICONS.bolt} 测速", "${HMG_ICONS.cog}</button>", 'btn btn-secondary btn-sm" onclick="showAddUnder'))
+              and all(s in _pages40["pools"].text for s in (
+                  ".pool-head-ctls { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }",
+                  'class="pool-switches"', 'class="pool-actions"',
+                  "专属池 · Key#${esc(pool.owner_key_id)}</span>` : \"\";", '<span class="badge" title="嵌套子池">子池</span>',
+                  'btn-ghost btn-sm danger-hover"', "${HMG_ICONS.unlock} 解除锁定",
+                  "onclick=\"openSingleMode()\">一键单模型</button>"))
+              and ".pool-actions { padding-top: 8px; border-top: 1px dashed var(--hairline); }" in _pages40["pools"].text
+              and "color: var(--ink-subtle); border-left: 2px solid var(--hairline-strong); padding: 2px 0 2px 10px;" in _pages40["pools"].text
+              and all(s in _hmgjs for s in (
+                  '<button class="btn btn-ghost" id="hmg-burger" aria-label="菜单" title="菜单">',
+                  "let h = String(s == null ? \"\" : s).length;",
+                  "bolt: '<svg", "shield: '<svg", "trash: '<svg", "refresh: '<svg", "unlock: '<svg", "search: '<svg",
+                  "function hmgInjectIcons", "injectIcons: hmgInjectIcons"))
+              and 'data-icon="refresh"' in _pages40["plugins"].text
+              and 'data-icon="trash"' in _pages40["keys"].text, None)
         # v2.17.8 拖拽丝滑化：FLIP 换位滑移（hmg.js 共享助手）+ rAF 合帧 + 异步变淡保拖影 + Firefox setData + 落点仅在保存失败时重渲
         check("T40n 拖拽丝滑化(FLIP助手flipMove/四拖拽面接线/rAF合帧/异步变淡/setData/失败才重渲/.dragging标记)",
               all(s in _hmgjs for s in ("function hmgFlipMove", "flipMove: hmgFlipMove", "prefers-reduced-motion: reduce"))

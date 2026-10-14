@@ -60,8 +60,8 @@ pre.codeblock { background: var(--surface-2); border: 1px solid var(--hairline);
   <div class="page-head">
     <h1>插件中心</h1><span class="sub">网关选配功能以插件形式热插拔：启用 / 停用 / 改配置即时生效（无需重启）；未启用的插件完全旁路</span><span class="sp"></span>
     <div class="toolbar">
-      <button class="btn btn-secondary btn-sm" onclick="scanPlugins()">🔄 扫描新插件</button>
-      <button class="btn btn-ghost btn-sm" onclick="pcOpenHowto()">📦 自定义插件指南</button>
+      <button class="btn btn-secondary btn-sm" data-icon="refresh" onclick="scanPlugins()">扫描新插件</button>
+      <button class="btn btn-ghost btn-sm" onclick="pcOpenHowto()">自定义插件指南</button>
     </div>
   </div>
   <div class="pc-grid" id="pc-grid"><div class="empty">加载中…</div></div>
@@ -94,8 +94,8 @@ function pcCard(p) {
     + ' onchange="togglePlugin(\'' + jsq(p.id) + '\', this.checked)"><i></i></label></div>'
     + '<div class="pc-desc">' + esc(p.description || "") + "</div>"
     + '<div class="pc-meta">v' + esc(p.version) + (p.author ? " · " + esc(p.author) : "") + " · " + (p.has_code ? "含代码" : "纯配置") + "</div>"
-    + (p.ui_hint ? '<div class="pc-hint">💡 ' + esc(p.ui_hint) + "</div>" : "")
-    + '<div class="pc-actions"><button class="btn btn-ghost btn-sm" onclick="openPluginSettings(\'' + jsq(p.id) + '\')">⚙ 插件设置</button></div>'
+    + (p.ui_hint ? '<div class="pc-hint">' + esc(p.ui_hint) + "</div>" : "")
+    + `<div class="pc-actions"><button class="btn btn-ghost btn-sm" onclick="openPluginSettings('${jsq(p.id)}')">${HMG_ICONS.cog} 插件设置</button></div>`
     + "</div>";
 }
 async function togglePlugin(id, on) {
@@ -126,7 +126,7 @@ function pcOpenHowto() {
         ① 在 <b>app/plugins/installed/</b> 下新建文件夹（如 <span class="mono">my_plugin</span>）；<br>
         ② 放入 <b>manifest.json</b>（必填 <span class="mono">id / name / version</span>）——仅凭清单即可获得一张可启停、可存配置的插件卡片（纯配置型插件，零代码）；<br>
         ③ 需要代码能力再加 <b>plugin.py</b>：暴露 <span class="mono">create_plugin(manifest)</span> 工厂或模块级 <span class="mono">PLUGIN</span> 实例，继承 GatewayPlugin——<span class="mono">on_enable/on_disable</span> 热插拔（可注册/注销路由）、<span class="mono">router</span> 自带 API（挂载于 /admin/plugin_settings/&lt;id&gt;）、<span class="mono">active_compressor</span> 出站压缩 hook；<br>
-        ④ 回插件中心点「🔄 扫描新插件」——卡片立即出现，全程无需重启网关。
+        ④ 回插件中心点「扫描新插件」——卡片立即出现，全程无需重启网关。
       </div>
       <pre class="codeblock">{
   "id": "my_plugin",
@@ -152,7 +152,7 @@ async function openSwitchSettings() {
   const pools = d.pools || {};
   const rows = Object.entries(pools).map(([name, cfg]) =>
     '<div class="pc-row"><b style="flex:1">' + esc(name) + "</b>"
-    + (cfg.switch_enabled ? '<span class="badge badge-ok">🔀 Switch 已开启</span>' : "<span class=\"badge\">未开启</span>")
+    + (cfg.switch_enabled ? '<span class="badge badge-ok">Switch 已开启</span>' : "<span class=\"badge\">未开启</span>")
     + '<span style="opacity:.55;font-size:11.5px">' + ((cfg.model_ids || []).length) + " 个模型</span></div>").join("");
   switchModal = HMG.modal({
     title: "🔀 Switch 切换池 · 插件设置",
@@ -208,7 +208,7 @@ async function openHeadroomSettings() {
     footer: [
       { label: "节省统计", cls: "btn btn-ghost", onClick: () => showHeadroomStats() },
       { label: "关闭", cls: "btn btn-secondary", onClick: ({ close }) => close() },
-      { label: "💾 保存（立即热生效）", cls: "btn btn-primary", onClick: () => saveHeadroomSettings() },
+      { label: "保存（立即热生效）", cls: "btn btn-primary", onClick: () => saveHeadroomSettings() },
     ],
   });
   document.getElementById("hr-en").checked = d.enabled;
@@ -264,7 +264,7 @@ async function openGenericSettings(id) {
     body: html,
     footer: [
       { label: "取消", cls: "btn btn-secondary", onClick: ({ close }) => close() },
-      { label: "💾 保存（立即热生效）", cls: "btn btn-primary", onClick: () => savePluginConfig() },
+      { label: "保存（立即热生效）", cls: "btn btn-primary", onClick: () => savePluginConfig() },
     ],
   });
 }
@@ -290,7 +290,7 @@ function pcField(f, val, poolNames) {
       const sel = new Set(String(val === undefined || val === null ? "" : val).split(/[,;，；\s]+/).filter(Boolean));
       const all = !sel.size;
       inp = '<div class="pc-pool-list" id="' + id + '-list">'
-        + '<label class="pc-pool-item"><input type="checkbox" data-pcf-all ' + (all ? "checked" : "") + ' onchange="pcPoolsAll(this)"><span>🌐 全部池（默认）</span></label>'
+        + '<label class="pc-pool-item"><input type="checkbox" data-pcf-all ' + (all ? "checked" : "") + ' onchange="pcPoolsAll(this)"><span>全部池（默认）</span></label>'
         + poolNames.map(n => '<label class="pc-pool-item"><input type="checkbox" data-pcf-pool="' + esc(n) + '" ' + (sel.has(n) ? "checked" : "") + (all ? " disabled" : "") + "><span>" + esc(n) + "</span></label>").join("")
         + "</div>";
     }

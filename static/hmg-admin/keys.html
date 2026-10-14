@@ -299,7 +299,7 @@ async function loadKeyOwnPool() {
   } else {
     st.innerHTML = `专属池：<b class="mono" style="color:var(--accent-hover)">${esc(data.pool.name)}</b>（${(data.pool.model_ids || []).length} 个模型）
       <div style="margin-top:8px">
-        <button class="btn btn-danger btn-sm" onclick="deleteKeyOwnPool()">🗑 删除专属池</button>
+        <button class="btn btn-danger btn-sm" data-icon="trash" onclick="deleteKeyOwnPool()">删除专属池</button>
         <span class="hint" style="margin-left:8px;display:inline">编辑请在「模型池」页切换到专属池模式</span>
       </div>`;
   }

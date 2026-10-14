@@ -24,8 +24,8 @@
   --hairline-tertiary: #565b73;
   --ink: #e9ebf3;
   --ink-muted: #c6cadb;
-  --ink-subtle: #9297ab;
-  --ink-tertiary: #6b7186;
+  --ink-subtle: #9ea4bb;   /* v2.17.12 提一档：surface-4 上 4.6:1 达 AA（原 #9297ab 仅 3.9） */
+  --ink-tertiary: #7e859c; /* v2.17.12 提一档：surface-1 上 4.4:1（原 #6b7186 仅 3.3）。使用面约束：只许在 canvas/surface-1 上用，更抬表面一律改用 ink-subtle（AA 与第三级层级不可兼得，工作单 §16.4） */
   --accent: #5e6ad2;
   --accent-hover: #828fff;
   --accent-focus: #5e69d1;
@@ -72,19 +72,21 @@
 }
 :root[data-theme="light"] {
   color-scheme: light;
-  /* 亮色 = inverse-canvas/surface-1/2/ink 原样 + 派生阶梯（工作单 §2.2） */
+  /* 亮色 = inverse-canvas/surface-1/ink 原样 + 派生阶梯（工作单 §2.2）。
+     v2.17.12 修亮色塌陷（工作单 §16.3）：原 surface-2 #f6f7f7 与 surface-1 仅差 ΔL*0.35（1.01:1 ≈ 同色），
+     卡片/侧栏选中/徽章/次按钮全糊成一片；现全梯 ΔL*≈2.5-2.8 均匀可辨，hairline/阴影两条深度线索同步加 深。 */
   --canvas: #ffffff;
   --surface-1: #f5f6f6;
-  --surface-2: #f6f7f7;
-  --surface-3: #ebecee;  /* 派生 */
-  --surface-4: #e4e5e8;  /* 派生 */
-  --hairline: #e2e3e5;   /* 派生 */
-  --hairline-strong: #d0d2d5;  /* 派生 */
-  --hairline-tertiary: #c3c5c9; /* 派生 */
+  --surface-2: #eceef1;   /* 原 #f6f7f7（塌陷元凶） */
+  --surface-3: #e4e7ec;   /* 派生 */
+  --surface-4: #dcdfe6;   /* 派生 */
+  --hairline: #d5d9e0;    /* 原 #e2e3e5 在白卡上 1.19:1 几乎不可见 */
+  --hairline-strong: #bfc5cf;
+  --hairline-tertiary: #aab1bf;
   --ink: #16171b;
   --ink-muted: #3c3f44;  /* 派生 */
-  --ink-subtle: #62666d; /* 复用暗色 tertiary */
-  --ink-tertiary: #8a8f98; /* 复用暗色 subtle */
+  --ink-subtle: #5a5f6a; /* 原 #62666d：surface-4 上 2.58:1 不达 AA，提一档后 4.8:1 */
+  --ink-tertiary: #6b707c; /* 原 #8a8f98：surface-1 上仅 3.0:1；现 4.6:1。同暗色使用面约束（§16.4） */
   --overlay: rgba(22, 23, 27, .35); /* 派生 */
 
   --ok-ink: #177c31;   --ok-tint: rgba(39, 166, 68, .10);
@@ -98,7 +100,7 @@
   --edge: inset 0 1px 0 rgba(255, 255, 255, .85);
   --edge-btn: inset 0 1px 0 rgba(255, 255, 255, .9);
   --wash: rgba(22, 23, 27, .045);
-  --shadow-card: 0 1px 2px rgba(22, 23, 27, .05), 0 4px 16px -8px rgba(22, 23, 27, .07);
+  --shadow-card: 0 1px 2px rgba(22, 23, 27, .06), 0 4px 16px -8px rgba(22, 23, 27, .10);  /* v2.17.12：.05/.07 在白底上等于没有（§16.3） */
   --shadow-hover: 0 12px 32px -8px rgba(22, 23, 27, .16), 0 4px 12px rgba(22, 23, 27, .08);
   --shadow-pop: 0 24px 64px rgba(22, 23, 27, .16), 0 4px 16px rgba(22, 23, 27, .08);
   --sheen: linear-gradient(90deg, transparent, rgba(94, 106, 210, .45), transparent);
@@ -213,6 +215,9 @@ html.theming, html.theming * { transition: background-color .2s ease, color .2s 
 .side-ic svg { width: 13px; height: 13px; }
 .ic-btn { display: inline-flex; align-items: center; justify-content: center; color: var(--ink-subtle); }
 .ic-btn svg { width: 14px; height: 14px; }
+/* v2.17.12：按钮/徽章内联线性 SVG 的统一尺寸（§16.5 emoji 换 SVG 配套） */
+.btn svg { width: 14px; height: 14px; flex: none; }
+.badge svg { width: 12px; height: 12px; flex: none; }
 .ic-btn:hover { color: var(--ink); }
 
 .hmg-main { margin-left: 0; padding: 28px 32px 56px 244px; max-width: 1492px; animation: hmgIn .3s var(--ease-out) both; }
@@ -268,6 +273,8 @@ body.drawer-open #hmg-drawermask { opacity: 1; visibility: visible; pointer-even
 :root[data-theme="light"] .btn-danger:hover { filter: none; background: rgba(235, 87, 87, .14); }
 .btn-ghost { color: var(--ink-subtle); background: var(--wash); border-color: var(--hairline); }
 .btn-ghost:hover { background: var(--surface-2); border-color: var(--hairline-strong); color: var(--ink); }
+/* v2.17.12：安静危险钮——平时与 ghost 同形，悬停才显险（行内 ✕ 移除类操作；§16.5「危险操作权重过轻」的克制解） */
+.btn-ghost.danger-hover:hover { background: var(--err-tint); border-color: var(--err-line); color: var(--err-ink); }
 .btn:disabled { opacity: .45; cursor: not-allowed; transform: none; }
 
 /* ── 5. 表单 ──────────────────────────────────────────────── */
@@ -278,7 +285,12 @@ body.drawer-open #hmg-drawermask { opacity: 1; visibility: visible; pointer-even
 }
 .inp:hover { border-color: var(--hairline-strong); }
 .inp:focus { outline: none; border-color: var(--accent-focus); box-shadow: 0 0 0 2px var(--focus-ring); }
-select.inp { appearance: auto; }
+/* v2.17.12：原生 select 外观跨平台不可控（暗色箭头/底色不随 token），自绘 chevron 收编进设计系统（§16.5） */
+select.inp {
+  appearance: none; -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%238089a6' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 10px center; padding-right: 30px;
+}
 textarea.inp { resize: vertical; min-height: 64px; }
 .fld { display: block; font-size: 13px; color: var(--ink-muted); margin-bottom: 4px; }
 .fld .req { color: var(--danger); margin-left: 2px; }
@@ -557,6 +569,7 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .grp-mgmt-row:last-child { border-bottom: none; }
 .grp-mgmt-ops { display: flex; gap: 4px; }
 .grp-mgmt-ops button { width: 24px; height: 24px; border-radius: var(--r-xs); color: var(--ink-subtle); font-size: 12px; transition: background-color var(--t1) ease, color var(--t1) ease; }
+.grp-mgmt-ops button svg { width: 13px; height: 13px; }  /* v2.17.12：🗑→线性 SVG 后的尺寸 */
 .grp-mgmt-ops button:hover:not(:disabled) { background: var(--wash); color: var(--ink); }
 .grp-mgmt-ops button:disabled { opacity: .3; cursor: not-allowed; }
 .grp-mgmt-del:hover { color: var(--err-ink) !important; }
