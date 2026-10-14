@@ -31,6 +31,12 @@
 .rsn-skip { background: var(--surface-2); color: var(--ink-subtle); }
 .rsn-warn { background: var(--warn-tint); color: var(--warn-ink); }
 .rsn-neutral { background: var(--surface-2); color: var(--ink-subtle); }  /* v2.17.12：surface-2 底按约束用 ink-subtle（与 .rsn-skip 同规） */
+/* v2.17.13 吞吐 sparkline：随轮询推进的调用吞吐迷你图（§16.7「系统在运转」的本体信息，非装饰） */
+.live-spark { display: inline-flex; align-items: flex-end; margin-left: 10px; vertical-align: -3px; }
+.live-spark svg { display: block; }
+.live-spark .spark-head { animation: sparkHead 2s ease-in-out infinite; }
+@keyframes sparkHead { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+@media (max-width: 767px) { .live-spark { display: none; } }
 @keyframes logFlash { from { background: color-mix(in srgb, var(--accent) 14%, var(--surface-1)); } to { background: var(--surface-1); } }
 </style>
 </head>
@@ -40,7 +46,7 @@
 <div id="hmg-drawermask"></div>
 <main class="hmg-main">
   <div class="page-head">
-    <h1>调用记录</h1><span class="sub"><i class="live-dot"></i>每次调用的选模过程与切换依据。绿=选中，灰=排除，黄=切换</span><span class="sp"></span>
+    <h1>调用记录</h1><span class="sub"><i class="live-dot"></i>每次调用的选模过程与切换依据。绿=选中，灰=排除，黄=切换</span><span class="sp"></span><span class="live-spark" id="live-spark" title="近 4 分钟调用吞吐（每 5 秒轮询采样一次）" aria-hidden="true"></span>
     <div class="toolbar">
       <select id="log-pool-filter" class="inp" style="width:auto;min-width:140px" onchange="loadDecisions()">
         <option value="">全部池</option>
@@ -181,12 +187,42 @@ function decisionInner(d) {
       <div class="log-steps">${steps || '<span class="hint">无候选</span>'}</div>`;
 }
 
+/* v2.17.13 吞吐 sparkline：48 次采样（≈4 分钟）环形缓冲；var() 走 style 属性（SVG 表现属性不解析 CSS 变量） */
+const SPARK_N = 48;
+let sparkPts = [];
+function sparkRender() {
+  const box = document.getElementById("live-spark");
+  if (!box) return;
+  const W = 120, H = 26, n = sparkPts.length;
+  if (!n) { box.innerHTML = ""; return; }
+  const max = Math.max(1, ...sparkPts);
+  const step = W / (SPARK_N - 1);
+  const pts = sparkPts.map((v, i) =>
+    [(W - (n - 1 - i) * step).toFixed(1), (H - 3 - (v / max) * (H - 7)).toFixed(1)]);
+  const line = pts.map(p => p.join(",")).join(" ");
+  const head = pts[pts.length - 1];
+  box.innerHTML = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
+    <defs><linearGradient id="spark-fill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" style="stop-color:var(--accent);stop-opacity:.26"/>
+      <stop offset="1" style="stop-color:var(--accent);stop-opacity:0"/>
+    </linearGradient></defs>
+    ${n > 1 ? `<polygon points="${W},${H} ${line} ${pts[0][0]},${H}" fill="url(#spark-fill)" stroke="none"/>` : ""}
+    ${n > 1 ? `<polyline points="${line}" fill="none" style="stroke:var(--accent-hover)" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>` : ""}
+    <circle class="spark-head" cx="${head[0]}" cy="${head[1]}" r="2.2" style="fill:var(--accent-hover)"/>
+  </svg>`;
+}
+function sparkPush(v) {
+  sparkPts.push(v);
+  if (sparkPts.length > SPARK_N) sparkPts.shift();
+  sparkRender();
+}
 async function loadDecisions() {
   const seq = ++_logLoadSeq;
   const poolFilter = document.getElementById("log-pool-filter").value;
   const url = "/admin/decisions?limit=100" + (poolFilter ? "&pool=" + encodeURIComponent(poolFilter) : "");
   const data = await api(url);
   if (seq !== _logLoadSeq) return;   // 旧筛选的晚到响应：直接丢弃
+  if (data) sparkPush((data.decisions || []).length);   // 吞吐采样（空窗也如实落 0）
   const el = document.getElementById("log-list");
   if (!data) {
     el.querySelector(".empty")?.remove();

@@ -2552,6 +2552,27 @@ def main():
                   "function hmgInjectIcons", "injectIcons: hmgInjectIcons"))
               and 'data-icon="refresh"' in _pages40["plugins"].text
               and 'data-icon="trash"' in _pages40["keys"].text, None)
+        # v2.17.13 背景舷光 + 「系统在运转」三件套（§16.7 落地）+ 命中区扩大：暗/亮顶部 accent 光带、
+        # liveFlash 变化闪现（变了才闪）、logs 吞吐 sparkline（48 采样环形缓冲）、i-tip/pq-refresh/grp-x 透明外扩
+        check("T40t 舷光+系统活着三件套+命中区(暗亮顶部光带/liveFlash/sparkline环形缓冲/命中区外扩)",
+              all(t in _hmgcss for t in (
+                  "radial-gradient(1100px 360px at 50% -12%, rgba(130, 143, 255, .12), transparent 70%)",
+                  "radial-gradient(1100px 360px at 50% -12%, rgba(94, 106, 210, .07), transparent 70%)",
+                  ".live-chg { animation: liveFlash .8s var(--ease-out); }",
+                  "@keyframes liveFlash { 0% { color: var(--acc-ink); text-shadow: 0 0 14px var(--acc-tint); }",
+                  ".grp-x::before", ".grp-x { position: relative; }"))
+              and all(t in _hmgjs for t in ("function hmgLiveTxt", "liveTxt: hmgLiveTxt", "void el.offsetWidth;"))
+              and all(t in _pages40["stats"].text for t in (
+                  'setStatTxt(el, ".stat-used", x.used.toLocaleString(), true);',
+                  'n.classList.remove("live-chg"); void n.offsetWidth; n.classList.add("live-chg");',
+                  ".i-tip::before { content: \"\"; position: absolute; inset: -5px;"))
+              and all(t in _pages40["logs"].text for t in (
+                  'id="live-spark"', "const SPARK_N = 48;", "function sparkPush(",
+                  "if (data) sparkPush((data.decisions || []).length);",
+                  ".live-spark svg { display: block; }", '@media (max-width: 767px) { .live-spark { display: none; } }'))
+              and all(t in _pages40["pools"].text for t in (
+                  ".i-tip { position: relative;", ".i-tip::before { content: \"\"; position: absolute; inset: -5px;"))
+              and ".pq-refresh::before" in _pages40["model"].text, None)
         # v2.17.8 拖拽丝滑化：FLIP 换位滑移（hmg.js 共享助手）+ rAF 合帧 + 异步变淡保拖影 + Firefox setData + 落点仅在保存失败时重渲
         check("T40n 拖拽丝滑化(FLIP助手flipMove/四拖拽面接线/rAF合帧/异步变淡/setData/失败才重渲/.dragging标记)",
               all(s in _hmgjs for s in ("function hmgFlipMove", "flipMove: hmgFlipMove", "prefers-reduced-motion: reduce"))

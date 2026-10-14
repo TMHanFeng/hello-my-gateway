@@ -44,7 +44,8 @@ button.badge { cursor: pointer; border: none; font: inherit; font-size: 12px; }
 .stat-pct.warn { color: var(--warn-ink); }
 .stat-pct.err { color: var(--err-ink); }
 .stat-refresh { margin-left: auto; text-align: right; }
-.i-tip { display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; border-radius: 50%; background: var(--surface-3); color: var(--ink-subtle); font-size: 10px; font-style: normal; cursor: help; }
+.i-tip { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; border-radius: 50%; background: var(--surface-3); color: var(--ink-subtle); font-size: 10px; font-style: normal; cursor: help; }
+.i-tip::before { content: ""; position: absolute; inset: -5px; border-radius: 50%; }  /* v2.17.13 命中区 15→25px */
 /* 分组/外层系统组：区块占满整行，体内自建网格 */
 .stat-group, .stat-ogroup { grid-column: 1 / -1; }
 .stat-group-head, .stat-ogroup-head { display: flex; align-items: center; gap: 8px; padding: 4px 2px 8px; font-size: 14px; font-weight: 600; cursor: pointer; user-select: none; }
@@ -348,9 +349,12 @@ async function loadStats() {
   statRender(grid, items);
 }
 
-function setStatTxt(root, sel, txt) {
+function setStatTxt(root, sel, txt, live) {
   const n = root.querySelector(sel);
-  if (n && n.textContent !== txt) { n.textContent = txt; if (sel === ".stat-id" || sel === ".stat-name") n.title = txt; }   // 截断行的悬停全量
+  if (n && n.textContent !== txt) {
+    if (live && n.textContent) { n.classList.remove("live-chg"); void n.offsetWidth; n.classList.add("live-chg"); }   // v2.17.13：变了才闪一次
+    n.textContent = txt; if (sel === ".stat-id" || sel === ".stat-name") n.title = txt;   // 截断行的悬停全量
+  }
 }
 
 function statCardHTML(x, i) {
@@ -427,7 +431,7 @@ function statUpdateCard(el, x) {
   setStatTxt(el, ".stat-name", x.m.name + " · " + x.billing);
   const bd = el.querySelector(".stat-badges");
   if (bd && bd.innerHTML !== x.freeBadge + x.typeBadge + x.costBtn) bd.innerHTML = x.freeBadge + x.typeBadge + x.costBtn;
-  setStatTxt(el, ".stat-used", x.used.toLocaleString());
+  setStatTxt(el, ".stat-used", x.used.toLocaleString(), true);   // v2.17.13：活数变化闪现
   setStatTxt(el, ".stat-limit", x.limitText);
   setStatTxt(el, ".stat-unit", x.unit);
   const nums = el.querySelector(".stat-nums");
@@ -471,7 +475,7 @@ function statUpdateCard(el, x) {
   const pctEl = el.querySelector(".stat-pct");
   if (pctEl) {
     const pc = "stat-pct" + (x.cls === "full" ? " err" : x.cls === "warn" ? " warn" : "");
-    if (pctEl.textContent !== x.pctText) pctEl.textContent = x.pctText;
+    if (pctEl.textContent !== x.pctText) { if (pctEl.textContent) { pctEl.classList.remove("live-chg"); void pctEl.offsetWidth; pctEl.classList.add("live-chg"); } pctEl.textContent = x.pctText; }
     if (pctEl.className !== pc) pctEl.className = pc;
   }
   const rf = el.querySelector(".stat-refresh");

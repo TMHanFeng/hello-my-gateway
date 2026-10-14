@@ -49,13 +49,14 @@
 /* 余量徽章旁的「立即查询」：查询动作就近显示位（原先唯一入口在编辑弹窗的「保存」，太远）；
    18px 高 < 22.5px 标题行盒不膨胀，vertical-align:middle 对齐徽章（v2.17.5 行内小片三件套） */
 .pq-refresh {
-  width: 22px; height: 18px; margin-left: 2px; padding: 0; flex: none;
+  position: relative; width: 22px; height: 18px; margin-left: 2px; padding: 0; flex: none;
   border: 1px solid var(--hairline); border-radius: 5px; background: var(--wash); color: var(--ink-subtle);
   font-size: 11px; line-height: 1; cursor: pointer; vertical-align: middle; position: relative; top: -1px;
   transition: color var(--t1) var(--ease-out), border-color var(--t1) var(--ease-out), background var(--t1) var(--ease-out);
 }
 .pq-refresh:hover { color: var(--accent-hover); border-color: var(--hairline-strong); background: var(--surface-2); }
 .pq-refresh.spin { animation: hmgSpin .6s linear infinite; pointer-events: none; opacity: .8; }
+.pq-refresh::before { content: ""; position: absolute; inset: -4px; }  /* v2.17.13 命中区 22×18→30×26 */
 /* 移植表单网格（与原面板 .f2/.f3/.fg 同名同义；.fg/.form-sec 共享部分在 hmg.css） */
 .f2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .f3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }

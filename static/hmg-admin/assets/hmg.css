@@ -559,6 +559,8 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .grp-name { font-weight: 500; }
 .grp-count { color: var(--ink-tertiary); font-size: 12px; }
 .grp-x { margin-left: auto; width: 22px; height: 22px; border-radius: var(--r-xs); color: var(--ink-tertiary); font-size: 12px; transition: background-color var(--t1) ease, color var(--t1) ease, transform 160ms var(--ease-out); }
+.grp-x { position: relative; }
+.grp-x::before { content: ""; position: absolute; inset: -4px; border-radius: var(--r-xs); }  /* v2.17.13 命中区 22→30px */
 .grp-x:hover { background: var(--err-tint); color: var(--err-ink); }
 .grp-x:active { transform: scale(.92); }
 .grp-body { display: grid; gap: 12px; padding: 12px 2px 2px; }
@@ -600,6 +602,9 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .empty.loading::after { content: ""; position: absolute; inset: 0; background: linear-gradient(100deg, transparent 32%, var(--wash) 50%, transparent 68%); transform: translateX(-100%); animation: skelSweep 1.5s linear infinite; }
 @keyframes skelSweep { to { transform: translateX(100%); } }
 /* 活跃点：5s 轮询页的「活着」指示（emil：状态指示动效，2.4s 慢脉冲不抢焦点） */
+/* v2.17.13 轮询数值变化反馈（emil：状态指示目的；变了才闪一次，不变零动画） */
+.live-chg { animation: liveFlash .8s var(--ease-out); }
+@keyframes liveFlash { 0% { color: var(--acc-ink); text-shadow: 0 0 14px var(--acc-tint); } 100% { text-shadow: 0 0 0 transparent; } }
 .live-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--success); margin-right: 6px; vertical-align: 1px; animation: livePulse 2.4s ease-out infinite; }
 @keyframes livePulse { 0% { box-shadow: 0 0 0 0 rgba(39, 166, 68, .40); } 70% { box-shadow: 0 0 0 6px rgba(39, 166, 68, 0); } 100% { box-shadow: 0 0 0 0 rgba(39, 166, 68, 0); } }
 /* 按钮忙态：异步动作的立即反馈（旋转快 = 感知更快；hmg.js hmgBusy 驱动） */
@@ -636,13 +641,15 @@ body::before {
   background:
     radial-gradient(130% 100% at 50% 28%, transparent 55%, rgba(4, 5, 9, .38) 100%),
     var(--noise-url),
+    /* v2.17.13 舷光：顶部一道 accent 光带——「仪表舱顶光」是全场唯一的大胆笔触（frontend-design：boldness 花在一处） */
+    radial-gradient(1100px 360px at 50% -12%, rgba(130, 143, 255, .12), transparent 70%),
     radial-gradient(720px 340px at 22% -6%, rgba(94, 106, 210, .11), transparent 70%),
     radial-gradient(860px 460px at 84% -14%, rgba(76, 159, 254, .07), transparent 70%),
     linear-gradient(rgba(255, 255, 255, .024) 1px, transparent 1px),
     linear-gradient(90deg, rgba(255, 255, 255, .024) 1px, transparent 1px),
     linear-gradient(rgba(255, 255, 255, .013) 1px, transparent 1px),
     linear-gradient(90deg, rgba(255, 255, 255, .013) 1px, transparent 1px);
-  background-size: auto, 180px 180px, auto, auto, 44px 44px, 44px 44px, 264px 264px, 264px 264px;
+  background-size: auto, 180px 180px, auto, auto, auto, 44px 44px, 44px 44px, 264px 264px, 264px 264px;
 }
 body::after {
   content: ""; position: fixed; top: -240px; left: 6%; width: 620px; height: 460px; z-index: -1;
@@ -661,6 +668,8 @@ body::after {
 :root[data-theme="light"] body::before {
   background:
     var(--noise-url),
+    /* v2.17.13 亮色同位粉彩舷光（晨空冷带） */
+    radial-gradient(1100px 360px at 50% -12%, rgba(94, 106, 210, .07), transparent 70%),
     radial-gradient(720px 340px at 22% -6%, rgba(94, 106, 210, .09), transparent 70%),
     radial-gradient(860px 420px at 84% -12%, rgba(64, 205, 255, .06), transparent 70%),
     radial-gradient(640px 400px at 88% 110%, rgba(148, 84, 220, .055), transparent 70%),
@@ -668,7 +677,7 @@ body::after {
     linear-gradient(90deg, rgba(22, 23, 27, .022) 1px, transparent 1px),
     linear-gradient(rgba(22, 23, 27, .012) 1px, transparent 1px),
     linear-gradient(90deg, rgba(22, 23, 27, .012) 1px, transparent 1px);
-  background-size: 180px 180px, auto, auto, auto, 44px 44px, 44px 44px, 264px 264px, 264px 264px;
+  background-size: 180px 180px, auto, auto, auto, auto, 44px 44px, 44px 44px, 264px 264px, 264px 264px;
 }
 /* 亮色极光：display:none 改粉彩版（同位同动画，仅换色）——白底上的甜点感 */
 :root[data-theme="light"] body::after {

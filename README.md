@@ -90,7 +90,7 @@ data/ 运行时数据（gateway.db、探测缓存、dev pid），与代码隔离
 
 | 🧠 统一思考控制 | 🧪 计费回归安全网 | 📐 智能估算超时 |
 |:---|:---|:---|
-| `reasoning_effort` 六档 → 按模型 `reasoning_map` 换算上游思考参数；思考内容统一回传 `reasoning_content` / `thinking` | 289 断言计费回归套件（`test_billing_regression.py`）：流式/非流式/一次性/RPM 触顶/安全阀/并发入账零丢失，任何改动先跑套件再上线 | `smart_estimate` 模型按 token 量动态计算超时（吞吐 EMA 校准），样本不足自动回退固定值 |
+| `reasoning_effort` 六档 → 按模型 `reasoning_map` 换算上游思考参数；思考内容统一回传 `reasoning_content` / `thinking` | 290 断言计费回归套件（`test_billing_regression.py`）：流式/非流式/一次性/RPM 触顶/安全阀/并发入账零丢失，任何改动先跑套件再上线 | `smart_estimate` 模型按 token 量动态计算超时（吞吐 EMA 校准），样本不足自动回退固定值 |
 
 | 📡 Embedding / Rerank | 🔑 用户密钥管理 | 📄 JSON 输出路由 |
 |:---|:---|:---|
@@ -171,7 +171,7 @@ python -m app.main
 >
 > 💡 **Ubuntu / Linux**：`python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt && python3 -m app.main`，或直接 `./start_gateway.sh`（自动选 venv/系统解释器；停止 `./stop_gateway.sh`）。代码本身跨平台：运行时目录（data/ logs/ backup/）首次启动自动创建，路径处理与日志滚动均适配 POSIX 文件系统。回归套件同样可在 Linux 运行：`python tests/test_billing_regression.py`。
 >
-> 🧪 **改动计费相关代码后**：`python tests/test_billing_regression.py` 运行 289 断言计费回归套件（自动在 8678 起隔离实例 + mock 上游，不触碰生产端口），全绿再上线。
+> 🧪 **改动计费相关代码后**：`python tests/test_billing_regression.py` 运行 290 断言计费回归套件（自动在 8678 起隔离实例 + mock 上游，不触碰生产端口），全绿再上线。
 
 ---
 
@@ -219,7 +219,7 @@ hello-my-gateway/
 │   ├── index.html                # 传统管理后台（/admin）
 │   └── hfadmin.html              # 科技感管理面板（/hfadmin）
 ├── tests/
-│   └── test_billing_regression.py # 计费回归套件（289 断言，隔离实例 + mock 上游）
+│   └── test_billing_regression.py # 计费回归套件（290 断言，隔离实例 + mock 上游）
 ├── start_gateway.cmd             # Windows 启动入口（自动选解释器，幂等）
 ├── stop_gateway.cmd              # 停止入口（身份核验，只停本仓库网关）
 ├── start_gateway.sh              # Linux/macOS 启动入口（语义同 .cmd：选解释器 + 已运行自检）
@@ -646,7 +646,7 @@ SQLite（`gateway.db`）持久化以下表：
 
 ### 最新
 
-### 最新
+**`v2.17.13`** — **🌌 hmg-admin 舷光背景 + 「系统在运转」三件套 + 命中区扩大（反馈：背景单一/要科技感；frontend-design + emil-design-eng 定调：大胆只花一处、动效必须有目的且 <300ms）**：①**舷光**（全场唯一大胆笔触）：暗色 body::before 顶部新增 `1100px×360px at 50% -12%` accent 光带（rgba(130,143,255,.12)，与既有 22%/84% 两盏顶辉光叠成「仪表舱顶光」，随 ambientDrift 38s 漂移+透明度 .72↔1 呼吸），亮色同位粉彩 .07（晨空冷带）；舷光在 vignette 透明区内，文本对比度不受影响；②**轮询数值变化闪现**：hmg.js 新增 `hmgLiveTxt`（文本变了才触发一次 `.live-chg` tint 闪现 0.8s ease-out——color+text-shadow 起始态过渡回原样，不变零动画、首渲不闪），stats 页 `.stat-used`/`.stat-pct` 两个活数接线（5s 轮询的数字跳动首次有视觉反馈，§16.7「没有一个动效表达系统在运转」的落地）；③**logs 吞吐 sparkline**：页头 120×26 内联 SVG 迷你图，48 次采样（≈4 分钟）环形缓冲，每次轮询 push 当前 decisions 数（空窗如实落 0），accent 折线+渐变面积+头部呼吸点；SVG 颜色走 style 属性（表现属性不解析 CSS 变量的坑），<768 隐藏；④**命中区扩大**（易操作）：i-tip ⓘ（15→25px）、pq-refresh ⟳（22×18→30×26）、grp-x 🗑（22→30px）——视觉尺寸不变、透明 ::before 外扩；⑤自检确认对齐已稳不动（页头 46/46 居中、stat 数字行 147/308/469 齐平）。回归 **289→290** 全绿（T40t：舷光双主题锚点/liveFlash/sparkline 环形缓冲/命中区外扩）；顺修 v2.17.12 插条目时「### 最新」标题重复一次的笔误；node --check 过；8660 双主题×双视口复验。纯资产改动**刷新即见**。
 
 **`v2.17.12`** — **🎨 hmg-admin 双主题色板定稿 + 徽章语义/布局分组 + emoji 换线性 SVG（按他线工作单《美化工作单-hmg-admin.md》§16 评审清单逐条核实实施，回填 §17）**：①**亮色塌陷修复**（评审实测 surface-1/2 仅 1.01:1 同色）：`--surface-2` #f6f7f7→#eceef1、surface-3/4→#e4e7ec/#dcdfe6（全梯 ΔL*≈2.5-2.8 均匀可辨，卡片/侧栏选中/徽章/次按钮不再糊成一片）、hairline 三档 #d5d9e0/#bfc5cf/#aab1bf（顺修 tertiary 反超 strong 的断梯）、卡片阴影 .05/.07→.06/.10；②**双主题 ink 提色 + 使用面约束**：暗 ink-subtle→#9ea4bb（surface-4 上 4.6:1 达 AA）、ink-tertiary→#7e859c，亮 ink-subtle→#5a5f6a、ink-tertiary→#6b707c（surface-1 上 4.6:1）；「ink-tertiary 只许 canvas/surface-1、抬升表面改用 ink-subtle」写入 token 注释，违规点 logs 页 `.rsn-neutral` 改 ink-subtle（AA 与第三级视觉层级不可兼得的评审结论落地）；③**徽章语义**（badge-warn 只留真告警）：模型一次性/5h限额/仅闲时/余额返还制/付费 与池 子池/专属池 全部素徽章（说明入 title），顺修评审漏记的池成员「付费」badge-err 红色滥用；④**池卡布局重排**：7 个异质控件一字长龙→`.pool-head-ctls` 两行分组（上排开关+阈值同质组/下排动作组虚线分隔右对齐，<768 左对齐铺满），note-box 从整行加粗底色条降为左 2px 线静默注（完整解释保留在开关 title），「Switch」标签补 title，供应商卡内「＋添加模型」与「一键单模型」btn-primary→btn-secondary（页头主 CTA 唯一实心紫）；⑤**emoji→线性 SVG**：58 处代理对普查后的按钮/徽章/状态行可见面全清（⚡🔍🗑🛠⚙📥🔄🔒🔓→HMG_ICONS 新 9 字形 bolt/shield/trash/refresh/download/wrench/lock/unlock/search；🛡️代理/🧠状态行/💡/🔀/🌐/💾 去装饰），弹窗标题按既定先例保留作个性、注释不动；静态 HTML 宿主走新增 `hmgInjectIcons` data-icon 注入器保持单源，`.btn svg`/`.badge svg` 尺寸规则配套；⑥**汉堡修复**（评审 §16.6）：`hmg-burger` 误带 `theme-btn` 类致每切一次主题菜单图标被换成太阳/月亮，去掉类（一行修）；⑦其余：原生 select `appearance:none`+data-URI chevron 自绘（跨平台外观收编设计系统）、池成员移除 ✕ 加 `.danger-hover` 悬停显险、供应商 URL `.sub-clip` 单行截断+title 保全量、模型行 ID/名称单行截断（文字先收缩修徽章被挤换行参差）、身份色哈希种子掺长度（同前缀名不系统性落邻相，8 相位鸽笼碰撞如实注释）。回归 **287→289** 全绿（T40r 色板定稿锚点全套 + T40s 徽章语义/池卡分组/图标注入器/汉堡/哈希种子）；node --check 过；8660 双主题×双视口 DOM 断言（亮 s1/s2=#f5f6f6/#eceef1 冻结动画 finish 后实锤、模型行 nowrap+ellipsis、池卡 column/flex-end/dashed、select appearance:none、badge-warn 页面计数 0）+ 四象限截图 `gui-test-screenshots/v2_17_12_*.png`；评审 §16.2 鉴权修复经 `git log -S` 核实已随 v2.17.4 入库本轮零改动。纯资产改动**刷新即见**。
 

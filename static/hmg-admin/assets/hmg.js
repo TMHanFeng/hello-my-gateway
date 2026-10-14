@@ -179,6 +179,19 @@ function hmgFmtDur(sec) {
 function hmgSetTxt(el, html) {
   if (el && el.innerHTML !== html) el.innerHTML = html;
 }
+/** v2.17.13：轮询数值变化的「活着」反馈——文本变了才触发一次 tint 闪现（.live-chg；不变零动画，emil 状态指示目的）。
+    首次渲染不算变化（避免首屏满页闪）。 */
+function hmgLiveTxt(el, txt) {
+  if (!el) return;
+  const old = el.textContent;
+  if (old === txt) return;
+  const isFirst = !old;
+  el.textContent = txt;
+  if (isFirst) return;
+  el.classList.remove("live-chg");
+  void el.offsetWidth;   // 强制重排以重触发 animation
+  el.classList.add("live-chg");
+}
 function hmgEl(html) {
   const t = document.createElement("template");
   t.innerHTML = html.trim();
@@ -410,7 +423,7 @@ window.HMG = {
   V: HMG_VERSION, ICONS: HMG_ICONS, NAV: HMG_NAV,
   key: hmgGetKey, hasKey: hmgHasKey, headers: hmgHeaders, api: hmgApi, changeKey: hmgChangeKey,
   esc: hmgEsc, pathEnc: hmgPathEnc, jsq: hmgJsq, num: hmgNum, fmtTok: hmgFmtTok, fmtTs: hmgFmtTs, fmtDur: hmgFmtDur,
-  setTxt: hmgSetTxt, el: hmgEl, toast: hmgToast,
+  setTxt: hmgSetTxt, liveTxt: hmgLiveTxt, el: hmgEl, toast: hmgToast,
   modal: hmgOpenModal, confirm: hmgConfirm, prompt: hmgPrompt,
   menu: hmgMenu, closeMenu: hmgCloseMenu,
   poll: hmgPoll, theme: hmgTheme, setTheme: hmgSetTheme, toggleTheme: hmgToggleTheme,

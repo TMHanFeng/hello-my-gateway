@@ -26,7 +26,8 @@
 .pool-item .drag { cursor: grab; color: var(--ink-tertiary); opacity: .55; transition: opacity 150ms ease; }
 .pool-item:hover .drag { opacity: 1; }
 .pi-tags { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
-.i-tip { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; border-radius: 50%; background: var(--surface-3); color: var(--ink-subtle); font-size: 10px; font-style: normal; cursor: help; flex: none; }
+.i-tip { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; border-radius: 50%; background: var(--surface-3); color: var(--ink-subtle); font-size: 10px; font-style: normal; cursor: help; flex: none; }
+.i-tip::before { content: ""; position: absolute; inset: -5px; border-radius: 50%; }  /* v2.17.13 命中区 15→25px */
 .add-model-row { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
 .add-model-row select { flex: 1; min-width: 0; }
 /* v2.17.12（工作单 §16.5）：池卡头控件两行分组——上排状态开关/阈值（同质），下排动作按钮（虚线分隔），
