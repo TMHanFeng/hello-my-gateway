@@ -195,6 +195,9 @@ html.theming, html.theming * { transition: background-color .2s ease, color .2s 
   transition: background-color var(--t1) ease, border-color var(--t1) ease, color var(--t1) ease;
 }
 .pill-key:hover { border-color: var(--hairline-strong); color: var(--ink); }
+/* 未设置密码：pill 走琥珀警示态——鉴权未就绪要一眼可见，而不是靠 toast 才知道 */
+.pill-key.no-key { background: var(--warn-tint); color: var(--warn-ink); border-color: var(--warn-ink); }
+.pill-key.no-key:hover { color: var(--warn-ink); border-color: var(--warn-ink); filter: brightness(1.08); }
 .theme-btn {
   width: 32px; height: 32px; border-radius: var(--r-md); flex: none;
   display: inline-flex; align-items: center; justify-content: center;
@@ -578,12 +581,16 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .empty.loading::after { content: ""; position: absolute; inset: 0; background: linear-gradient(100deg, transparent 32%, var(--wash) 50%, transparent 68%); transform: translateX(-100%); animation: skelSweep 1.5s linear infinite; }
 @keyframes skelSweep { to { transform: translateX(100%); } }
 /* 活跃点：5s 轮询页的「活着」指示（emil：状态指示动效，2.4s 慢脉冲不抢焦点） */
-.live-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--ok); margin-right: 6px; vertical-align: 1px; animation: livePulse 2.4s ease-out infinite; }
+.live-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--success); margin-right: 6px; vertical-align: 1px; animation: livePulse 2.4s ease-out infinite; }
 @keyframes livePulse { 0% { box-shadow: 0 0 0 0 rgba(39, 166, 68, .40); } 70% { box-shadow: 0 0 0 6px rgba(39, 166, 68, 0); } 100% { box-shadow: 0 0 0 0 rgba(39, 166, 68, 0); } }
 /* 按钮忙态：异步动作的立即反馈（旋转快 = 感知更快；hmg.js hmgBusy 驱动） */
 .btn.busy { pointer-events: none; opacity: .8; }
 .btn.busy::before { content: ""; width: 12px; height: 12px; flex: none; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: hmgSpin .6s linear infinite; }
 @keyframes hmgSpin { to { transform: rotate(360deg); } }
+
+/* ── 10.5.1 排序拖拽（四拖拽面共用标记）：FLIP 滑移排除 + 拖拽期选择抑制。
+   原元素的变淡由页面在拖影快照拍完后异步加内联透明度——同步加会让拖影同拍变淡发糊。 ── */
+.dragging { user-select: none; -webkit-user-select: none; }
 
 /* ── 10.6 科技氛围层：噪点+暗角+双层网格基底 + 三色极光双速缓漂 + 品牌渐变流动 ──
    全部 transform/opacity 动画（合成器线程，emil：恒动只留给氛围不留给交互）；

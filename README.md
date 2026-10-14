@@ -90,7 +90,7 @@ data/ 运行时数据（gateway.db、探测缓存、dev pid），与代码隔离
 
 | 🧠 统一思考控制 | 🧪 计费回归安全网 | 📐 智能估算超时 |
 |:---|:---|:---|
-| `reasoning_effort` 六档 → 按模型 `reasoning_map` 换算上游思考参数；思考内容统一回传 `reasoning_content` / `thinking` | 283 断言计费回归套件（`test_billing_regression.py`）：流式/非流式/一次性/RPM 触顶/安全阀/并发入账零丢失，任何改动先跑套件再上线 | `smart_estimate` 模型按 token 量动态计算超时（吞吐 EMA 校准），样本不足自动回退固定值 |
+| `reasoning_effort` 六档 → 按模型 `reasoning_map` 换算上游思考参数；思考内容统一回传 `reasoning_content` / `thinking` | 284 断言计费回归套件（`test_billing_regression.py`）：流式/非流式/一次性/RPM 触顶/安全阀/并发入账零丢失，任何改动先跑套件再上线 | `smart_estimate` 模型按 token 量动态计算超时（吞吐 EMA 校准），样本不足自动回退固定值 |
 
 | 📡 Embedding / Rerank | 🔑 用户密钥管理 | 📄 JSON 输出路由 |
 |:---|:---|:---|
@@ -171,7 +171,7 @@ python -m app.main
 >
 > 💡 **Ubuntu / Linux**：`python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt && python3 -m app.main`，或直接 `./start_gateway.sh`（自动选 venv/系统解释器；停止 `./stop_gateway.sh`）。代码本身跨平台：运行时目录（data/ logs/ backup/）首次启动自动创建，路径处理与日志滚动均适配 POSIX 文件系统。回归套件同样可在 Linux 运行：`python tests/test_billing_regression.py`。
 >
-> 🧪 **改动计费相关代码后**：`python tests/test_billing_regression.py` 运行 283 断言计费回归套件（自动在 8678 起隔离实例 + mock 上游，不触碰生产端口），全绿再上线。
+> 🧪 **改动计费相关代码后**：`python tests/test_billing_regression.py` 运行 284 断言计费回归套件（自动在 8678 起隔离实例 + mock 上游，不触碰生产端口），全绿再上线。
 
 ---
 
@@ -219,7 +219,7 @@ hello-my-gateway/
 │   ├── index.html                # 传统管理后台（/admin）
 │   └── hfadmin.html              # 科技感管理面板（/hfadmin）
 ├── tests/
-│   └── test_billing_regression.py # 计费回归套件（283 断言，隔离实例 + mock 上游）
+│   └── test_billing_regression.py # 计费回归套件（284 断言，隔离实例 + mock 上游）
 ├── start_gateway.cmd             # Windows 启动入口（自动选解释器，幂等）
 ├── stop_gateway.cmd              # 停止入口（身份核验，只停本仓库网关）
 ├── start_gateway.sh              # Linux/macOS 启动入口（语义同 .cmd：选解释器 + 已运行自检）
@@ -645,6 +645,8 @@ SQLite（`gateway.db`）持久化以下表：
 ## 📜 版本
 
 ### 最新
+
+**`v2.17.8`** — **🪄 hmg-admin 拖拽丝滑化（反馈：拖模型/供应商/池改顺序不丝滑；四个拖拽面统一治理，纯前端刷新即见）**：病灶四件——①换位瞬跳（dragover 中点判定 `insertBefore` 直改 DOM，零过渡且易振荡）；②**双重变淡拖影**（dragstart 同步设 `opacity:.4`，Chromium 拖影快照在事件处理后拍→拖影本身半透明+原地也淡，糊成一团）；③落点后**全量重渲闪放**（供应商 `loadModels()`/池 `loadPools()` 无条件重拉，入场瀑布全体重播）；④模型行/池条目/池卡 dragstart **无 setData，Firefox 拖不动**。修法：**hmg.js 共享 FLIP 助手 `hmgFlipMove(container, match, insertFn)`**（换位前抓可见兄弟 top→换位→dy 反向 `translateY` 内联→下一帧 `.18s var(--ease-out)` 过渡归零→transitionend 清内联；`.dragging` 标记排除被拖元素、`prefers-reduced-motion` 直接换位不动画）——瞬跳变 180ms 滑移；dragover **rAF 合帧**（`pendingEv` 最新意图胜出，`preventDefault`/`dropEffect="move"` 仍同步）；变淡改**异步**（拖影快照后 rAF 内加 `.dragging` 在位守卫——极速落下不残淡）；成功路径**不再重渲**（DOM 已是所存顺序，仅 api 失败才 `loadModels()/loadPools()` 回拉）；四处补 `setData("text/plain", id)`。回归 **283→284** 全绿（T40n：flipMove 助手+导出/四拖拽面接线/失败才重渲/setData/.dragging 锚点）；hmg.js+四内联脚本 node --check 过；8660 合成 DragEvent 实证：FLIP 单元断言（真实换位后 b/c 兄弟内联 `translateY(45px/45.67px)` 反向位移、换回零残留）、四链路 `.dragging` 生命周期 + setData + PUT 净零（顺序未变时落库为无害 no-op）、**供应商/池拖完 spy 实测 `loadModels/loadPools` 0 调用**（闪烁根源已除）；IAB 环境两事实记录：rAF 被遮挡节流冻结（rAF 门控换位无法端到端，中间帧数学由单元断言覆盖；真实浏览器 rAF 正常）、页内 `await`/定时器被拉长（测试一律 node 侧编排+页内纯同步分段）。
 
 **`v2.17.7`** — **🌌 hmg-admin 背景丰富化（反馈：背景太单一——修前暗色仅顶部两团靛蓝系辉光+一团极光，右侧与下 2/3 视口纯平底色且全体同色相）**：①**第二漂移层**（`html::before` fixed 负 z 层，inset -22% 防漂移露边）：紫 `rgba(178,118,235,.09)` 压右下 + 青 `rgba(64,205,255,.07)` 压左下——两个新色相打破单一靛蓝族；**ambientDrift 38s** 与原 auroraDrift 26s 互质不锁步，与顶部极光分踞上/下覆盖全视口；blur 38px 静态滤镜、transform/opacity 合成器动画。②**静态质感层**（body::before 从 4 层扩到 8 层，抗色带/加纵深）：**胶片噪点**（SVG feTurbulence 去饱和 data URI，180px 无缝平铺 .05 透明度）+ **暗角**（radial transparent 55%→rgba(4,5,9,.38) 边缘压暗）+ **264px 大网格**（蓝图感，与 44px 细网格共存）。③**亮色主题同步**：html::before 极淡双色晕（紫 .05/青 .04）+ body 右下加紫晕；噪点/暗角白底退场；顺修**永不匹配选择器** `:root[data-theme="light"] html::before`（:root 即 html 自身不能是自己的后代，改为 `:root[data-theme="light"]::before`——该 bug 让亮色第二层一直回落暗色色值）。④手机端大模糊层 blur 降 26px 省 GPU；reduced-motion 全局冻结自动接管。回归 **282→283** 全绿（新增 T40m：第二漂移层紫青双色/feTurbulence 噪点/暗角/264 大网格/亮色淡晕/手机降 blur 锚点）；DOM 断言：暗色 body::before 8 层 backgroundSize（暗角/噪点/双辉光/44+264 双网格）+ ambientDrift@38s blur(38px) fixed z-1 + auroraDrift@26s 同屏并存、对比 14.8:1 不变（暗角只压暗背景比率只升）、亮色 html::before tint 在位且无暗色色值、双主题往返正确、卡片级联 #f5f6f6 不受影响、手机 390px blur(26px)；截图 gui-test-screenshots/v2_17_7_*（亮色截图一次 IAB 半合成残影，DOM 断言证伪后重拍）。纯资产改动**刷新即见**。
 

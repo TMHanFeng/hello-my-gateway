@@ -2501,6 +2501,16 @@ def main():
                   "rgba(178, 118, 235, .09)", "rgba(64, 205, 255, .07)",
                   'data-theme="light"]::before', "rgba(148, 84, 220, .05)",
                   "html::before, body::after { filter: blur(26px); }")), None)
+        # v2.17.8 拖拽丝滑化：FLIP 换位滑移（hmg.js 共享助手）+ rAF 合帧 + 异步变淡保拖影 + Firefox setData + 落点仅在保存失败时重渲
+        check("T40n 拖拽丝滑化(FLIP助手flipMove/四拖拽面接线/rAF合帧/异步变淡/setData/失败才重渲/.dragging标记)",
+              all(s in _hmgjs for s in ("function hmgFlipMove", "flipMove: hmgFlipMove", "prefers-reduced-motion: reduce"))
+              and ".dragging {" in _hmgcss
+              and all(s in _pages40["model"].text for s in ('HMG.flipMove(list, ".model-row[draggable]"',
+                  'HMG.flipMove(list, ".provider-card[draggable]"', "else { loadModels(); }",
+                  'e.dataTransfer.setData("text/plain", row.dataset.modelId)'))
+              and all(s in _pages40["pools"].text for s in ('HMG.flipMove(items, ".pool-item"',
+                  'HMG.flipMove(list, "[data-pool-card]"', "else { loadPools(); }",
+                  'e.dataTransfer.setData("text/plain", card.dataset.poolCard)')), None)
 
     finally:
         try:

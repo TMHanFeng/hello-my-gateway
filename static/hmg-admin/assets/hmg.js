@@ -35,30 +35,47 @@ const HMG_NAV = [
 ];
 
 /* ── 鉴权 / API ───────────────────────────────────────────── */
-function hmgGetKey() {
-  let k = localStorage.getItem("gw_key");
-  if (!k) {
-    k = prompt("请输入管理密码：");
-    if (!k) throw new Error("未输入管理密码");
-    localStorage.setItem("gw_key", k);
-  }
-  return k;
-}
+/** 只读 localStorage，**绝不在数据加载路径里弹原生 prompt()**。
+    原生 prompt 在 Electron / 内嵌 WebView / 部分 kiosk 里不可用会直接抛异常，而旧写法把
+    hmgHeaders() 放在 fetch 的 try 内部求值 → 异常被当成「网络异常」上报、fetch 从未执行、
+    六页卡片区全部空白；用户点「取消」还会形成每 5 秒弹一次的原生框循环。
+    无密码一律返回 null：hmgApi 短路并提示去哪设置，密码只从 UI 主动输入。 */
+function hmgGetKey() { return localStorage.getItem("gw_key") || null; }
+function hmgHasKey() { return !!hmgGetKey(); }
 function hmgHeaders(extra) {
-  return Object.assign({ "Authorization": "Bearer " + hmgGetKey(), "Content-Type": "application/json" }, extra || {});
+  return Object.assign({ "Authorization": "Bearer " + (hmgGetKey() || ""), "Content-Type": "application/json" }, extra || {});
 }
-/** 面板统一 API 入口：任何失败（网络异常/401/非 2xx）toast 后返回 null（与原面板 api 同契约，移植代码零改动）；成功返回解析后的 JSON（可为 null）。 */
+/** 侧栏「管理密码」pill 的状态同步：已设置/未设置一眼可辨，不用靠 toast 才知道。 */
+function hmgKeyPill() {
+  const pill = document.querySelector(".pill-key");
+  if (!pill) return;
+  const t = pill.querySelector(".pk-t");
+  const has = hmgHasKey();
+  if (t) t.textContent = has ? "管理密码" : "设置密码";
+  pill.classList.toggle("no-key", !has);
+  pill.title = has ? "管理密码已设置（仅本浏览器）· 点击修改" : "尚未设置管理密码 · 点击设置";
+}
+/** 无密码提示每次页面会话只弹一次（5s 轮询不刷屏）。 */
+let _hmgKeyWarned = false;
+function hmgNeedKey() {
+  if (_hmgKeyWarned) return;
+  _hmgKeyWarned = true;
+  hmgToast("尚未设置管理密码，请点击左下角「设置密码」", "err", 6000);
+}
+/** 面板统一 API 入口：任何失败（未设密码/网络异常/401/非 2xx）toast 后返回 null（与原面板 api 同契约，移植代码零改动）；成功返回解析后的 JSON（可为 null）。 */
 async function hmgApi(path, opts = {}) {
+  if (!hmgHasKey()) { hmgNeedKey(); return null; }   // 无密码：不发请求（鉴权失败不是网络故障）
   let r;
   try {
     r = await fetch(path, Object.assign({}, opts, { headers: hmgHeaders(opts.headers) }));
   } catch (e) {
-    hmgToast("网络异常：" + e.message, "err");
+    hmgToast("无法连接网关：" + e.message, "err");
     return null;
   }
   if (r.status === 401) {
     localStorage.removeItem("gw_key");
-    hmgToast("管理密码无效，请重新输入", "err");
+    hmgKeyPill();
+    hmgToast("管理密码无效，请点击左下角「设置密码」重新设置", "err");
     return null;
   }
   let data = null;
@@ -70,14 +87,21 @@ async function hmgApi(path, opts = {}) {
   }
   return data;
 }
-function hmgChangeKey() {
-  const k = prompt("设置新的管理密码（与 config.json server.api_key 一致）：", localStorage.getItem("gw_key") || "");
-  if (k === null) return;
-  if (!k) { hmgToast("密码不能为空", "err"); return; }
-  localStorage.setItem("gw_key", k);
-  hmgToast("管理密码已更新（仅本浏览器生效）", "ok");
-  const pill = document.querySelector(".pill-key .pk-t");
-  if (pill) pill.textContent = "密码已设置";
+/** 设置/修改管理密码：走共享层自建模态框（HMG.prompt），不再依赖 window.prompt——
+    这是全站唯一的关键路径入口，必须在禁用原生 prompt 的环境里也能用。 */
+async function hmgChangeKey() {
+  const k = await hmgPrompt("设置管理密码（与 config.json 的 server.api_key 一致，仅保存在本浏览器）：", {
+    value: localStorage.getItem("gw_key") || "",
+    placeholder: "输入管理密码",
+    okLabel: "保存",
+  });
+  if (k === null) return;                 // 取消：不动任何状态，也不再触发轮询弹框
+  if (!k.trim()) { hmgToast("密码不能为空", "err"); return; }
+  localStorage.setItem("gw_key", k.trim());
+  _hmgKeyWarned = false;
+  hmgKeyPill();
+  hmgToast("管理密码已保存，正在重新加载…", "ok");
+  setTimeout(() => location.reload(), 650);
 }
 
 /* ── 工具 ─────────────────────────────────────────────────── */
@@ -153,12 +177,24 @@ function hmgEl(html) {
 let _hmgToastBox = null;
 function hmgToast(msg, type = "info", ms = 2600) {
   if (!_hmgToastBox) { _hmgToastBox = document.createElement("div"); _hmgToastBox.id = "hmg-toast"; document.body.appendChild(_hmgToastBox); }
+  const text = String(msg);
+  /* 同文案去重：轮询失败时不再每 5 秒堆一条一模一样的 toast，只给在屏的那条续命。
+     （旧写法无去重，接口挂掉时屏幕会被同款提示淹没，真正的错误反而看不见） */
+  const live = Array.prototype.find.call(
+    _hmgToastBox.querySelectorAll(".toast:not(.out)"), n => n.dataset.msg === text);
+  if (live) { clearTimeout(Number(live.dataset.timer) || 0); live.dataset.timer = String(_hmgToastExpire(live, ms)); return live; }
   const t = hmgEl(`<div class="toast"><span class="dot ${type === "ok" ? "ok" : type === "err" ? "err" : type === "warn" ? "warn" : "acc"}"></span><span></span></div>`);
-  t.lastElementChild.textContent = String(msg);
+  t.dataset.msg = text;
+  t.lastElementChild.textContent = text;
   _hmgToastBox.appendChild(t);
   void t.offsetWidth;            // 先以初始态入布局，再加 .on 触发过渡
   t.classList.add("on");
-  setTimeout(() => { t.classList.add("out"); setTimeout(() => t.remove(), 170); }, ms);
+  t.dataset.timer = String(_hmgToastExpire(t, ms));
+  return t;
+}
+/** 到点淡出（出场恒快于入场），返回外层 timer id 供续命时清除。 */
+function _hmgToastExpire(t, ms) {
+  return setTimeout(() => { t.classList.add("out"); setTimeout(() => t.remove(), 170); }, ms);
 }
 
 /* ── 弹窗（桌面居中 / 移动端全屏 sheet，见 hmg.css §8；transition 生命周期：mask.on 入场 / mask.off 出场） ── */
@@ -321,7 +357,7 @@ function hmgRenderShell() {
       </nav>
       <div class="hmg-side-foot">
         <div class="hmg-side-row"><span class="side-ic">${HMG_ICONS.keys}</span>
-          <button class="pill-key" onclick="hmgChangeKey()" title="点击修改管理密码（仅本浏览器）"><span class="pk-t">管理密码</span></button>
+          <button class="pill-key" onclick="hmgChangeKey()"><span class="pk-t">管理密码</span></button>
         </div>
         <div class="hmg-side-row"><button class="theme-btn" onclick="hmgToggleTheme()">${hmgThemeIcon(hmgTheme())}</button>
           <span style="font-size:12px;color:var(--ink-tertiary);letter-spacing:.01em">主题</span></div>
@@ -329,6 +365,7 @@ function hmgRenderShell() {
     const tb = sb.querySelector(".theme-btn");
     tb.innerHTML = hmgThemeIcon(hmgTheme());
     tb.title = hmgTheme() === "dark" ? "切换到白天模式" : "切换到夜晚模式";
+    hmgKeyPill();                 // 注入完壳再同步密码态（未设置时 pill 变琥珀色警示）
   }
   const bar = document.getElementById("hmg-topbar");
   if (bar) {
@@ -348,7 +385,7 @@ function hmgRenderShell() {
 /* 全局暴露（页面业务 JS 直接用这些名字） */
 window.HMG = {
   V: HMG_VERSION, ICONS: HMG_ICONS, NAV: HMG_NAV,
-  key: hmgGetKey, headers: hmgHeaders, api: hmgApi, changeKey: hmgChangeKey,
+  key: hmgGetKey, hasKey: hmgHasKey, headers: hmgHeaders, api: hmgApi, changeKey: hmgChangeKey,
   esc: hmgEsc, pathEnc: hmgPathEnc, jsq: hmgJsq, num: hmgNum, fmtTok: hmgFmtTok, fmtTs: hmgFmtTs, fmtDur: hmgFmtDur,
   setTxt: hmgSetTxt, el: hmgEl, toast: hmgToast,
   modal: hmgOpenModal, confirm: hmgConfirm, prompt: hmgPrompt,
@@ -356,6 +393,7 @@ window.HMG = {
   poll: hmgPoll, theme: hmgTheme, setTheme: hmgSetTheme, toggleTheme: hmgToggleTheme,
   renderShell: hmgRenderShell,
   hue: hmgHue, avatar: hmgAvatar, avatarDot: hmgAvatarDot, busy: hmgBusy,
+  flipMove: hmgFlipMove,
   isTouch: !!(window.matchMedia && window.matchMedia("(hover: none), (pointer: coarse)").matches),
 };
 
@@ -393,6 +431,28 @@ window.HMG = {
     if (t) { (!fine || t !== owner) ? show(t, e.clientX, e.clientY) : hide(); } else if (owner) hide();
   });
 })();
+
+/* ── 排序换位 FLIP（四拖拽面共用）：换位前抓各兄弟 top、换位后反向 translateY 再过渡归零——
+   拖拽换位从瞬跳变成 180ms 滑移（emil：位移过渡走合成器线程）。
+   reduced-motion 直接换位不动画（少而非零）；被拖元素加 .dragging 标记、不参与滑移（跟手的是拖影）。 ── */
+function hmgFlipMove(container, match, insertFn) {
+  const els = [...container.querySelectorAll(match)].filter(el => el.getBoundingClientRect().height > 0);
+  const firstTop = new Map(els.map(el => [el, el.getBoundingClientRect().top]));
+  insertFn();
+  if (window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  container.querySelectorAll(match).forEach(el => {
+    if (el.classList.contains("dragging") || !firstTop.has(el)) return;
+    const dy = firstTop.get(el) - el.getBoundingClientRect().top;
+    if (!dy) return;
+    el.style.transition = "none";
+    el.style.transform = `translateY(${dy}px)`;
+    requestAnimationFrame(() => {
+      el.style.transition = "transform .18s var(--ease-out)";
+      el.style.transform = "";
+      el.addEventListener("transitionend", () => { el.style.transition = ""; el.style.transform = ""; }, { once: true });
+    });
+  });
+}
 
 /* ── 拖拽自动滚动：上下 1/4 视口检测区，dragover 驱动按深入程度滚动（非拖拽零开销） ── */
 (function () {

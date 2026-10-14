@@ -503,26 +503,39 @@ function bindDrag() {
   document.querySelectorAll(".pool-items").forEach(items => {
     if (items.dataset.dragBound) return;
     items.dataset.dragBound = "1";
-    let dragged = null;
+    let dragged = null, pendingEv = null;
     items.addEventListener("dragstart", e => {
       const item = e.target.closest(".pool-item");
       if (!item) return;
       e.stopPropagation();
       dragged = item;
-      item.style.opacity = "0.4";
+      item.classList.add("dragging");
+      requestAnimationFrame(() => { if (item.classList.contains("dragging")) item.style.opacity = "0.4"; });  // 异步变淡：拖影快照保持全不透明；dragging 已不在=极速落下，放弃变淡
       e.dataTransfer.effectAllowed = "move";
+      try { e.dataTransfer.setData("text/plain", item.dataset.id); } catch (err) {}  // Firefox 无 data 不起拖
     });
     items.addEventListener("dragover", e => {
       e.preventDefault();
       const after = e.target.closest(".pool-item");
-      if (!after || after === dragged || !dragged) return;
-      const rect = after.getBoundingClientRect();
-      const before = e.clientY < rect.top + rect.height / 2;
-      items.insertBefore(dragged, before ? after : after.nextSibling);
+      if (!dragged || !after || after === dragged) return;
+      e.dataTransfer.dropEffect = "move";
+      pendingEv = { after, y: e.clientY };
+      if (items._dragRaf) return;  // rAF 合帧：只保留最新落点意图
+      items._dragRaf = requestAnimationFrame(() => {
+        items._dragRaf = null;
+        if (!pendingEv || !dragged) return;
+        const { after, y } = pendingEv; pendingEv = null;
+        if (!items.contains(after)) return;
+        const rect = after.getBoundingClientRect();
+        const before = y < rect.top + rect.height / 2;
+        HMG.flipMove(items, ".pool-item", () =>
+          after.parentNode.insertBefore(dragged, before ? after : after.nextSibling));
+      });
     });
     items.addEventListener("dragend", async e => {
       e.stopPropagation();
       if (!dragged) return;
+      dragged.classList.remove("dragging");
       dragged.style.opacity = "";
       dragged = null;
       await savePoolItemOrder(items);
@@ -535,7 +548,7 @@ function bindDrag() {
         if (!item) return;
         const prev = item.previousElementSibling;
         if (!prev || !prev.matches(".pool-item")) return;
-        items.insertBefore(item, prev);
+        HMG.flipMove(items, ".pool-item", () => item.parentNode.insertBefore(item, prev));
         await savePoolItemOrder(items);
       });
     }
@@ -547,44 +560,54 @@ async function savePoolCardOrder(list) {
   const allOthers = Object.keys(poolLookup || {}).filter(n => n !== "auto" && n !== "兜底池");
   const names = domNames.concat(allOthers.filter(n => !domNames.includes(n)));
   const ok = await api("/admin/pools/reorder", { method: "PUT", body: JSON.stringify({ pool_names: names }) });
-  if (ok) { toast("池顺序已更新", "ok"); }
-  loadPools();
+  if (ok) { toast("池顺序已更新", "ok"); } else { loadPools(); }  // 仅失败回拉：DOM 已是所存顺序，重渲只会闪放入场动画
 }
 function bindPoolDrag() {
   const list = document.getElementById("pool-list");
   if (!list) return;
   if (list.dataset.dragBoundPool) return;
   list.dataset.dragBoundPool = "1";
-  let dragged = null;
+  let dragged = null, pendingEv = null;
   list.addEventListener("dragstart", e => {
     const card = e.target.closest("[data-pool-card]");
     if (!card || card.dataset.poolCard === "auto") { e.preventDefault(); return; }
     dragged = card;
-    card.style.opacity = "0.4";
+    card.classList.add("dragging");
+    requestAnimationFrame(() => { if (card.classList.contains("dragging")) card.style.opacity = "0.4"; });  // 异步变淡：拖影快照保持全不透明；dragging 已不在=极速落下，放弃变淡
     e.dataTransfer.effectAllowed = "move";
+    try { e.dataTransfer.setData("text/plain", card.dataset.poolCard); } catch (err) {}  // Firefox 无 data 不起拖
   });
   list.addEventListener("dragover", e => {
     e.preventDefault();
     if (!dragged) return;
+    e.dataTransfer.dropEffect = "move";
     if (e.target.closest(".pool-item")) return;
-    const card = e.target.closest("[data-pool-card]");
-    if (card && card !== dragged) {
-      const rect = card.getBoundingClientRect();
-      const before = e.clientY < rect.top + rect.height / 2;
-      // 禁止把被拖池插到 auto 之前 / 兜底池 之后（后端 reorder 强制 auto 第一、兜底池最后）
-      if (before && card.dataset.poolCard === "auto") return;
-      if (!before && card.dataset.poolCard === "兜底池") return;
-      card.parentNode.insertBefore(dragged, before ? card : card.nextSibling);
-      return;
-    }
-    const sec = e.target.closest(".grp-section");
-    if (sec) {
-      const body = sec.querySelector(".grp-body");
-      if (body && body !== dragged.parentNode) body.appendChild(dragged);
-    }
+    pendingEv = { card: e.target.closest("[data-pool-card]"), sec: e.target.closest(".grp-section"), y: e.clientY };
+    if (list._dragRafPool) return;  // rAF 合帧：只保留最新落点意图
+    list._dragRafPool = requestAnimationFrame(() => {
+      list._dragRafPool = null;
+      if (!pendingEv || !dragged || !list.contains(dragged)) return;
+      const { card, sec, y } = pendingEv; pendingEv = null;
+      if (card && card !== dragged) {
+        const rect = card.getBoundingClientRect();
+        const before = y < rect.top + rect.height / 2;
+        // 禁止把被拖池插到 auto 之前 / 兜底池 之后（后端 reorder 强制 auto 第一、兜底池最后）
+        if (before && card.dataset.poolCard === "auto") return;
+        if (!before && card.dataset.poolCard === "兜底池") return;
+        HMG.flipMove(list, "[data-pool-card]", () =>
+          card.parentNode.insertBefore(dragged, before ? card : card.nextSibling));
+        return;
+      }
+      if (sec) {
+        const body = sec.querySelector(".grp-body");
+        if (body && body !== dragged.parentNode)
+          HMG.flipMove(list, "[data-pool-card]", () => body.appendChild(dragged));
+      }
+    });
   });
   list.addEventListener("dragend", async e => {
     if (!dragged) return;
+    dragged.classList.remove("dragging");
     dragged.style.opacity = "";
     dragged = null;
     await savePoolCardOrder(list);

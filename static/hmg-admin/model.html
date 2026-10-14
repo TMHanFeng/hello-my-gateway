@@ -200,28 +200,39 @@ function bindModelDrag() {
   if (!list) return;
   if (list.dataset.dragBoundModel) return;
   list.dataset.dragBoundModel = "1";
-  let dragged = null;
+  let dragged = null, pendingEv = null;
   list.addEventListener("dragstart", e => {
     const row = e.target.closest(".model-row[draggable]");
     if (!row) return;
     e.stopPropagation();
     dragged = row;
-    row.style.opacity = "0.4";
+    row.classList.add("dragging");
+    requestAnimationFrame(() => { if (row.classList.contains("dragging")) row.style.opacity = "0.4"; });  // 异步变淡：拖影快照保持全不透明；dragging 已不在=极速落下，放弃变淡
     e.dataTransfer.effectAllowed = "move";
+    try { e.dataTransfer.setData("text/plain", row.dataset.modelId); } catch (err) {}  // Firefox 无 data 不起拖
   });
   list.addEventListener("dragover", e => {
     const row = e.target.closest(".model-row[draggable]");
-    if (!row || row === dragged || !dragged) return;
+    if (!dragged || !row || row === dragged) return;
     e.preventDefault();
     e.stopPropagation();
-    const rect = row.getBoundingClientRect();
-    const before = e.clientY < rect.top + rect.height / 2;
-    row.parentNode.insertBefore(dragged, before ? row : row.nextSibling);
+    e.dataTransfer.dropEffect = "move";
+    pendingEv = { row, y: e.clientY };
+    if (list._dragRaf) return;  // rAF 合帧：dragover 高频触发只保留最新意图
+    list._dragRaf = requestAnimationFrame(() => {
+      list._dragRaf = null;
+      if (!pendingEv || !dragged || !list.contains(dragged)) return;
+      const { row, y } = pendingEv; pendingEv = null;
+      const rect = row.getBoundingClientRect();
+      const before = y < rect.top + rect.height / 2;
+      HMG.flipMove(list, ".model-row[draggable]", () =>
+        row.parentNode.insertBefore(dragged, before ? row : row.nextSibling));
+    });
   });
   list.addEventListener("dragend", async e => {
     if (!dragged) return;
+    dragged.classList.remove("dragging");
     dragged.style.opacity = "";
-    const row = dragged;
     dragged = null;
     const ids = [...list.querySelectorAll(".model-row[draggable]")].map(el => el.dataset.modelId);
     if (!ids.length) return;
@@ -236,7 +247,7 @@ function bindModelDrag() {
       let prev = row.previousElementSibling;
       while (prev && !prev.matches(".model-row[draggable]")) prev = prev.previousElementSibling;
       if (!prev) return;
-      row.parentNode.insertBefore(row, prev);
+      HMG.flipMove(list, ".model-row[draggable]", () => row.parentNode.insertBefore(row, prev));
       const ids = [...list.querySelectorAll(".model-row[draggable]")].map(el => el.dataset.modelId);
       if (!ids.length) return;
       const ok = await api("/admin/models/reorder", { method: "PUT", body: JSON.stringify({ model_ids: ids }) });
@@ -1016,41 +1027,50 @@ function bindProviderDrag() {
   if (!list) return;
   if (list.dataset.dragBoundProv) return;
   list.dataset.dragBoundProv = "1";
-  let dragged = null;
+  let dragged = null, pendingEv = null;
   list.addEventListener("dragstart", e => {
     const el = e.target.closest(".provider-card[draggable]");
     if (!el) { e.preventDefault(); return; }
     dragged = el;
-    dragged.style.opacity = "0.4";
+    el.classList.add("dragging");
+    requestAnimationFrame(() => { if (el.classList.contains("dragging")) el.style.opacity = "0.4"; });  // 异步变淡：拖影快照保持全不透明；dragging 已不在=极速落下，放弃变淡
     e.dataTransfer.effectAllowed = "move";
     try { e.dataTransfer.setData("text/plain", el.dataset.providerDrag); } catch (err) {}
   });
   list.addEventListener("dragover", e => {
     e.preventDefault();
     if (!dragged || !list.contains(dragged)) return;
+    e.dataTransfer.dropEffect = "move";
     if (e.target.closest(".model-row")) return;
-    const card = e.target.closest(".provider-card");
-    if (card && card !== dragged) {
-      const rect = card.getBoundingClientRect();
-      const before = e.clientY < rect.top + rect.height / 2;
-      card.parentNode.insertBefore(dragged, before ? card : card.nextSibling);
-      return;
-    }
-    const sec = e.target.closest(".grp-section");
-    if (sec) {
-      const body = sec.querySelector(".grp-body");
-      if (body && body !== dragged.parentNode) body.appendChild(dragged);
-    }
+    pendingEv = { card: e.target.closest(".provider-card"), sec: e.target.closest(".grp-section"), y: e.clientY };
+    if (list._dragRafProv) return;  // rAF 合帧：只保留最新落点意图
+    list._dragRafProv = requestAnimationFrame(() => {
+      list._dragRafProv = null;
+      if (!pendingEv || !dragged || !list.contains(dragged)) return;
+      const { card, sec, y } = pendingEv; pendingEv = null;
+      if (card && card !== dragged) {
+        const rect = card.getBoundingClientRect();
+        const before = y < rect.top + rect.height / 2;
+        HMG.flipMove(list, ".provider-card[draggable]", () =>
+          card.parentNode.insertBefore(dragged, before ? card : card.nextSibling));
+        return;
+      }
+      if (sec) {
+        const body = sec.querySelector(".grp-body");
+        if (body && body !== dragged.parentNode)
+          HMG.flipMove(list, ".provider-card[draggable]", () => body.appendChild(dragged));
+      }
+    });
   });
   list.addEventListener("dragend", async e => {
     if (!dragged) return;
+    dragged.classList.remove("dragging");
     dragged.style.opacity = "";
     dragged = null;
     grpSyncFromDOM("providerGroups", list, ".provider-card[draggable]", "providerDrag");
     const ids = [...list.querySelectorAll(".provider-card[draggable]")].map(el => el.dataset.providerDrag);
     const ok = await api("/admin/providers/reorder", { method: "PUT", body: JSON.stringify({ provider_ids: ids }) });
-    if (ok) { toast("供应商顺序已更新", "ok"); }
-    loadModels();
+    if (ok) { toast("供应商顺序已更新", "ok"); } else { loadModels(); }  // 仅失败回拉：DOM 已是所存顺序，重渲只会闪放入场动画
   });
 }
 
