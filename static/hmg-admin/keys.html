@@ -13,6 +13,12 @@
 /* ── 本页私有：密钥卡片与创建弹窗 ── */
 .key-secret { font-family: ui-monospace, Consolas, monospace; font-size: 12px; color: var(--ink-muted); margin-top: 4px; overflow-wrap: anywhere; user-select: all; }
 .key-card .card-head { display: flex; align-items: flex-start; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.key-card .card-title .hmg-av { vertical-align: -5px; margin-right: 2px; }
+/* 授权池 chip：换行发生在 chip 之间而非名字中间（换行治理）；身份色点与日志行同相位 */
+.pool-chips { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.pool-chip { display: inline-flex; align-items: center; padding: 1px 9px; border-radius: var(--r-pill); background: var(--surface-2); border: 1px solid var(--hairline); font-size: 12px; white-space: nowrap; }
+.pool-chip .hmg-av-dot { margin-right: 5px; }
+.btn-ok-flash { color: var(--ok-ink) !important; border-color: var(--ok-ink) !important; }
 .key-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 8px 16px; font-size: 13px; }
 .key-grid b { font-weight: 500; overflow-wrap: anywhere; }
 .kv-line { display: flex; gap: 6px; min-width: 0; }
@@ -46,7 +52,7 @@
       <button class="btn btn-primary" onclick="showAddKey()">＋ 创建密钥</button>
     </div>
   </div>
-  <div id="key-list" class="stagger"><div class="empty">加载中…</div></div>
+  <div id="key-list" class="stagger"><div class="empty loading">加载中…</div></div>
 </main>
 <script src="/hmg-admin/assets/hmg.js?v=__GATEWAY_VERSION__"></script>
 <script>
@@ -95,13 +101,13 @@ async function loadKeys() {
     <div class="card key-card">
       <div class="card-head">
         <div class="grow" style="min-width:200px">
-          <div class="card-title">${esc(k.name)} <span class="mono" style="color:var(--ink-subtle);font-size:12px">#${k.id}</span></div>
+          <div class="card-title">${HMG.avatar(k.name, true)} ${esc(k.name)} <span class="mono" style="color:var(--ink-subtle);font-size:12px">#${k.id}</span></div>
           <div class="key-secret">${esc(k.secret)}</div>
         </div>
         <div class="row wrap">
           ${keyTypeBadge(k.type)}
           ${k.enabled ? '<span class="badge badge-ok">启用</span>' : '<span class="badge badge-err">禁用</span>'}
-          <button class="btn btn-ghost btn-sm" onclick="copyKey('${jsq(k.secret)}')">复制</button>
+          <button class="btn btn-ghost btn-sm" onclick="copyKey('${jsq(k.secret)}', this)">复制</button>
           <button class="btn btn-ghost btn-sm" onclick="showEditKey(${k.id})">编辑</button>
           <button class="btn btn-ghost btn-sm" onclick="showKeyUsage(${k.id})">用量历史</button>
           <button class="btn btn-ghost btn-sm" onclick="showKeyRotations(${k.id})">轮换日志</button>
@@ -110,7 +116,7 @@ async function loadKeys() {
         </div>
       </div>
       <div class="key-grid">
-        <div class="kv-line"><span>授权池</span><b>${k.type === "admin" ? "全部" : (k.allowed_pools || []).map(esc).join("、") || "无"}</b></div>
+        <div class="kv-line"><span>授权池</span><b class="pool-chips">${k.type === "admin" ? "全部" : (k.allowed_pools || []).map(p => `<span class="pool-chip">${HMG.avatarDot(p)}${esc(p)}</span>`).join("") || "无"}</b></div>
         <div class="kv-line"><span>专属池</span><b>${k.own_pool ? esc(k.own_pool) : "无"}</b></div>
         <div class="kv-line usage-line"><span>用量</span><b>${keyLimitText(k)}</b></div>
         <div class="kv-line"><span>过期</span><b>${keyExpiryText(k)}</b></div>
@@ -257,11 +263,16 @@ function copyCreatedKey() {
   v.select(); document.execCommand("copy");
   toast("密钥已复制", "ok");
 }
-function copyKey(s) {
+function copyKey(s, btn) {
   const ta = document.createElement("textarea");
   ta.value = s; document.body.appendChild(ta); ta.select();
   document.execCommand("copy"); ta.remove();
   toast("密钥已复制", "ok");
+  if (btn) {   // 按钮文本态反馈：已复制 ✓ 1.2s 后还原（emil：操作要有回声）
+    if (btn.__copyT) clearTimeout(btn.__copyT);
+    btn.textContent = "已复制 ✓"; btn.classList.add("btn-ok-flash");
+    btn.__copyT = setTimeout(() => { btn.textContent = "复制"; btn.classList.remove("btn-ok-flash"); }, 1200);
+  }
 }
 async function toggleKey(id, enabled) {
   const ok = await api("/admin/keys/" + id, { method: "PUT", body: JSON.stringify({ enabled: !!enabled }) });

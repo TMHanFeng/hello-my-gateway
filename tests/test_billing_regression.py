@@ -2462,13 +2462,16 @@ def main():
               all(s in _pages40["stats"].text for s in ('data-dim="billing"', 'data-dim="provider"', 'data-dim="pool"',
                   'data-dim="paid"', "stat-mark", "stat-redzone", "gift_yesterday_leftover", "statCardEnsure",
                   "statRenderGrouped", "statRenderPaid", "_statLoadSeq", "HMG.poll.start",
+                  "${HMG.avatar(x.m.id)}", 'title="${esc(x.m.id)}"',
                   ".stat-group-body { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); }")), None)
         check("T40h logs页业务接线(原因码全集含余量熔断/池筛选/增量刷新/序号守卫/5s轮询)",
               all(s in _pages40["logs"].text for s in ("provider_quota_exhausted", "fallback_switch_error", "peak_blocked",
-                  "reasonChip", "formatDetail", "_logLoadSeq", "populateLogFilter", "HMG.poll.start")), None)
+                  "reasonChip", "formatDetail", "_logLoadSeq", "populateLogFilter", "HMG.poll.start",
+                  "HMG.avatarDot(d.pool_name)", "HMG.busy(this, loadDecisions())", 'class="empty loading"')), None)
         check("T40i keys页业务接线(创建编辑/轮换日志/用量历史SVG/专属池/管理员伪Key#0)",
               all(s in _pages40["keys"].text for s in ("function loadKeys", "function submitKey", "showKeyRotations",
-                  "loadKeyUsage", "usage-hours", "loadKeyOwnPool", "管理员（服务器密钥）")), None)
+                  "loadKeyUsage", "usage-hours", "loadKeyOwnPool", "管理员（服务器密钥）",
+                  'class="pool-chip"', "copyKey('${jsq(k.secret)}', this)", "btn-ok-flash")), None)
         check("T40j plugins页业务接线(插件卡启停/扫描/config_schema动态表单含pools·slider/headroom设置/节省统计入口)",
               all(s in _pages40["plugins"].text for s in ("function loadPluginCenter", "togglePlugin", "scanPlugins",
                   "pcField", "pcPoolsValue", "savePluginConfig", "openHeadroomSettings", "applyHrModeHighlight",
@@ -2481,9 +2484,11 @@ def main():
                   "function _parsePeakWindows", "function recalcCost", "function saveCostPrices",
                   "function showHeadroomStats", "const hmgPoll", "function hmgSetTheme", "function hmgRenderShell",
                   "function gwGroupsBoot"))
+              and all(s in _hmgjs for s in ("function hmgHue", "function hmgAvatar", "function hmgAvatarDot", "function hmgBusy"))
               and all(s in _hmgcss for s in ("--canvas: #101116", "--canvas: #ffffff", "--accent: #5e6ad2",
                                              "@media (max-width: 1199px)", "@media (max-width: 767px)",
-                                             "prefers-reduced-motion")), None)
+                                             "prefers-reduced-motion", "--hue0: #8f9aff", ".hmg-av {",
+                                             "livePulse", "skelSweep", "hmgSpin")), None)
         # 残留闸复核：admin/hfadmin 双面板文件未引入任何 hmg 引用（文件级零改动由 git diff 把关，此处锚点复核）
         check("T40l 双面板零污染复核(两面板无 hmg-admin 引用,原余量锚点仍在你位)",
               "hmg-admin" not in _hf and "hmg-admin" not in _idx

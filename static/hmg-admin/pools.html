@@ -153,7 +153,7 @@ async function loadPools() {
         <div class="grow" style="min-width:240px">
           <div class="card-title">
             ${isDraggable ? '<span class="drag-handle" style="cursor:grab" title="拖拽排序">⠿</span>' : '<span style="opacity:.3">⠿</span>'}
-            池：${esc(name)} <span class="badge">model="${esc(name)}" 可调用</span>
+            ${HMG.avatar(name, true)} 池：${esc(name)} <span class="badge">model="${esc(name)}" 可调用</span>
             ${isFallback ? '<span class="badge badge-acc">🛟 兜底池</span>' : ""}
             ${isAuto ? '<span class="badge badge-acc">内置</span>' : ""}
             ${dedicatedTag}

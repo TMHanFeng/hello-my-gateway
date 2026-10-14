@@ -161,7 +161,7 @@ async function loadModels() {
     <div class="card provider-card" draggable="true" data-provider-drag="${esc(p.id)}" style="cursor:grab" title="拖拽排序供应商">
       <div class="provider-head">
         <div class="grow" style="min-width:220px">
-          <div class="card-title"><span class="drag-handle">⠿</span> ${esc(p.name)} ${provBadge(p.protocol)}<span class="pq-inline" data-pq-inline="${esc(p.id)}"></span></div>
+          <div class="card-title"><span class="drag-handle">⠿</span> ${HMG.avatar(p.name, true)} ${esc(p.name)} ${provBadge(p.protocol)}<span class="pq-inline" data-pq-inline="${esc(p.id)}"></span></div>
           <div class="card-sub mono">${esc(p.id)} · ${esc(p.base_url)}${p.proxy_url ? ` <span class="badge badge-acc" title="代理: ${esc(p.proxy_url)}">🛡️ 代理</span>` : ""}</div>
         </div>
         <div class="row wrap">

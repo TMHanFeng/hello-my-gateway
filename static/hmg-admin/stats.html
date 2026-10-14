@@ -20,8 +20,10 @@
   /* hover 浮起三件套与辉光发丝线在 hmg.css 共享层（.stat-card 已列入） */
 }
 .stat-top { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 8px; }
-.stat-id { font-weight: 600; font-size: 13.5px; overflow-wrap: anywhere; }
-.stat-name { color: var(--ink-subtle); font-size: 12px; margin-top: 1px; overflow-wrap: anywhere; }
+.stat-top .hmg-av { margin-top: 1px; }
+/* 换行治理：标题/副题恒单行截断（title 保全量）——同行卡片的数字基线不再被长名折行顶乱 */
+.stat-id { font-weight: 600; font-size: 13.5px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.stat-name { color: var(--ink-subtle); font-size: 12px; margin-top: 1px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .stat-badges { margin-left: auto; display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
 .stat-badges .badge { max-width: 150px; overflow: hidden; text-overflow: ellipsis; }
 button.badge { cursor: pointer; border: none; font: inherit; font-size: 12px; }
@@ -39,6 +41,8 @@ button.badge { cursor: pointer; border: none; font: inherit; font-size: 12px; }
 .stat-redzone { position: absolute; top: 0; bottom: 0; right: 0; left: auto; background: repeating-linear-gradient(45deg, transparent, transparent 3px, rgba(235,87,87,.18) 3px, rgba(235,87,87,.18) 6px); }
 .stat-meta { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--ink-subtle); flex-wrap: wrap; }
 .stat-pct { font-variant-numeric: tabular-nums; }
+.stat-pct.warn { color: var(--warn-ink); }
+.stat-pct.err { color: var(--err-ink); }
 .stat-refresh { margin-left: auto; text-align: right; }
 .i-tip { display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; border-radius: 50%; background: var(--surface-3); color: var(--ink-subtle); font-size: 10px; font-style: normal; cursor: help; }
 /* 分组/外层系统组：区块占满整行，体内自建网格 */
@@ -78,7 +82,7 @@ button.badge { cursor: pointer; border: none; font: inherit; font-size: 12px; }
 <div id="hmg-drawermask"></div>
 <main class="hmg-main">
   <div class="page-head">
-    <h1>用量统计</h1><span class="sub">每 5 秒自动刷新；配了刷新时间的模型按「当前窗口用量」统计与排序</span><span class="sp"></span>
+    <h1>用量统计</h1><span class="sub"><i class="live-dot"></i>每 5 秒自动刷新；配了刷新时间的模型按「当前窗口用量」统计与排序</span><span class="sp"></span>
     <div class="toolbar">
       <div class="seg" id="stat-dim-seg">
         <button class="on" data-dim="billing" onclick="setStatDim('billing', this)">按计费量</button>
@@ -90,7 +94,7 @@ button.badge { cursor: pointer; border: none; font: inherit; font-size: 12px; }
       <button class="btn btn-ghost btn-sm" id="btn-hr-stats" onclick="showHeadroomStats()">节省统计</button>
     </div>
   </div>
-  <div class="stat-grid" id="stats-grid"><div class="empty">加载中…</div></div>
+  <div class="stat-grid" id="stats-grid"><div class="empty loading">加载中…</div></div>
 </main>
 <script src="/hmg-admin/assets/hmg.js?v=__GATEWAY_VERSION__"></script>
 <script>
@@ -346,16 +350,17 @@ async function loadStats() {
 
 function setStatTxt(root, sel, txt) {
   const n = root.querySelector(sel);
-  if (n && n.textContent !== txt) n.textContent = txt;
+  if (n && n.textContent !== txt) { n.textContent = txt; if (sel === ".stat-id" || sel === ".stat-name") n.title = txt; }   // 截断行的悬停全量
 }
 
 function statCardHTML(x, i) {
   return `
     <div class="stat-card ${x.cls}" data-model-id="${esc(x._ckey || x.m.id)}" style="animation-delay:${Math.min(i * 45, 400)}ms;order:${i}">
       <div class="stat-top">
+        ${HMG.avatar(x.m.id)}
         <div class="grow" style="min-width:0">
-          <div class="stat-id">${esc(x.m.id)}</div>
-          <div class="stat-name">${esc(x.m.name)} · ${x.billing}</div>
+          <div class="stat-id" title="${esc(x.m.id)}">${esc(x.m.id)}</div>
+          <div class="stat-name" title="${esc(x.m.name)} · ${x.billing}">${esc(x.m.name)} · ${x.billing}</div>
         </div>
         <div class="stat-badges">${x.freeBadge}${x.typeBadge}${x.costBtn}</div>
       </div>
@@ -368,7 +373,7 @@ function statCardHTML(x, i) {
       </div>
       <div class="stat-bar">${x.mark != null ? `<div class="stat-redzone" style="left:${x.mark}%"></div><div class="stat-mark" style="left:calc(${x.mark}% - 1px)" data-k="${x.mark}"></div>` : ""}<div class="stat-fill ${x.cls === "full" ? "full" : x.cls === "warn" ? "warn" : ""}" data-pct="${x.pct}" style="width:0%"></div></div>
       <div class="stat-meta">
-        <span class="stat-pct">${x.pctText}</span>
+        <span class="stat-pct${x.cls === "full" ? " err" : x.cls === "warn" ? " warn" : ""}">${x.pctText}</span>
         ${x.loadText ? `<span class="stat-load">${x.loadText}</span>` : ""}
         <span class="stat-refresh">${x.refresh}</span>
       </div>
@@ -464,7 +469,11 @@ function statUpdateCard(el, x) {
     }
   } else if (noteEl) noteEl.remove();
   const pctEl = el.querySelector(".stat-pct");
-  if (pctEl && pctEl.textContent !== x.pctText) pctEl.textContent = x.pctText;
+  if (pctEl) {
+    const pc = "stat-pct" + (x.cls === "full" ? " err" : x.cls === "warn" ? " warn" : "");
+    if (pctEl.textContent !== x.pctText) pctEl.textContent = x.pctText;
+    if (pctEl.className !== pc) pctEl.className = pc;
+  }
   const rf = el.querySelector(".stat-refresh");
   if (rf && rf.innerHTML !== x.refresh) rf.innerHTML = x.refresh;
   const loadEl = el.querySelector(".stat-load");
@@ -638,9 +647,10 @@ function statPaidCardHTML(x, i, pct) {
   return `
     <div class="stat-card" data-model-id="${esc(x.m.id)}" style="animation-delay:${Math.min(i * 45, 400)}ms;order:${i}">
       <div class="stat-top">
+        ${HMG.avatar(x.m.id)}
         <div class="grow" style="min-width:0">
-          <div class="stat-id">${esc(x.m.id)}</div>
-          <div class="stat-name">${esc(x.m.name)} · ${x.billing}</div>
+          <div class="stat-id" title="${esc(x.m.id)}">${esc(x.m.id)}</div>
+          <div class="stat-name" title="${esc(x.m.name)} · ${x.billing}">${esc(x.m.name)} · ${x.billing}</div>
         </div>
         <div class="stat-badges">${x.freeBadge}${x.typeBadge}${x.costBtn}</div>
       </div>

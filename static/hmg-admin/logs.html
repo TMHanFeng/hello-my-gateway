@@ -40,15 +40,15 @@
 <div id="hmg-drawermask"></div>
 <main class="hmg-main">
   <div class="page-head">
-    <h1>调用记录</h1><span class="sub">每次调用的选模过程与切换依据。绿=选中，灰=排除，黄=切换</span><span class="sp"></span>
+    <h1>调用记录</h1><span class="sub"><i class="live-dot"></i>每次调用的选模过程与切换依据。绿=选中，灰=排除，黄=切换</span><span class="sp"></span>
     <div class="toolbar">
       <select id="log-pool-filter" class="inp" style="width:auto;min-width:140px" onchange="loadDecisions()">
         <option value="">全部池</option>
       </select>
-      <button class="btn btn-ghost btn-sm" onclick="loadDecisions()">刷新</button>
+      <button class="btn btn-ghost btn-sm" onclick="HMG.busy(this, loadDecisions())">刷新</button>
     </div>
   </div>
-  <div id="log-list"><div class="empty">加载中…</div></div>
+  <div id="log-list"><div class="empty loading">加载中…</div></div>
 </main>
 <script src="/hmg-admin/assets/hmg.js?v=__GATEWAY_VERSION__"></script>
 <script>
@@ -171,8 +171,8 @@ function decisionInner(d) {
   return `
       <div class="log-head">
         <span class="log-time">${t}</span>
-        ${d.caller ? `<span class="log-pool" style="color:var(--accent-hover)">👤 ${esc(d.caller)}</span>` : ""}
-        <span class="log-pool">池 ${esc(d.pool_name)}</span>
+        ${d.caller ? `<span class="log-pool" style="color:var(--accent-hover)">${HMG.avatarDot(d.caller)}${esc(d.caller)}</span>` : ""}
+        <span class="log-pool">${d.pool_name ? HMG.avatarDot(d.pool_name) : ""}池 ${esc(d.pool_name)}</span>
         ${d.requested ? `<span class="rsn rsn-neutral">指定 ${esc(d.requested)}</span>` : ""}
         <span class="rsn rsn-neutral">估算 ${d.estimated_tokens} tok</span>
           ${d.actual_tokens != null && d.actual_tokens !== "" ? `<span class="rsn rsn-selected">实际 ${d.actual_tokens} tok</span>` : ""}

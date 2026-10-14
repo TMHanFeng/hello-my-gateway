@@ -85,6 +85,31 @@ function hmgEsc(s) {
   return String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 function hmgPathEnc(s) { return encodeURIComponent(String(s == null ? "" : s)); }
+/** 身份色相位（v2.17.4）：名字哈希 → 0..7，同名词恒同色（头像/池点/池 chip 共用）。 */
+function hmgHue(s) {
+  let h = 0;
+  const str = String(s == null ? "" : s);
+  for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) >>> 0;
+  return h % 8;
+}
+/** 实体头像：tint 底 monogram 方片（首字符；hue 按名定，同名词恒同色）。 */
+function hmgAvatar(name, sm) {
+  const str = String(name == null ? "?" : name).trim();
+  const ch = (str.charAt(0) || "?").toUpperCase();
+  return `<span class="hmg-av${sm ? " hmg-av-sm" : ""} hue-${hmgHue(str)}">${hmgEsc(ch)}</span>`;
+}
+/** 池名小圆点（日志行 / 授权池 chip 内联）：实心相位色（区别于头像的 tint 底）。 */
+function hmgAvatarDot(name) {
+  const str = String(name == null ? "?" : name).trim();
+  return `<i class="hmg-av-dot" style="background:var(--hue${hmgHue(str)})"></i>`;
+}
+/** 按钮忙态：异步动作期间加 .busy（CSS 旋转圈）+ 禁点，结束还原（emil：反馈要即时）。fn 可传异步函数或已获得的 Promise。 */
+async function hmgBusy(btn, fn) {
+  if (!btn || btn.classList.contains("busy")) return (typeof fn === "function") ? fn() : fn;
+  btn.classList.add("busy");
+  try { return (typeof fn === "function") ? await fn() : await fn; }
+  finally { btn.classList.remove("busy"); }
+}
 /** 千分位（小数位保留原样）。 */
 function hmgNum(n) {
   if (n == null || isNaN(Number(n))) return String(n == null ? "-" : n);
@@ -330,6 +355,7 @@ window.HMG = {
   menu: hmgMenu, closeMenu: hmgCloseMenu,
   poll: hmgPoll, theme: hmgTheme, setTheme: hmgSetTheme, toggleTheme: hmgToggleTheme,
   renderShell: hmgRenderShell,
+  hue: hmgHue, avatar: hmgAvatar, avatarDot: hmgAvatarDot, busy: hmgBusy,
   isTouch: !!(window.matchMedia && window.matchMedia("(hover: none), (pointer: coarse)").matches),
 };
 
