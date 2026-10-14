@@ -324,7 +324,8 @@ textarea.inp { resize: vertical; min-height: 64px; }
 .card.flush { padding: 0; overflow: hidden; }
 .card-titlebar { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
 .card-title { font-size: 15px; font-weight: 600; letter-spacing: -.2px; }
-.card-title .hmg-av { vertical-align: -6px; margin-right: 2px; }
+/* 标题行头像：middle 对齐文字光心；负纵向 margin 抵消行盒膨胀（20px 片贡献 14px < 22.5 行高）；relative -2px 光学居中 */
+.card-title .hmg-av { vertical-align: middle; margin: -3px 2px -3px 0; position: relative; top: -2px; }
 .card-title .sub { font-weight: 400; font-size: 12px; color: var(--ink-subtle); margin-left: 6px; }
 /* 非 group 模式下直接子卡片的纵向节奏（group 模式由 .grp-body 的 grid gap 接管） */
 #models-list > .card:not(:last-child), #pool-list > .card:not(:last-child), #key-list > .card:not(:last-child) { margin-bottom: 12px; }

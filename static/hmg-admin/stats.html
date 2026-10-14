@@ -20,7 +20,7 @@
   /* hover 浮起三件套与辉光发丝线在 hmg.css 共享层（.stat-card 已列入） */
 }
 .stat-top { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 8px; }
-.stat-top .hmg-av { margin-top: 1px; }
+.stat-top .hmg-av { margin-top: -1px; }   /* 24px 片对齐首行光心（实测 -2.87px 偏低的校正） */
 /* 换行治理：标题/副题恒单行截断（title 保全量）——同行卡片的数字基线不再被长名折行顶乱 */
 .stat-id { font-weight: 600; font-size: 13.5px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .stat-name { color: var(--ink-subtle); font-size: 12px; margin-top: 1px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
