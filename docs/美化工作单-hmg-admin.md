@@ -152,3 +152,10 @@ DESIGN.md **未发布产品浅色主题**(Known Gaps 明示;inverse-* 是品牌�
 - **教训（等高修复要枚举全部网格容器）**：v2.17.2 修「卡片大小不一致」只改了平铺 `.stat-grid`，漏了分组视图的真实渲染容器 `.stat-group-body`——同一批卡片有**多条渲染路径**（平铺/分组/外层系统组嵌套），修样式问题时必须 `grep grid-template-columns` 枚举全页容器逐个核对，不能只修截图上看到的那条路径。修复后实测 17 行 0 参差 + 进度条贴底对齐；T40g 以整行锚点防回退。
 - **鉴别法（IAB 遮挡节流冻结动画时钟）**：带 transition 的属性计算样式会冻结在过渡起始值（76 个 hmgIn 钉在 t=0 为铁证），造成「主题切换不变色」假bug。三步鉴别：①无 transition 的元素（body）计算值即时正确 → 级联没坏；②`document.getAnimations()` 大量 running 且 currentTime=0 → 时钟冻结；③`getAnimations().forEach(a=>a.finish())` 后断言终态全部正确 → 环境问题结案。不要把计算样式冻结当产品 bug 修。
 - **其余四线基线（供后续回归参考）**：DCL 80ms；共享资产 gzip 后 10.3K/17.8K；六页零裸 setInterval；跨页按钮 27px 是 `.btn-sm` 刻意紧凑档非漂移；移动端弹窗实测 380/390 宽是布局视口（innerWidth 含 10px 经典滚动条），真机 overlay 滚动条即全宽——测量时对比 `clientWidth` 而非 `innerWidth`。
+
+## 15. 体验丰富化实录（2026-10-13 v2.17.4，三次反馈驱动）
+
+- **「换行打乱布局」的正确诊断**：DOM 审计（scrollWidth/scrollHeight 对比）先证明**没有裁剪与撑破**——病灶是换行改变元素高度、打乱行内节奏（长名折行把同行卡片的数字顶到三个高度）。修法是「单行截断 + title 保全量」而非 overflow-wrap。判据：修后 0 垂直折行（scrollHeight==clientHeight）+ 同行 .stat-nums y 坐标一致。
+- **颜色丰富化的克制解**：不引入新装饰色，而是给**实体**发身份色（Linear label 色系 8 相位，名字哈希恒定）——色即是信息（扫读锚点/族类分组），不是壁纸。同供应商族天然同色是哈希的意外红利。
+- **「缺少按钮」的真相**：按钮早就在（.btn-ghost），但透明底无边框读作裸文本——可见性 bug 而非缺失。全局 wash 底+发丝边一根 CSS 规则解决。
+- **动效全部「状态指示」目的**（emil 框架）：骨架屏（首载 rare）、live-dot（轮询活性）、busy 旋转（异步反馈）、复制文本回声——没有一个「因为好看」；reduced-motion 全局冻结规则自动覆盖新增动画，无需逐个降级。
