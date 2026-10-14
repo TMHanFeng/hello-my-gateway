@@ -2507,6 +2507,11 @@ def main():
                   "rgba(94, 106, 210, .14)", "rgba(148, 84, 220, .09)",
                   "rgba(94, 106, 210, .09)", "rgba(64, 205, 255, .06)",
                   "rgba(38, 158, 215, .055)", "var(--noise-url)")), None)
+        # v2.17.10 弹窗动作行右下角：.modal-actions 上收共享 hmg.css + justify-content:flex-end（.right 范式不受影响）
+        check("T40p 弹窗动作行右下角(.modal-actions 单源上收共享css/flex-end右对齐/页面级复制移除)",
+              '.modal-actions { display: flex; gap: 8px; margin-top: 16px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }' in _hmgcss
+              and ".modal-actions { display: flex" not in _pages40["model"].text
+              and 'class="modal-actions"' in _pages40["keys"].text, None)
         # v2.17.8 拖拽丝滑化：FLIP 换位滑移（hmg.js 共享助手）+ rAF 合帧 + 异步变淡保拖影 + Firefox setData + 落点仅在保存失败时重渲
         check("T40n 拖拽丝滑化(FLIP助手flipMove/四拖拽面接线/rAF合帧/异步变淡/setData/失败才重渲/.dragging标记)",
               all(s in _hmgjs for s in ("function hmgFlipMove", "flipMove: hmgFlipMove", "prefers-reduced-motion: reduce"))

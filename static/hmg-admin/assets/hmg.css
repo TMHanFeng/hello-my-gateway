@@ -482,6 +482,10 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .modal-body { padding: 18px 20px; overflow-y: auto; }
 .modal-foot { display: flex; align-items: center; gap: 8px; padding: 13px 20px; border-top: 1px solid var(--hairline); flex: none; }
 .modal-foot .right { margin-left: auto; display: flex; gap: 8px; }
+/* 表单弹窗动作行（页面级表单的 取消/保存）：主操作右下角是对话框通则；
+   「左侧辅助动作 + .right 右组」范式不受影响（.right 的 auto margin 先吃掉全部富余空间）。 */
+.modal-actions { display: flex; gap: 8px; margin-top: 16px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+.modal-actions .right { margin-left: auto; display: flex; gap: 8px; }
 
 .menu {
   position: absolute; z-index: 110; min-width: 160px; padding: 4px;
