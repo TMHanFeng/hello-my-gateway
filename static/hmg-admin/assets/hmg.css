@@ -13,19 +13,19 @@
 /* ── 1. 设计 token ─────────────────────────────────────────── */
 :root {
   color-scheme: dark;
-  /* 暗色：产品面石墨（营销 #010102 的同族提亮版，v2.17.2 护眼适配；hsl 靛蓝倾向与 lavender 同族） */
-  --canvas: #101116;
-  --surface-1: #17181f;
-  --surface-2: #1d1f28;
-  --surface-3: #242734;
-  --surface-4: #2b2e3d;
-  --hairline: #2a2d3a;
-  --hairline-strong: #3a3e51;
-  --hairline-tertiary: #4a4f66;
-  --ink: #f4f5f9;
-  --ink-muted: #c7cbda;
-  --ink-subtle: #9095a8;
-  --ink-tertiary: #676d82;
+  /* 暗色：产品面石墨第三档（v2.17.6 再升亮降对比：canvas↔ink 17.3:1→14.9:1，长时间盯屏更舒适；hsl 靛蓝倾向与 lavender 同族） */
+  --canvas: #161823;
+  --surface-1: #1e202b;
+  --surface-2: #252834;
+  --surface-3: #2d3040;
+  --surface-4: #353950;
+  --hairline: #343847;
+  --hairline-strong: #464b60;
+  --hairline-tertiary: #565b73;
+  --ink: #e9ebf3;
+  --ink-muted: #c6cadb;
+  --ink-subtle: #9297ab;
+  --ink-tertiary: #6b7186;
   --accent: #5e6ad2;
   --accent-hover: #828fff;
   --accent-focus: #5e69d1;
@@ -43,8 +43,8 @@
   --focus-ring: rgba(94, 105, 209, .5);   /* 焦点环 = 2px primary-focus @50%（品牌 Elevation 4 段） */
 
   /* 表面/材质（暗色）：材料层级——半透明侧栏/顶栏内容下滑过，卡片顶缘微高光，浮层专用投影 */
-  --side-bg: rgba(14, 15, 20, .72);
-  --topbar-bg: rgba(14, 15, 20, .72);
+  --side-bg: rgba(19, 21, 30, .72);
+  --topbar-bg: rgba(19, 21, 30, .72);
   --edge: inset 0 1px 0 rgba(255, 255, 255, .05);            /* 顶边微高光：光打在材质上 */
   --edge-btn: inset 0 1px 0 rgba(255, 255, 255, .08);
   --wash: rgba(255, 255, 255, .045);                          /* 行/项 hover 微抬升 */
@@ -112,10 +112,10 @@
 
 /* ── 2. 基础 ──────────────────────────────────────────────── */
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-html { -webkit-text-size-adjust: 100%; scrollbar-width: thin; scrollbar-color: var(--hairline-strong) transparent; }
+html { -webkit-text-size-adjust: 100%; scrollbar-width: thin; scrollbar-color: var(--hairline-strong) transparent; background: var(--canvas); }
 body {
   margin: 0;
-  background: var(--canvas);
+  background: transparent;   /* 画布色在 html；body 留给负 z 的氛围层（网格+极光）透出 */
   color: var(--ink);
   font: 14px/1.5 -apple-system, "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
   letter-spacing: 0;
@@ -179,6 +179,12 @@ html.theming, html.theming * { transition: background-color .2s ease, color .2s 
 .nav-item:active { background: var(--surface-2); transform: scale(.985); }
 .nav-item.on { background: var(--surface-2); color: var(--ink); }  /* 选中即 surface lift（pricing-tab-selected 语义） */
 .nav-item.on svg { color: var(--accent-hover); }                   /* 选中态图标 = lavender 点缀（选中语义，品牌许可范围） */
+.nav-item { position: relative; }
+.nav-item.on::before {                                              /* 选中光条：accent 竖条+柔光（科技感锚点） */
+  content: ""; position: absolute; left: 0; top: 50%; width: 3px; height: 55%;
+  transform: translateY(-50%); border-radius: var(--r-pill);
+  background: var(--accent-hover); box-shadow: 0 0 9px rgba(130, 143, 255, .55);
+}
 .hmg-side-foot { border-top: 1px solid var(--hairline); padding-top: 10px; display: flex; flex-direction: column; gap: 8px; }
 .hmg-side-row { display: flex; align-items: center; gap: 8px; }
 .pill-key {
@@ -579,6 +585,64 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .btn.busy::before { content: ""; width: 12px; height: 12px; flex: none; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: hmgSpin .6s linear infinite; }
 @keyframes hmgSpin { to { transform: rotate(360deg); } }
 
+/* ── 10.6 科技氛围层（暗色）：画布网格 + 双侧极光缓漂 + 品牌渐变流动 ──
+   全部 transform/opacity 动画（合成器线程，emil：恒动只留给氛围不留给交互）；
+   亮色主题退场（白底上辉光变脏）；reduced-motion 由全局冻结规则接管。 */
+body::before {
+  content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background:
+    radial-gradient(720px 340px at 22% -6%, rgba(94, 106, 210, .11), transparent 70%),
+    radial-gradient(860px 460px at 84% -14%, rgba(76, 159, 254, .07), transparent 70%),
+    linear-gradient(rgba(255, 255, 255, .024) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, .024) 1px, transparent 1px);
+  background-size: auto, auto, 44px 44px, 44px 44px;
+}
+body::after {
+  content: ""; position: fixed; top: -240px; left: 6%; width: 620px; height: 460px; z-index: -1;
+  pointer-events: none; filter: blur(34px);
+  background:
+    radial-gradient(closest-side at 34% 46%, rgba(94, 106, 210, .16), transparent),
+    radial-gradient(closest-side at 68% 58%, rgba(76, 159, 254, .10), transparent);
+  transform-origin: 40% 40%;
+  animation: auroraDrift 26s var(--ease-io) infinite alternate;
+}
+@keyframes auroraDrift {
+  0%   { transform: translate3d(-4%, 0, 0) scale(1) rotate(0deg); opacity: .7; }
+  50%  { transform: translate3d(13%, 4%, 0) scale(1.14) rotate(7deg); opacity: 1; }
+  100% { transform: translate3d(-2%, 8%, 0) scale(.94) rotate(-5deg); opacity: .8; }
+}
+:root[data-theme="light"] body::before {
+  background:
+    radial-gradient(720px 340px at 22% -6%, rgba(94, 106, 210, .06), transparent 70%),
+    linear-gradient(rgba(22, 23, 27, .022) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(22, 23, 27, .022) 1px, transparent 1px);
+  background-size: auto, 44px 44px, 44px 44px;
+}
+:root[data-theme="light"] body::after { display: none; }
+/* 品牌 Logo：渐变缓慢流动（27px 方片上的 paint 级动画，成本可忽略） */
+.hmg-brand .logo {
+  background: linear-gradient(135deg, #8f9aff 0%, #5e6ad2 34%, #4a53b6 66%, #8f9aff 100%);
+  background-size: 280% 280%;
+  animation: brandFlow 9s ease-in-out infinite;
+}
+@keyframes brandFlow { 0%, 100% { background-position: 0% 24%; } 50% { background-position: 100% 76%; } }
+/* 主按钮 hover：辉光扫过（feedback-tied，非恒动） */
+.btn-primary { position: relative; overflow: hidden; }
+.btn-primary::after {
+  content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 46%; pointer-events: none;
+  background: linear-gradient(100deg, transparent, rgba(255, 255, 255, .22), transparent);
+  transform: translateX(-130%) skewX(-12deg);
+}
+/* 进度条数据流光：有填充的条上恒有一道微光缓慢流过——「数据在流」的仪表盘活感 */
+.stat-fill, .bar > i, .q-row .q-track i { position: relative; }
+.stat-fill::after, .bar > i::after, .q-row .q-track i::after {
+  content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 42%; pointer-events: none;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .20), transparent);
+  transform: translateX(-120%);
+  animation: fillFlow 3.2s linear infinite;
+}
+@keyframes fillFlow { to { transform: translateX(360%); } }
+
 /* ── 11. 动效 ─────────────────────────────────────────────── */
 /* 唯一的编排时刻：页面载入 → 主区浮起，卡片 40ms 级差瀑布（emil：30-80ms 级差，全套 <500ms）。
    stats/logs 走增量创建，仅新卡播放入场；手动刷新/分组操作重渲时作为操作反馈重播。 */
@@ -598,7 +662,10 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
   /* 行内操作 hover 显现（:focus-within 保键盘可达）——密集列表去噪的核心手段 */
   .model-row .m-actions { opacity: 0; transform: translateX(4px); transition: opacity var(--t2) var(--ease-out), transform var(--t2) var(--ease-out); }
   .model-row:hover .m-actions, .model-row:focus-within .m-actions { opacity: 1; transform: none; }
+  /* 主按钮辉光扫过：hover 触发一次（feedback-tied，非恒动） */
+  .btn-primary:hover::after { animation: sheenSweep .9s var(--ease-out) .05s 1; }
 }
+@keyframes sheenSweep { to { transform: translateX(360%) skewX(-12deg); } }
 
 @media (prefers-reduced-motion: reduce) {
   /* 减动效 = 少而柔，不是零：保留透明度/颜色过渡帮助理解，去掉位移类动画 */

@@ -2485,10 +2485,11 @@ def main():
                   "function showHeadroomStats", "const hmgPoll", "function hmgSetTheme", "function hmgRenderShell",
                   "function gwGroupsBoot"))
               and all(s in _hmgjs for s in ("function hmgHue", "function hmgAvatar", "function hmgAvatarDot", "function hmgBusy"))
-              and all(s in _hmgcss for s in ("--canvas: #101116", "--canvas: #ffffff", "--accent: #5e6ad2",
+              and all(s in _hmgcss for s in ("--canvas: #161823", "--canvas: #ffffff", "--accent: #5e6ad2",
                                              "@media (max-width: 1199px)", "@media (max-width: 767px)",
                                              "prefers-reduced-motion", "--hue0: #8f9aff", ".hmg-av {",
-                                             "livePulse", "skelSweep", "hmgSpin")), None)
+                                             "livePulse", "skelSweep", "hmgSpin",
+                                             "auroraDrift", "fillFlow", "brandFlow", "body::before")), None)
         # 残留闸复核：admin/hfadmin 双面板文件未引入任何 hmg 引用（文件级零改动由 git diff 把关，此处锚点复核）
         check("T40l 双面板零污染复核(两面板无 hmg-admin 引用,原余量锚点仍在你位)",
               "hmg-admin" not in _hf and "hmg-admin" not in _idx
