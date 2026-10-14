@@ -585,17 +585,37 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .btn.busy::before { content: ""; width: 12px; height: 12px; flex: none; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: hmgSpin .6s linear infinite; }
 @keyframes hmgSpin { to { transform: rotate(360deg); } }
 
-/* ── 10.6 科技氛围层（暗色）：画布网格 + 双侧极光缓漂 + 品牌渐变流动 ──
+/* ── 10.6 科技氛围层：噪点+暗角+双层网格基底 + 三色极光双速缓漂 + 品牌渐变流动 ──
    全部 transform/opacity 动画（合成器线程，emil：恒动只留给氛围不留给交互）；
-   亮色主题退场（白底上辉光变脏）；reduced-motion 由全局冻结规则接管。 */
+   噪点（feTurbulence 去饱和）/暗角/大网格为静态层——抗色带、加纵深，打破纯平底色；
+   两个漂移层周期 26s/38s 互质不锁步，且分踞上部与下部（覆盖全视口）。
+   亮色主题：辉光降为极淡双色晕（白底高饱和会变脏），噪点/暗角退场；
+   reduced-motion 由全局冻结规则接管。
+   注：html::before 的 position:fixed 在老 Safari 可能退化为随滚动（辉光位置略移，可容忍）。 */
+html::before {
+  content: ""; position: fixed; inset: -22%; z-index: -1; pointer-events: none;
+  filter: blur(38px);
+  background:
+    radial-gradient(560px 420px at 78% 78%, rgba(178, 118, 235, .09), transparent 70%),
+    radial-gradient(640px 460px at 16% 90%, rgba(64, 205, 255, .07), transparent 70%);
+  animation: ambientDrift 38s var(--ease-io) infinite alternate;
+}
+@keyframes ambientDrift {
+  0%   { transform: translate3d(2%, -1%, 0) scale(1) rotate(0deg); opacity: .72; }
+  100% { transform: translate3d(-5%, 4%, 0) scale(1.12) rotate(-6deg); opacity: 1; }
+}
 body::before {
   content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
   background:
+    radial-gradient(130% 100% at 50% 28%, transparent 55%, rgba(4, 5, 9, .38) 100%),
+    url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='180'%20height='180'%3E%3Cfilter%20id='n'%3E%3CfeTurbulence%20type='fractalNoise'%20baseFrequency='0.8'%20numOctaves='2'%20stitchTiles='stitch'/%3E%3CfeColorMatrix%20type='saturate'%20values='0'/%3E%3C/filter%3E%3Crect%20width='180'%20height='180'%20filter='url(%23n)'%20opacity='.05'/%3E%3C/svg%3E"),
     radial-gradient(720px 340px at 22% -6%, rgba(94, 106, 210, .11), transparent 70%),
     radial-gradient(860px 460px at 84% -14%, rgba(76, 159, 254, .07), transparent 70%),
     linear-gradient(rgba(255, 255, 255, .024) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, .024) 1px, transparent 1px);
-  background-size: auto, auto, 44px 44px, 44px 44px;
+    linear-gradient(90deg, rgba(255, 255, 255, .024) 1px, transparent 1px),
+    linear-gradient(rgba(255, 255, 255, .013) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, .013) 1px, transparent 1px);
+  background-size: auto, 180px 180px, auto, auto, 44px 44px, 44px 44px, 264px 264px, 264px 264px;
 }
 body::after {
   content: ""; position: fixed; top: -240px; left: 6%; width: 620px; height: 460px; z-index: -1;
@@ -614,11 +634,20 @@ body::after {
 :root[data-theme="light"] body::before {
   background:
     radial-gradient(720px 340px at 22% -6%, rgba(94, 106, 210, .06), transparent 70%),
+    radial-gradient(640px 400px at 88% 110%, rgba(148, 84, 220, .04), transparent 70%),
     linear-gradient(rgba(22, 23, 27, .022) 1px, transparent 1px),
     linear-gradient(90deg, rgba(22, 23, 27, .022) 1px, transparent 1px);
-  background-size: auto, 44px 44px, 44px 44px;
+  background-size: auto, auto, 44px 44px, 44px 44px;
 }
 :root[data-theme="light"] body::after { display: none; }
+/* 注意：:root 即 html，不能写 ":root[...] html::before"（自己不是自己的后代，永不匹配） */
+:root[data-theme="light"]::before {
+  background:
+    radial-gradient(560px 420px at 78% 78%, rgba(148, 84, 220, .05), transparent 70%),
+    radial-gradient(640px 460px at 16% 90%, rgba(38, 158, 215, .04), transparent 70%);
+}
+/* 手机：大模糊层降 blur 半径省 GPU（视觉差异可忽略） */
+@media (max-width: 767px) { html::before, body::after { filter: blur(26px); } }
 /* 品牌 Logo：渐变缓慢流动（27px 方片上的 paint 级动画，成本可忽略） */
 .hmg-brand .logo {
   background: linear-gradient(135deg, #8f9aff 0%, #5e6ad2 34%, #4a53b6 66%, #8f9aff 100%);

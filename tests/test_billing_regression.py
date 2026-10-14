@@ -2494,6 +2494,13 @@ def main():
         check("T40l 双面板零污染复核(两面板无 hmg-admin 引用,原余量锚点仍在你位)",
               "hmg-admin" not in _hf and "hmg-admin" not in _idx
               and "pq-inline" in _hf and "pq-inline" in _idx, None)
+        # v2.17.7 氛围背景丰富化：第二漂移层（html::before 紫+青双色 38s）+ 静态噪点/暗角/大网格 + 亮色淡晕 + 手机降 blur
+        check("T40m 氛围背景丰富化(第二漂移层紫青双色/feTurbulence噪点/暗角/大网格/亮色淡晕/手机降blur)",
+              all(s in _hmgcss for s in ("html::before", "ambientDrift", "feTurbulence", "feColorMatrix",
+                  "264px 264px", "rgba(4, 5, 9, .38)",
+                  "rgba(178, 118, 235, .09)", "rgba(64, 205, 255, .07)",
+                  'data-theme="light"]::before', "rgba(148, 84, 220, .05)",
+                  "html::before, body::after { filter: blur(26px); }")), None)
 
     finally:
         try:

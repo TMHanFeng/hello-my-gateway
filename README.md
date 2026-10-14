@@ -90,7 +90,7 @@ data/ 运行时数据（gateway.db、探测缓存、dev pid），与代码隔离
 
 | 🧠 统一思考控制 | 🧪 计费回归安全网 | 📐 智能估算超时 |
 |:---|:---|:---|
-| `reasoning_effort` 六档 → 按模型 `reasoning_map` 换算上游思考参数；思考内容统一回传 `reasoning_content` / `thinking` | 282 断言计费回归套件（`test_billing_regression.py`）：流式/非流式/一次性/RPM 触顶/安全阀/并发入账零丢失，任何改动先跑套件再上线 | `smart_estimate` 模型按 token 量动态计算超时（吞吐 EMA 校准），样本不足自动回退固定值 |
+| `reasoning_effort` 六档 → 按模型 `reasoning_map` 换算上游思考参数；思考内容统一回传 `reasoning_content` / `thinking` | 283 断言计费回归套件（`test_billing_regression.py`）：流式/非流式/一次性/RPM 触顶/安全阀/并发入账零丢失，任何改动先跑套件再上线 | `smart_estimate` 模型按 token 量动态计算超时（吞吐 EMA 校准），样本不足自动回退固定值 |
 
 | 📡 Embedding / Rerank | 🔑 用户密钥管理 | 📄 JSON 输出路由 |
 |:---|:---|:---|
@@ -171,7 +171,7 @@ python -m app.main
 >
 > 💡 **Ubuntu / Linux**：`python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt && python3 -m app.main`，或直接 `./start_gateway.sh`（自动选 venv/系统解释器；停止 `./stop_gateway.sh`）。代码本身跨平台：运行时目录（data/ logs/ backup/）首次启动自动创建，路径处理与日志滚动均适配 POSIX 文件系统。回归套件同样可在 Linux 运行：`python tests/test_billing_regression.py`。
 >
-> 🧪 **改动计费相关代码后**：`python tests/test_billing_regression.py` 运行 282 断言计费回归套件（自动在 8678 起隔离实例 + mock 上游，不触碰生产端口），全绿再上线。
+> 🧪 **改动计费相关代码后**：`python tests/test_billing_regression.py` 运行 283 断言计费回归套件（自动在 8678 起隔离实例 + mock 上游，不触碰生产端口），全绿再上线。
 
 ---
 
@@ -219,7 +219,7 @@ hello-my-gateway/
 │   ├── index.html                # 传统管理后台（/admin）
 │   └── hfadmin.html              # 科技感管理面板（/hfadmin）
 ├── tests/
-│   └── test_billing_regression.py # 计费回归套件（282 断言，隔离实例 + mock 上游）
+│   └── test_billing_regression.py # 计费回归套件（283 断言，隔离实例 + mock 上游）
 ├── start_gateway.cmd             # Windows 启动入口（自动选解释器，幂等）
 ├── stop_gateway.cmd              # 停止入口（身份核验，只停本仓库网关）
 ├── start_gateway.sh              # Linux/macOS 启动入口（语义同 .cmd：选解释器 + 已运行自检）
@@ -645,6 +645,8 @@ SQLite（`gateway.db`）持久化以下表：
 ## 📜 版本
 
 ### 最新
+
+**`v2.17.7`** — **🌌 hmg-admin 背景丰富化（反馈：背景太单一——修前暗色仅顶部两团靛蓝系辉光+一团极光，右侧与下 2/3 视口纯平底色且全体同色相）**：①**第二漂移层**（`html::before` fixed 负 z 层，inset -22% 防漂移露边）：紫 `rgba(178,118,235,.09)` 压右下 + 青 `rgba(64,205,255,.07)` 压左下——两个新色相打破单一靛蓝族；**ambientDrift 38s** 与原 auroraDrift 26s 互质不锁步，与顶部极光分踞上/下覆盖全视口；blur 38px 静态滤镜、transform/opacity 合成器动画。②**静态质感层**（body::before 从 4 层扩到 8 层，抗色带/加纵深）：**胶片噪点**（SVG feTurbulence 去饱和 data URI，180px 无缝平铺 .05 透明度）+ **暗角**（radial transparent 55%→rgba(4,5,9,.38) 边缘压暗）+ **264px 大网格**（蓝图感，与 44px 细网格共存）。③**亮色主题同步**：html::before 极淡双色晕（紫 .05/青 .04）+ body 右下加紫晕；噪点/暗角白底退场；顺修**永不匹配选择器** `:root[data-theme="light"] html::before`（:root 即 html 自身不能是自己的后代，改为 `:root[data-theme="light"]::before`——该 bug 让亮色第二层一直回落暗色色值）。④手机端大模糊层 blur 降 26px 省 GPU；reduced-motion 全局冻结自动接管。回归 **282→283** 全绿（新增 T40m：第二漂移层紫青双色/feTurbulence 噪点/暗角/264 大网格/亮色淡晕/手机降 blur 锚点）；DOM 断言：暗色 body::before 8 层 backgroundSize（暗角/噪点/双辉光/44+264 双网格）+ ambientDrift@38s blur(38px) fixed z-1 + auroraDrift@26s 同屏并存、对比 14.8:1 不变（暗角只压暗背景比率只升）、亮色 html::before tint 在位且无暗色色值、双主题往返正确、卡片级联 #f5f6f6 不受影响、手机 390px blur(26px)；截图 gui-test-screenshots/v2_17_7_*（亮色截图一次 IAB 半合成残影，DOM 断言证伪后重拍）。纯资产改动**刷新即见**。
 
 **`v2.17.6`** — **🌌 hmg-admin 暗色三档提亮降对比 + 科技氛围层（反馈：暗黑太深邃对比太高不舒服/缺动态/无科技特效感）**：①**色板第三档**：canvas `#101116→#161823`、ink `#f4f5f9→#e9ebf3`（实测对比 **17.3:1→14.8:1**，Linear 暗色同档），surface 四梯/hairline 三级/ink-muted 同族上移，side-bg `rgba(19,21,30,.72)` 随族；T40k 画布锚点同步 `#161823`。②**科技氛围层**（`body::before/::after` 负 z 固定层，画布色移到 html、body 透明）：44px 暗网格 + 顶部双极光 radial（lavender .11 / blue .07）+ **auroraDrift 26s 极光缓漂**（translate3d/scale/rotate 纯 transform 合成器动画，blur 34px 静态滤镜）；亮色主题极光退场、网格换暗线极淡不脏版面。③**恒动细节**：品牌 Logo 渐变 **brandFlow** 9s 缓流、进度条 **fillFlow** 3.2s 数据流光（`.stat-fill/.bar>i/.q-track i` 的 ::after 42% 白光条 translateX 循环——零宽条自然无光）、nav 选中项 **accent 光条+柔光**、主按钮 hover **辉光扫过一次**（sheenSweep，feedback-tied 非恒动）。全部动画 transform/opacity（合成器线程，主线程零占用），reduced-motion 全局冻结规则自动接管。回归 **282/282** 全绿（T40k 增补 auroraDrift/fillFlow/brandFlow/body::before 锚点）；DOM 断言：对比 14.8:1、四动画 computed 在位、亮色 aurora `display:none`；截图 gui-test-screenshots/v2_17_6_*。纯资产改动**刷新即见**。
 **`v2.17.5`** — **📐 hmg-admin 头像对齐修正（v2.17.4 回归：标题行头像中心比名字文字低 7.6px 且行盒被撑到 28.3px）**：根因 `vertical-align:-6px` 过量 + 20px 行内片膨胀行盒；修法 `.card-title .hmg-av` 改 `vertical-align:middle` + 纵向负 margin -3px（行盒贡献 14px < 22.5 行高）+ `relative top:-2px` 光学居中——实测 model/keys 双页偏差 **0.25px**、行盒回落 23.3px；stats 24px 大头像 `margin-top:-1px` 校正首行光心（修前 -2.87px）；删 keys 私有规则统一共享。回归 282/282 全绿；刷新即见。
