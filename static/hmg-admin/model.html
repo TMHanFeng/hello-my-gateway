@@ -42,6 +42,16 @@
 .pqi-item.pqi-ok { color: var(--ok-ink); background: var(--ok-tint); }
 .pqi-item.pqi-warn { color: var(--warn-ink); background: var(--warn-tint); }
 .pqi-item.pqi-err { color: var(--err-ink); background: var(--err-tint); }
+/* 余量徽章旁的「立即查询」：查询动作就近显示位（原先唯一入口在编辑弹窗的「保存」，太远）；
+   18px 高 < 22.5px 标题行盒不膨胀，vertical-align:middle 对齐徽章（v2.17.5 行内小片三件套） */
+.pq-refresh {
+  width: 22px; height: 18px; margin-left: 2px; padding: 0; flex: none;
+  border: 1px solid var(--hairline); border-radius: 5px; background: var(--wash); color: var(--ink-subtle);
+  font-size: 11px; line-height: 1; cursor: pointer; vertical-align: middle; position: relative; top: -1px;
+  transition: color var(--t1) var(--ease-out), border-color var(--t1) var(--ease-out), background var(--t1) var(--ease-out);
+}
+.pq-refresh:hover { color: var(--accent-hover); border-color: var(--hairline-strong); background: var(--surface-2); }
+.pq-refresh.spin { animation: hmgSpin .6s linear infinite; pointer-events: none; opacity: .8; }
 /* 移植表单网格（与原面板 .f2/.f3/.fg 同名同义；.fg/.form-sec 共享部分在 hmg.css） */
 .f2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .f3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
@@ -1122,9 +1132,29 @@ async function decorateProvQuota() {
     if (b.source === "provider" && b.provider_id && !byProv[b.provider_id]) byProv[b.provider_id] = b;
   });
   document.querySelectorAll("[data-pq-inline]").forEach(el => {
-    const html = provQuotaInlineHtml(byProv[el.dataset.pqInline] || null);
+    const pid = el.dataset.pqInline;
+    const b = byProv[pid] || null;
+    let html = provQuotaInlineHtml(b);
+    if (b) html += `<button type="button" class="pq-refresh" title="立即查询余额" onclick="pqRefreshNow('${jsq(pid)}', this)">⟳</button>`;
     if (el.__lastHtml !== html) { el.__lastHtml = html; el.innerHTML = html; }
   });
+}
+/* 卡片上的立即查询：PUT 原绑定字段（显式提交才覆盖：platform/enabled 原样，其余保持原值）——
+   服务端收到 PUT 即 refresh_binding 并落盘结果文件；完成后走 pqSyncBindings 唯一刷新通道重绘徽章 */
+async function pqRefreshNow(pid, btn) {
+  const b = quotaBindings.find(x => x.source === "provider" && x.provider_id === pid);
+  if (!b) { toast("该供应商未绑定余量监控", "warn"); return; }
+  if (btn) { btn.disabled = true; btn.classList.add("spin"); }
+  try {
+    const d = await api("/admin/quota/bindings/" + b.id, { method: "PUT", body: JSON.stringify({ platform: b.platform, enabled: !!b.enabled }) });
+    if (d) {
+      const r = d.result || {};
+      toast(r.status === "ok" ? "余额已刷新"
+           : r.status === "unset" ? "凭证未配齐：" + (r.error || "")
+           : "查询失败：" + (r.error || ""), r.status === "ok" ? "ok" : "warn");
+      await pqSyncBindings();
+    }
+  } finally { if (btn) { btn.disabled = false; btn.classList.remove("spin"); } }
 }
 async function pqSyncBindings() {
   const d = await api("/admin/quota/bindings");

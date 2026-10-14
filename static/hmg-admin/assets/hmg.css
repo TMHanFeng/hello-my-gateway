@@ -152,6 +152,9 @@ html.theming, html.theming * { transition: background-color .2s ease, color .2s 
   transition: transform .32s var(--ease-drawer), background-color var(--t2) ease;
 }
 .hmg-brand { display: flex; align-items: center; gap: 9px; padding: 6px 10px 14px; }
+/* 名称/版本上下堆叠：版本串含提交哈希（如 v2.17.10 · 32e6f2c）单行放不下，右对齐省略号曾恒截断；
+   堆叠后任何侧栏宽度都完整可见，logo 垂直居中跨两行 */
+.hmg-brand .brand-txt { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .hmg-brand .logo {
   width: 27px; height: 27px; border-radius: 8px; flex: none;
   background: linear-gradient(155deg, #7d88e6 0%, var(--accent) 52%, #4a53b6 100%);
@@ -159,12 +162,11 @@ html.theming, html.theming * { transition: background-color .2s ease, color .2s 
   color: var(--on-accent); display: flex; align-items: center; justify-content: center;
   font-size: 14px; font-weight: 600;
 }
-.hmg-brand .name { font-size: 15px; font-weight: 600; letter-spacing: -.2px; white-space: nowrap; flex: none; }
+.hmg-brand .name { font-size: 15px; font-weight: 600; letter-spacing: -.2px; white-space: nowrap; }
 .hmg-brand .ver {
-  flex: 1; min-width: 0; margin-left: 4px; text-align: right;
-  font-size: 10.5px; color: var(--ink-tertiary);
+  min-width: 0; font-size: 10.5px; color: var(--ink-tertiary);
   font-family: ui-monospace, Consolas, monospace;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .hmg-nav { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
 .nav-item {
@@ -736,7 +738,7 @@ body::after {
 /* ── 12. 响应式 ───────────────────────────────────────────── */
 @media (max-width: 1199px) {
   #hmg-sidebar { width: 60px; padding: 12px 8px; }
-  .hmg-brand .name, .hmg-brand .ver, .nav-item span.lb, .hmg-side-foot .pill-key { display: none; }
+  .hmg-brand .brand-txt, .nav-item span.lb, .hmg-side-foot .pill-key { display: none; }
   .hmg-brand { justify-content: center; padding: 6px 0 14px; }
   .nav-item { justify-content: center; padding: 8px 0; }
   .hmg-side-row { justify-content: center; }
@@ -746,7 +748,7 @@ body::after {
   #hmg-topbar { display: flex; }
   #hmg-sidebar { width: 280px; transform: translateX(-103%); box-shadow: var(--shadow-pop); }
   body.drawer-open #hmg-sidebar { transform: translateX(0); }
-  #hmg-sidebar .hmg-brand .name, #hmg-sidebar .hmg-brand .ver,
+  #hmg-sidebar .hmg-brand .brand-txt,
   #hmg-sidebar .nav-item span.lb, #hmg-sidebar .hmg-side-foot .pill-key { display: flex; }
   #hmg-sidebar .nav-item { justify-content: flex-start; padding: 10px 12px; min-height: 40px; }
   #hmg-sidebar .hmg-side-row { justify-content: flex-start; }

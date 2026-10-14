@@ -2512,6 +2512,12 @@ def main():
               '.modal-actions { display: flex; gap: 8px; margin-top: 16px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }' in _hmgcss
               and ".modal-actions { display: flex" not in _pages40["model"].text
               and 'class="modal-actions"' in _pages40["keys"].text, None)
+        # v2.17.11 品牌行版本完整显示（name/ver 堆叠）+ 卡片余量徽章旁 ⟳ 立即查询（PUT 原字段触发刷新）
+        check("T40q 品牌版本完整+就近查询(brand堆叠结构/断点同步/pqRefreshNow/⟳按钮注入/PUT原字段)",
+              "brand-txt" in _hmgjs and '<div class="hmg-brand"><div class="logo">H</div><span class="name">' not in _hmgjs
+              and ".hmg-brand .brand-txt" in _hmgcss and ".hmg-brand .ver {" in _hmgcss
+              and all(s in _pages40["model"].text for s in ("function pqRefreshNow", 'class="pq-refresh"',
+                  "platform: b.platform, enabled: !!b.enabled", ".pq-refresh.spin")), None)
         # v2.17.8 拖拽丝滑化：FLIP 换位滑移（hmg.js 共享助手）+ rAF 合帧 + 异步变淡保拖影 + Firefox setData + 落点仅在保存失败时重渲
         check("T40n 拖拽丝滑化(FLIP助手flipMove/四拖拽面接线/rAF合帧/异步变淡/setData/失败才重渲/.dragging标记)",
               all(s in _hmgjs for s in ("function hmgFlipMove", "flipMove: hmgFlipMove", "prefers-reduced-motion: reduce"))

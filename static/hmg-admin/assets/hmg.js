@@ -351,7 +351,7 @@ function hmgRenderShell() {
   const sb = document.getElementById("hmg-sidebar");
   if (sb) {
     sb.innerHTML = `
-      <div class="hmg-brand"><div class="logo">H</div><span class="name">HMG 网关</span><span class="ver">${hmgEsc(HMG_VERSION)}</span></div>
+      <div class="hmg-brand"><div class="logo">H</div><div class="brand-txt"><span class="name">HMG 网关</span><span class="ver">${hmgEsc(HMG_VERSION)}</span></div></div>
       <nav class="hmg-nav">${HMG_NAV.map(n => `
         <a class="nav-item${n.id === page ? " on" : ""}" href="${n.href}"${n.id === page ? ' aria-current="page"' : ""}>${HMG_ICONS[n.icon]}<span class="lb">${hmgEsc(n.label)}</span></a>`).join("")}
       </nav>

@@ -90,7 +90,7 @@ data/ 运行时数据（gateway.db、探测缓存、dev pid），与代码隔离
 
 | 🧠 统一思考控制 | 🧪 计费回归安全网 | 📐 智能估算超时 |
 |:---|:---|:---|
-| `reasoning_effort` 六档 → 按模型 `reasoning_map` 换算上游思考参数；思考内容统一回传 `reasoning_content` / `thinking` | 286 断言计费回归套件（`test_billing_regression.py`）：流式/非流式/一次性/RPM 触顶/安全阀/并发入账零丢失，任何改动先跑套件再上线 | `smart_estimate` 模型按 token 量动态计算超时（吞吐 EMA 校准），样本不足自动回退固定值 |
+| `reasoning_effort` 六档 → 按模型 `reasoning_map` 换算上游思考参数；思考内容统一回传 `reasoning_content` / `thinking` | 287 断言计费回归套件（`test_billing_regression.py`）：流式/非流式/一次性/RPM 触顶/安全阀/并发入账零丢失，任何改动先跑套件再上线 | `smart_estimate` 模型按 token 量动态计算超时（吞吐 EMA 校准），样本不足自动回退固定值 |
 
 | 📡 Embedding / Rerank | 🔑 用户密钥管理 | 📄 JSON 输出路由 |
 |:---|:---|:---|
@@ -171,7 +171,7 @@ python -m app.main
 >
 > 💡 **Ubuntu / Linux**：`python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt && python3 -m app.main`，或直接 `./start_gateway.sh`（自动选 venv/系统解释器；停止 `./stop_gateway.sh`）。代码本身跨平台：运行时目录（data/ logs/ backup/）首次启动自动创建，路径处理与日志滚动均适配 POSIX 文件系统。回归套件同样可在 Linux 运行：`python tests/test_billing_regression.py`。
 >
-> 🧪 **改动计费相关代码后**：`python tests/test_billing_regression.py` 运行 286 断言计费回归套件（自动在 8678 起隔离实例 + mock 上游，不触碰生产端口），全绿再上线。
+> 🧪 **改动计费相关代码后**：`python tests/test_billing_regression.py` 运行 287 断言计费回归套件（自动在 8678 起隔离实例 + mock 上游，不触碰生产端口），全绿再上线。
 
 ---
 
@@ -219,7 +219,7 @@ hello-my-gateway/
 │   ├── index.html                # 传统管理后台（/admin）
 │   └── hfadmin.html              # 科技感管理面板（/hfadmin）
 ├── tests/
-│   └── test_billing_regression.py # 计费回归套件（286 断言，隔离实例 + mock 上游）
+│   └── test_billing_regression.py # 计费回归套件（287 断言，隔离实例 + mock 上游）
 ├── start_gateway.cmd             # Windows 启动入口（自动选解释器，幂等）
 ├── stop_gateway.cmd              # 停止入口（身份核验，只停本仓库网关）
 ├── start_gateway.sh              # Linux/macOS 启动入口（语义同 .cmd：选解释器 + 已运行自检）
@@ -645,6 +645,8 @@ SQLite（`gateway.db`）持久化以下表：
 ## 📜 版本
 
 ### 最新
+
+**`v2.17.11`** — **🔖 hmg-admin 品牌版本完整显示 + 余额查询就近化（反馈：①左上角版本没显示完全 ②供应商余额查询按钮太远布局不好）**：①**品牌行堆叠**：版本串含提交哈希（如 `v2.17.10 · 32e6f2c`，~17 字符）在 logo+网关名同行放不下，`flex:1+右对齐省略号`恒截断——改为 `.brand-txt` 列容器（名称上/版本下，logo 垂直居中跨两行），任何侧栏宽度完整可见；`.ver` 保留 ellipsis 仅作极端兜底；两处断点选择器同步（≤1199 图标条隐藏 `.brand-txt`、<767 抽屉恢复 `display:flex`）。②**余额查询就近化**：查明全面板**不存在独立查询按钮**（查询只随编辑弹窗「保存」触发——查询动作与保存耦合且离显示位最远）；供应商卡片头部余量徽章（`pq-inline`）后新增 **⟳ 立即查询**（`.pq-refresh` 22×18px 幽灵小钮，仅已绑定供应商渲染；`pqRefreshNow` PUT **原绑定字段** `platform/enabled` 原样回传——服务端「显式提交才覆盖」语义下其余字段保持原值，收到 PUT 即 `refresh_binding`+落盘结果文件；完成后走 `pqSyncBindings` 唯一通道重绘徽章，toast 反馈 ok/unset/失败三态；spin 态 `hmgSpin` 复用+disabled 防连点；零后端改动）。18px 高 <22.5px 标题行盒不膨胀（v2.17.5 行内三件套）。回归 **286→287** 全绿（T40q：brand 堆叠结构/旧单行标记移除/断点同步/pqRefreshNow/⟳ 注入/PUT 原字段锚点）；node --check 过；8660 实证：版本 `v2.17.2 · 1851e44` 完整可见（stacked+无截断 DOM 断言），⟳ 与余量徽章同容器就近在位，真点击 toast「余额已刷新」+spin 清理；截图 gui-test-screenshots/v2_17_11_brand_quota_refresh.png。纯资产改动**刷新即见**。
 
 **`v2.17.10`** — **↗️ hmg-admin 弹窗动作行右下角（反馈：供应商保存/取消应放卡片右下角——对话框主操作右下是通则）**：`.modal-actions` 样式从 model.html 页面级**上收共享 hmg.css** 并加 `justify-content: flex-end`——供应商弹窗与密钥弹窗的裸 取消/保存（创建）按钮全部靠右下；「左侧辅助动作 + `.right` 右组」范式不受影响（模型弹窗的 测试连接 仍在左，`.right` 的 `margin-left:auto` 先吃掉全部富余空间，flex-end 对其无感）；顺修 keys 页 `.modal-actions` 类**从未定义样式**的漂移（此前纯靠浏览器默认流，无 8px 间距无 flex 对齐）。回归 **285→286** 全绿（T40p：共享规则整行锚点 + 页面级复制移除 + keys 接线）；8660 实证：打开供应商编辑弹窗断言 `justify-content: flex-end`、保存按钮右缘与容器右缘齐平（rightInset 0）、取消在保存左侧，截图 gui-test-screenshots/v2_17_10_provider_modal_footer.png，弹窗已关闭还原页面。纯资产改动**刷新即见**。
 
