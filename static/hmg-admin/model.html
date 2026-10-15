@@ -11,7 +11,16 @@
 <link rel="stylesheet" href="/hmg-admin/assets/hmg.css?v=__GATEWAY_VERSION__">
 <style>
 /* ── 本页私有：供应商/模型卡片与移植表单原子（跨页共用部分在 hmg.css） ── */
-.provider-card { padding: 14px 16px 8px; }
+.provider-card { padding: 14px 16px 8px; position: relative; }
+/* v2.17.15（§20 P1-3）：3px 左侧身份色条——颜色承担分组功能，扫视整页按色分区，不再只是头像上的邮票 */
+.provider-card.pc-hue-0::before, .provider-card.pc-hue-1::before, .provider-card.pc-hue-2::before, .provider-card.pc-hue-3::before,
+.provider-card.pc-hue-4::before, .provider-card.pc-hue-5::before, .provider-card.pc-hue-6::before, .provider-card.pc-hue-7::before {
+  content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; opacity: .7; border-radius: inherit; pointer-events: none;
+}
+.provider-card.pc-hue-0::before { background: var(--hue0); } .provider-card.pc-hue-1::before { background: var(--hue1); }
+.provider-card.pc-hue-2::before { background: var(--hue2); } .provider-card.pc-hue-3::before { background: var(--hue3); }
+.provider-card.pc-hue-4::before { background: var(--hue4); } .provider-card.pc-hue-5::before { background: var(--hue5); }
+.provider-card.pc-hue-6::before { background: var(--hue6); } .provider-card.pc-hue-7::before { background: var(--hue7); }
 .provider-head {
   display: flex; align-items: flex-start; gap: 10px; flex-wrap: wrap; margin-bottom: 4px;
   padding-bottom: 10px; border-bottom: 1px solid var(--hairline);
@@ -20,7 +29,7 @@
 /* v2.17.12：供应商 URL 单行截断 + title 保全量（§16.5：长 URL 曾断在连字符处打乱行节奏；§15 既定解法） */
 .card-sub.sub-clip { display: flex; align-items: center; gap: 6px; min-width: 0; flex-wrap: nowrap; }
 .card-sub.sub-clip .clip { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.drag-handle { cursor: grab; color: var(--ink-tertiary); opacity: .55; transition: opacity 150ms ease; }
+.drag-handle { cursor: grab; color: var(--ink-tertiary); opacity: .3; transition: opacity 150ms ease; }  /* v2.17.15（§20 P2-4）：零信息不占第一视觉位，hover 恢复 1 */
 .provider-card:hover > .provider-head .drag-handle, .model-row:hover .drag-handle { opacity: 1; }
 .model-row {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
@@ -31,8 +40,15 @@
 .model-row:hover { background: var(--wash); }
 .model-row:active { background: var(--surface-2); }
 .model-row .m-info { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
+/* v2.17.15（§20 P2-6）：徽章包进 m-tags——桌面 display:contents 与旧 DOM 完全同构；≤1199 徽章独立成行横向滚，行高不再被 pill 折行撑爆 */
+.m-tags { display: contents; }
+@media (max-width: 1199px) {
+  .m-tags { display: flex; flex-wrap: nowrap; flex: 1 1 100%; gap: 6px; overflow-x: auto; scrollbar-width: none; }
+  .m-tags::-webkit-scrollbar { display: none; }
+  .m-tags > * { flex: none; }
+}
 /* v2.17.12：ID/名称单行截断（title 保全量）——此前 overflow-wrap:anywhere 让长名折行，把同行徽章挤到参差不齐；改为文字先收缩，徽章起始 y 恒一致 */
-.model-row .model-id { font-weight: 600; font-size: 13.5px; letter-spacing: -.1px; flex: 0 1 auto; min-width: 48px; max-width: 340px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.model-row .model-id { font-weight: 400; font-size: 12px; color: var(--ink-tertiary); flex: 0 1 auto; min-width: 48px; max-width: 340px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }  /* v2.17.15（§20 P2-3）：22 字符 mono 退到第三级，模型名当主角 */
 .model-row .model-name { color: var(--ink-subtle); font-size: 12.5px; flex: 0 1 auto; min-width: 36px; max-width: 260px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .m-actions { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; }
 .sp-ok { color: var(--ok-ink); } .sp-mid { color: var(--warn-ink); } .sp-slow { color: var(--err-ink); }
@@ -141,8 +157,8 @@ function provBadge(p) {
 /* v2.17.12（工作单 §16.5）：badge-warn 只留给真告警（限流/失败）；一次性/5h限额/仅闲时/余额返还制/付费
    是中性属性不是告警，一律素徽章（说明入 title），不再与 latTag 的真告警同色同形。 */
 function typeBadge(m) {
-  if (m.token_type === "one_time") return '<span class="badge" title="一次性额度：用完即止">一次性</span>';
-  if (m.token_type === "rolling_5h") return '<span class="badge" title="5h 滚动限额窗口">5h限额</span>';
+  if (m.token_type === "one_time") return '<span class="badge badge-one" title="一次性额度：用完即止">一次性</span>';
+  if (m.token_type === "rolling_5h") return '<span class="badge badge-idle" title="5h 滚动限额窗口">5h限额</span>';
   if (m.token_type === "all_day") return '<span class="badge" title="付费模型：全天可用">全天可用</span>';
   if (m.token_type === "idle_only") return '<span class="badge" title="付费模型：仅闲时可用（高峰时段内不路由）">仅闲时</span>';
   if (m.token_type === "gift") return '<span class="badge" title="余额返还制：到账时刻按昨日消耗补回额度（上限封顶）">余额返还制</span>';
@@ -150,7 +166,7 @@ function typeBadge(m) {
   return "<span class=\"badge\">每日</span>";
 }
 function freeBadge(m) { return m.is_free ? '<span class="badge badge-ok">免费</span>' : '<span class="badge" title="付费模型">付费</span>'; }
-function modBadge(m) { return m.modality === "embedding" ? '<span class="badge badge-acc">embedding</span>' : m.modality === "rerank" ? '<span class="badge badge-acc">rerank</span>' : m.modality === "vision" ? '<span class="badge">多模态</span>' : "<span class=\"badge\">文本</span>"; }
+function modBadge(m) { return m.modality === "embedding" ? '<span class="badge">embedding</span>' : m.modality === "rerank" ? '<span class="badge">rerank</span>' : m.modality === "vision" ? '<span class="badge">多模态</span>' : "<span class=\"badge\">文本</span>"; }
 function latTag(id) {
   const s = speedCache[id];
   if (!s) return "";
@@ -175,7 +191,7 @@ async function loadModels() {
   providers.forEach(p => {
     const pmodels = models.filter(m => m.provider_id === p.id);
     provCards.push({ id: p.id, html: `
-    <div class="card provider-card" draggable="true" data-provider-drag="${esc(p.id)}" style="cursor:grab" title="拖拽排序供应商">
+    <div class="card provider-card pc-hue-${HMG.hue(p.name || p.id)}" draggable="true" data-provider-drag="${esc(p.id)}" style="cursor:grab" title="拖拽排序供应商">
       <div class="provider-head">
         <div class="grow" style="min-width:220px">
           <div class="card-title"><span class="drag-handle">⠿</span> ${HMG.avatar(p.name, true)} ${esc(p.name)} ${provBadge(p.protocol)}<span class="pq-inline" data-pq-inline="${esc(p.id)}"></span></div>
@@ -184,7 +200,7 @@ async function loadModels() {
         <div class="row wrap">
           ${grpOn ? `<button class="btn btn-ghost btn-sm ic-btn" title="分组收纳" onclick="grpAssignMenu(event,'providerGroups','${jsq(p.id)}')">${HMG_ICONS.folder}</button>` : ""}
           <button class="btn btn-ghost btn-sm" onclick="editProvider('${jsq(p.id)}')">编辑</button>
-          <button class="btn btn-danger btn-sm" onclick="delProvider('${jsq(p.id)}')">删除</button>
+          <button class="btn btn-ghost btn-sm danger-hover" onclick="delProvider('${jsq(p.id)}')">删除</button>
           <button class="btn btn-secondary btn-sm" onclick="showAddUnder('${jsq(p.id)}')">＋ 添加模型</button>
         </div>
       </div>
@@ -280,19 +296,20 @@ function modelRowHTML(m, i, animate = true) {
     <div class="m-info">
       <span class="model-id" title="${esc(m.id)}">${esc(m.id)}</span>
       <span class="model-name" title="${esc(m.name)}">${esc(m.name)}</span>
+      <span class="m-tags">
       ${provBadge(m.provider || "openai")}
       ${freeBadge(m)}
       ${modBadge(m)}
-      ${m.json_output && m.modality !== "embedding" && m.modality !== "rerank" ? '<span class="badge" title="支持 response_format JSON 格式输出">JSON</span>' : ""}
+      ${m.json_output && m.modality !== "embedding" && m.modality !== "rerank" ? '<span class="tag" title="支持 response_format JSON 格式输出">JSON</span>' : ""}
       ${typeBadge(m)}
-      ${m.reasoning_map && Object.keys(m.reasoning_map).length ? '<span class="badge badge-acc" style="cursor:pointer" title="点击打开编辑，查看思考参数探测结论" onclick="editModel(\'' + jsq(m.id) + '\')">思考映射</span>' : ""}
-      ${m.smart_estimate ? '<span class="badge">智能超时</span>' : ""}
-      ${latTag(m.id)}
+      ${m.reasoning_map && Object.keys(m.reasoning_map).length ? '<span class="badge badge-line" style="cursor:pointer" title="点击打开编辑，查看思考参数探测结论" onclick="editModel(\'' + jsq(m.id) + '\')">思考映射</span>' : ""}
+      ${m.smart_estimate ? '<span class="tag">智能超时</span>' : ""}
+      ${latTag(m.id)}</span>
     </div>
     <div class="m-actions">
       <button class="btn btn-ghost btn-sm" onclick="speedOne('${jsq(m.id)}')">${HMG_ICONS.bolt} 测速</button>
       <button class="btn btn-ghost btn-sm" onclick="editModel('${jsq(m.id)}')">编辑</button>
-      <button class="btn btn-danger btn-sm" onclick="delModel('${jsq(m.id)}')">删除</button>
+      <button class="btn btn-ghost btn-sm danger-hover" onclick="delModel('${jsq(m.id)}')">删除</button>
     </div>
   </div>`;
 }

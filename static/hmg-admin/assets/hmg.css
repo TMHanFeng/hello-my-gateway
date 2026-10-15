@@ -13,19 +13,22 @@
 /* ── 1. 设计 token ─────────────────────────────────────────── */
 :root {
   color-scheme: dark;
-  /* 暗色：产品面石墨第三档（v2.17.6 再升亮降对比：canvas↔ink 17.3:1→14.9:1，长时间盯屏更舒适；hsl 靛蓝倾向与 lavender 同族） */
-  --canvas: #161823;
-  --surface-1: #1e202b;
-  --surface-2: #252834;
-  --surface-3: #2d3040;
-  --surface-4: #353950;
-  --hairline: #343847;
-  --hairline-strong: #464b60;
-  --hairline-tertiary: #565b73;
+  /* 暗色：产品面石墨第三档（v2.17.6 再升亮降对比：canvas↔ink 17.3:1→14.9:1，长时间盯屏更舒适）。
+     v2.17.15（§20 P0-1）：中性阶降彩度 37%→~11%（HSL），靛蓝只留给 accent 与氛围层——
+     背景（canvas↔s1）1.09→1.149 (ΔL*6.6，§16.4「卡片宜 ≥ΔL*6」首次达标），语义色才有彩度预算可跳。
+     WCAG 实测：ink-subtle on s4 4.70 / ink-tertiary on s1 4.66（P2-8 提半档）/ aura 峰值两主题复核 ≥5.2。 */
+  --canvas: #131418;
+  --surface-1: #1f212b;
+  --surface-2: #262834;
+  --surface-3: #2d303c;
+  --surface-4: #353845;
+  --hairline: #30333f;
+  --hairline-strong: #404451;
+  --hairline-tertiary: #4f5362;
   --ink: #e9ebf3;
   --ink-muted: #c6cadb;
-  --ink-subtle: #9ea4bb;   /* v2.17.12 提一档：surface-4 上 4.6:1 达 AA（原 #9297ab 仅 3.9） */
-  --ink-tertiary: #7e859c; /* v2.17.12 提一档：surface-1 上 4.4:1（原 #6b7186 仅 3.3）。使用面约束：只许在 canvas/surface-1 上用，更抬表面一律改用 ink-subtle（AA 与第三级层级不可兼得，工作单 §16.4） */
+  --ink-subtle: #9ea4bb;   /* v2.17.12 提一档：surface-4 上 4.6:1 达 AA（原 #9297ab 仅 3.9）；v2.17.15 新 s4 上 4.70 */
+  --ink-tertiary: #828aa2; /* v2.17.12 提一档；v2.17.15 再提半档（#7e859c→4.41 差 0.09，P2-8）→4.66 达 AA。使用面约束：只许在 canvas/surface-1 上用，更抬表面一律改用 ink-subtle（AA 与第三级层级不可兼得，工作单 §16.4） */
   --accent: #5e6ad2;
   --accent-hover: #828fff;
   --accent-focus: #5e69d1;
@@ -43,7 +46,7 @@
   --focus-ring: rgba(94, 105, 209, .5);   /* 焦点环 = 2px primary-focus @50%（品牌 Elevation 4 段） */
 
   /* 表面/材质（暗色）：材料层级——半透明侧栏/顶栏内容下滑过，卡片顶缘微高光，浮层专用投影 */
-  --side-bg: rgba(19, 21, 30, .72);
+  --side-bg: rgba(19, 20, 24, .72);  /* v2.17.15 随 canvas 降彩度同步去靛 */
   --topbar-bg: rgba(19, 21, 30, .72);
   --edge: inset 0 1px 0 rgba(255, 255, 255, .05);            /* 顶边微高光：光打在材质上 */
   --edge-btn: inset 0 1px 0 rgba(255, 255, 255, .08);
@@ -54,7 +57,7 @@
   --sheen: linear-gradient(90deg, transparent, rgba(130, 143, 255, .5), transparent);  /* hover 辉光发丝线 */
 
   /* 身份色 8 相位（Linear label 色系：tint 底 + 提亮 ink；hmg.js hmgHue 决定相位） */
-  --hue0: #8f9aff; --hue1: #b08cff; --hue2: #5aa7ff; --hue3: #4cc3e8;
+  --hue0: #8f9aff; --hue1: #bb9bff; --hue2: #5aa7ff; --hue3: #4cc3e8;
   --hue4: #46c9a8; --hue5: #6bc98a; --hue6: #f0b45c; --hue7: #ef8fc0;
   --hue0-t: rgba(125, 136, 230, .20); --hue1-t: rgba(139, 92, 246, .18); --hue2-t: rgba(76, 159, 254, .16); --hue3-t: rgba(43, 191, 212, .16);
   --hue4-t: rgba(47, 191, 157, .16);  --hue5-t: rgba(76, 175, 98, .17);  --hue6-t: rgba(232, 163, 61, .18);  --hue7-t: rgba(214, 90, 158, .16);
@@ -73,24 +76,25 @@
 :root[data-theme="light"] {
   color-scheme: light;
   /* 亮色 = inverse-canvas/surface-1/ink 原样 + 派生阶梯（工作单 §2.2）。
-     v2.17.12 修亮色塌陷（工作单 §16.3）：原 surface-2 #f6f7f7 与 surface-1 仅差 ΔL*0.35（1.01:1 ≈ 同色），
-     卡片/侧栏选中/徽章/次按钮全糊成一片；现全梯 ΔL*≈2.5-2.8 均匀可辨，hairline/阴影两条深度线索同步加 深。 */
-  --canvas: #ffffff;
-  --surface-1: #f5f6f6;
-  --surface-2: #eceef1;   /* 原 #f6f7f7（塌陷元凶） */
-  --surface-3: #e4e7ec;   /* 派生 */
-  --surface-4: #dcdfe6;   /* 派生 */
-  --hairline: #d5d9e0;    /* 原 #e2e3e5 在白卡上 1.19:1 几乎不可见 */
-  --hairline-strong: #bfc5cf;
-  --hairline-tertiary: #aab1bf;
+     v2.17.12 修亮色塌陷（工作单 §16.3）；v2.17.15（§20 P0-2/P0-3）：纯白纸（S=0）→冷调纸面 #fafafc，
+     s1 随之下移——canvas↔s1 1.083→1.141（ΔL*5.2，「卡片浮起来」的一步首次达标），全梯保持均匀梯距；
+     ink-subtle/tertiary 随新更深表面同步提档保 AA（s4 4.93 / s1 4.82），warn-ink 顺修（#9a5b0a 在新 s2 上仅 3.89）。 */
+  --canvas: #fafafc;
+  --surface-1: #eaebf1;
+  --surface-2: #e2e4eb;   /* 原 #f6f7f7（v2.17.12 塌陷元凶修复）→v2.17.15 随 s1 下移保持梯距 */
+  --surface-3: #dadde5;   /* 派生 */
+  --surface-4: #d1d5df;   /* 派生 */
+  --hairline: #ccd1dc;    /* 原 #e2e3e5 在白卡上 1.19:1 几乎不可见 */
+  --hairline-strong: #b4bac8;
+  --hairline-tertiary: #9da5b6;
   --ink: #16171b;
   --ink-muted: #3c3f44;  /* 派生 */
-  --ink-subtle: #5a5f6a; /* 原 #62666d：surface-4 上 2.58:1 不达 AA，提一档后 4.8:1 */
-  --ink-tertiary: #6b707c; /* 原 #8a8f98：surface-1 上仅 3.0:1；现 4.6:1。同暗色使用面约束（§16.4） */
+  --ink-subtle: #525763; /* 原 #5a5f6a（v2.17.12 提档）；v2.17.15 新 s4 更深再提半档 → 4.93 达 AA */
+  --ink-tertiary: #616674; /* 原 #6b707c（4.6 on 旧 s1）；v2.17.15 新 s1 更深同步提档 → 4.82。同暗色使用面约束（§16.4） */
   --overlay: rgba(22, 23, 27, .35); /* 派生 */
 
   --ok-ink: #177c31;   --ok-tint: rgba(39, 166, 68, .10);
-  --warn-ink: #9a5b0a; --warn-tint: rgba(242, 153, 74, .16);
+  --warn-ink: #8a5009; --warn-tint: rgba(242, 153, 74, .16);  /* v2.17.15：#9a5b0a 在新 s2 上 3.89 破线 →4.66 */
   --err-ink: #c53030;  --err-tint: rgba(235, 87, 87, .08);  --err-line: rgba(235, 87, 87, .42);
   --acc-ink: #4c58b8;  --acc-tint: rgba(94, 106, 210, .11);
   --focus-ring: rgba(94, 105, 209, .40);
@@ -105,11 +109,12 @@
   --shadow-pop: 0 24px 64px rgba(22, 23, 27, .16), 0 4px 16px rgba(22, 23, 27, .08);
   --sheen: linear-gradient(90deg, transparent, rgba(94, 106, 210, .45), transparent);
 
-  /* 身份色 8 相位（暗色 ink 提亮一档；实体头像/池点/池 chip 共用，hmg.js hmgHue 决定相位） */
-  --hue0: #4c58b8; --hue1: #7443d6; --hue2: #1f6fd6; --hue3: #0e8fae;
-  --hue4: #128a70; --hue5: #2c8a47; --hue6: #a8721c; --hue7: #b8508a;
+  /* 身份色 8 相位（暗色 ink 提亮一档；实体头像/池点/池 chip/卡片左色条共用，hmg.js hmgHue 决定相位）。
+     v2.17.15：hue1/hue6 随「一次性/5h限额」徽章语义色上脸同步调 AA（on 自 tint 底 4.9+/4.7+） */
+  --hue0: #4c58b8; --hue1: #653abd; --hue2: #1f6fd6; --hue3: #0e8fae;
+  --hue4: #128a70; --hue5: #2c8a47; --hue6: #7a500c; --hue7: #b8508a;
   --hue0-t: rgba(125, 136, 230, .14); --hue1-t: rgba(139, 92, 246, .13); --hue2-t: rgba(76, 159, 254, .12); --hue3-t: rgba(43, 191, 212, .13);
-  --hue4-t: rgba(47, 191, 157, .13);  --hue5-t: rgba(76, 175, 98, .14);  --hue6-t: rgba(232, 163, 61, .15);  --hue7-t: rgba(214, 90, 158, .12);
+  --hue4-t: rgba(47, 191, 157, .13);  --hue5-t: rgba(76, 175, 98, .14);  --hue6-t: rgba(232, 163, 61, .12);  --hue7-t: rgba(214, 90, 158, .12);
 }
 
 /* ── 2. 基础 ──────────────────────────────────────────────── */
@@ -123,7 +128,7 @@ body {
   letter-spacing: 0;
 }
 h1, h2, h3 { margin: 0; font-weight: 600; }
-a { color: var(--accent); text-decoration: none; }
+a { color: var(--acc-ink); text-decoration: none; }  /* v2.17.15（§20 P2-7）：accent 作正文文字不达 AA（暗 s1 3.45），文字一律 acc-ink */
 a:hover { color: var(--accent-hover); }
 button { font: inherit; color: inherit; background: none; border: none; padding: 0; cursor: pointer; }
 input, select, textarea { font: inherit; color: var(--ink); }
@@ -133,7 +138,7 @@ input, select, textarea { font: inherit; color: var(--ink); }
 :focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; opacity: 1; }
 .mono { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 12.5px; }
 .num { font-variant-numeric: tabular-nums; }
-.link { color: var(--accent); cursor: pointer; }
+.link { color: var(--acc-ink); cursor: pointer; }  /* v2.17.15 P2-7 同上 */
 .link:hover { color: var(--accent-hover); }
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: var(--hairline-strong); border-radius: var(--r-pill); border: 3px solid var(--canvas); }
@@ -386,6 +391,17 @@ textarea.inp { resize: vertical; min-height: 64px; }
 .badge-warn { background: var(--warn-tint); color: var(--warn-ink); }
 .badge-err { background: var(--err-tint); color: var(--err-ink); }
 .badge-acc { background: var(--acc-tint); color: var(--acc-ink); }
+/* v2.17.15（§20 P1-1）：彩色只留给计费轴——一次性=紫（hue1 对）、5h限额=琥珀（hue6 对），其余轴一律中性 */
+.badge-one { background: var(--hue1-t); color: var(--hue1); }
+.badge-idle { background: var(--hue6-t); color: var(--hue6); }
+/* v2.17.15（§20 P1-1）：特性轴「思考映射」改无填充描边式——90% 的行都有的信息不配占用 tint 底 */
+.badge-line { background: transparent; color: var(--acc-ink); border: 1px solid rgba(94, 106, 210, .45); }
+/* v2.17.15（§20 P1-1）：格式轴（JSON/智能超时）降级为更弱的 .tag——比 badge 少一层底色，并进背景 */
+.tag {
+  display: inline-flex; align-items: center; gap: 3px;
+  color: var(--ink-tertiary); border: 1px solid var(--hairline); border-radius: var(--r-pill);
+  padding: 1px 7px; font-size: 11px; line-height: 1.5; white-space: nowrap;
+}
 .chip {
   display: inline-flex; align-items: center; gap: 4px;
   background: var(--surface-2); color: var(--ink-muted);
@@ -588,7 +604,7 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
   width: 24px; height: 24px; border-radius: 7px; font-size: 12.5px; font-weight: 600;
   letter-spacing: 0; user-select: none; box-shadow: var(--edge);
 }
-.hmg-av-sm { width: 20px; height: 20px; border-radius: 6px; font-size: 11px; }
+.hmg-av-sm { width: 26px; height: 26px; border-radius: 7px; font-size: 13px; }  /* v2.17.15（§20 P1-3）：20→26 扫视锚点放大，字重 600 基类已有 */
 .hue-0 { background: var(--hue0-t); color: var(--hue0); } .hue-1 { background: var(--hue1-t); color: var(--hue1); }
 .hue-2 { background: var(--hue2-t); color: var(--hue2); } .hue-3 { background: var(--hue3-t); color: var(--hue3); }
 .hue-4 { background: var(--hue4-t); color: var(--hue4); } .hue-5 { background: var(--hue5-t); color: var(--hue5); }

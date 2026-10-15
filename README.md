@@ -90,7 +90,7 @@ data/ 运行时数据（gateway.db、探测缓存、dev pid），与代码隔离
 
 | 🧠 统一思考控制 | 🧪 计费回归安全网 | 📐 智能估算超时 |
 |:---|:---|:---|
-| `reasoning_effort` 六档 → 按模型 `reasoning_map` 换算上游思考参数；思考内容统一回传 `reasoning_content` / `thinking` | 291 断言计费回归套件（`test_billing_regression.py`）：流式/非流式/一次性/RPM 触顶/安全阀/并发入账零丢失，任何改动先跑套件再上线 | `smart_estimate` 模型按 token 量动态计算超时（吞吐 EMA 校准），样本不足自动回退固定值 |
+| `reasoning_effort` 六档 → 按模型 `reasoning_map` 换算上游思考参数；思考内容统一回传 `reasoning_content` / `thinking` | 292 断言计费回归套件（`test_billing_regression.py`）：流式/非流式/一次性/RPM 触顶/安全阀/并发入账零丢失，任何改动先跑套件再上线 | `smart_estimate` 模型按 token 量动态计算超时（吞吐 EMA 校准），样本不足自动回退固定值 |
 
 | 📡 Embedding / Rerank | 🔑 用户密钥管理 | 📄 JSON 输出路由 |
 |:---|:---|:---|
@@ -171,7 +171,7 @@ python -m app.main
 >
 > 💡 **Ubuntu / Linux**：`python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt && python3 -m app.main`，或直接 `./start_gateway.sh`（自动选 venv/系统解释器；停止 `./stop_gateway.sh`）。代码本身跨平台：运行时目录（data/ logs/ backup/）首次启动自动创建，路径处理与日志滚动均适配 POSIX 文件系统。回归套件同样可在 Linux 运行：`python tests/test_billing_regression.py`。
 >
-> 🧪 **改动计费相关代码后**：`python tests/test_billing_regression.py` 运行 291 断言计费回归套件（自动在 8678 起隔离实例 + mock 上游，不触碰生产端口），全绿再上线。
+> 🧪 **改动计费相关代码后**：`python tests/test_billing_regression.py` 运行 292 断言计费回归套件（自动在 8678 起隔离实例 + mock 上游，不触碰生产端口），全绿再上线。
 
 ---
 
@@ -219,7 +219,7 @@ hello-my-gateway/
 │   ├── index.html                # 传统管理后台（/admin）
 │   └── hfadmin.html              # 科技感管理面板（/hfadmin）
 ├── tests/
-│   └── test_billing_regression.py # 计费回归套件（291 断言，隔离实例 + mock 上游）
+│   └── test_billing_regression.py # 计费回归套件（292 断言，隔离实例 + mock 上游）
 ├── start_gateway.cmd             # Windows 启动入口（自动选解释器，幂等）
 ├── stop_gateway.cmd              # 停止入口（身份核验，只停本仓库网关）
 ├── start_gateway.sh              # Linux/macOS 启动入口（语义同 .cmd：选解释器 + 已运行自检）
@@ -645,6 +645,8 @@ SQLite（`gateway.db`）持久化以下表：
 ## 📜 版本
 
 ### 最新
+
+**`v2.17.15`** — **🎨 hmg-admin 第 20 轮评审落地：中性阶降彩度 + 彩色只留计费轴 + 删除钮安静化（docs/美化问题清单-hmg-admin-model-20261015.md P0/P1/P2 全量核实后实施）**：①**P0 色板结构性修正**：暗色中性阶降彩度 HSL 37%→11-13%（canvas #161823→#131418、s1-s4/hairline 三档全移），靛蓝只留给 accent 与氛围层——「每一块表面都是笔触」终结；亮色纯白纸（S=0）→冷调纸面 #fafafc、s1 #eaebf1 全梯随移；**canvas↔s1 1.09→1.149/1.141（§16.4「卡片宜 ≥ΔL*6」八轮以来首次达标）**，暗 tertiary #828aa2（P2-8：4.41→4.66 达 AA）、亮 ink-subtle/tertiary/warn-ink 随更深表面同步提档（warn 顺修：#9a5b0a 在新 s2 上 3.89 破线→#8a5009 4.66）；②**P1-1 彩色只留计费轴**：一次性→`.badge-one` 紫（hue1 对 AA 4.5+）、5h限额→`.badge-idle` 琥珀（hue6 对 4.7+，亮 hue6 #a8721c→#7a500c、暗 hue1 #b08cff→#bb9bff 随徽章上脸调 AA），embedding/rerank/多模态能力轴回中性、JSON/智能超时降 `.tag`（描边弱化）、思考映射 `.badge-line` 无填充描边式——单行彩色徽章 6→恒 ≤1；③**P1-2 删除钮安静化**：delProvider/delModel 两处 `btn-danger`→`btn-ghost danger-hover`（§17.2 已有规范贯彻到底，本页 btn-danger 清零，与池成员 ✕ 同款）；④**P1-3 身份色承担分组**：供应商卡 3px 左侧色条（`pc-hue-N` 专属前缀——**踩坑：挂 `hue-N` 会撞头像全局 tint 类把整卡染色**，已记实录）+ 头像 20→26px，24 卡按色分区扫读；⑤P2：ep-id 弱化（13.5px/600→12px/tertiary）、拖拽把手 .55→.3、`.m-tags` 包徽章（桌面 display:contents 零变化，≤1199 独立行横向滚治行高失控）、a/.link 改 acc-ink 文字安全色（P2-7：accent 作文字 3.45 不达 AA）；⑥验收五项实测：暗靛蓝占比 **96.8→16.8%**（≤88 ✓，感知阈值 S<0.30 全页口径；严格阈值 S<0.12 下新旧表面均计入靛蓝、数字不动 96.9%，口径已注）、暗中性阶彩度 11-13%（≤14 ✓）、canvas↔s1 ✓、单行彩徽 ≤1 ✓；**亮色无彩色 99.2% 未达 ≤92% 如实记录**——清单 §6 与 P1-1 自相矛盾（去色噪必然缩彩色面积），取舍已按 P1-1 执行交用户裁决；氛围层保留（P2-1）：实拍可见、中性化后对比更强，评审 jpg 压缩疑洗掉低对比渐变；P2-2（模型 sparkline/余量条）与 P2-5（sticky 搜索/索引）涉数据管线与 UX 功能延期后续轮。回归 **291→292** 全绿（T40v 新增 40 锚点；T40k/r/s 色值锚点随新梯同步；踩坑修复后复跑全绿）；8660 双主题首 paint 主题法截图（绕 §14 冻结伪影：切主题后卡片背景冻结，先写 localStorage 再 reload）+ DOM 断言全过。纯资产刷新即见。
 
 **`v2.17.14`** — **🌌 hmg-admin 背景每页身份色（反馈：背景还是太单一；每页一组 --aura-* 三元组，切页即换「房间光」）**：①**六页六色**：`body[data-page]` 覆盖 `--aura-a/b/c` 裸三元组（model 品牌靛蓝 `130 143 255` / pools 紫 `167 139 250` / stats 青 `64 205 255` / logs 天蓝 `96 165 250` / keys 紫红 `192 132 252` / plugins 青绿 `41 195 176`，整页 0.92×V 微降保 AA），渐变侧 `rgb(var(--aura-x) / α)` 消费；②**四层吃变量**：舷光（加宽提亮 `1240px×400px at 50% -12%`）、20%/86% 两盏顶辉光、body::after 极光团（620×460→**780×560**）、新增 **115° 斜向光轴**（transparent 42%→中心 aura-a /.05→transparent 61%，给平底加方向性）——html::before 底角辉光不吃 body 变量（自定义属性不向上继承），保持品牌靛青静态；③**alpha 全局统一不随页变**：暗 `.15/.12/.10`、亮 `.075/.06/.07`，色相全亮保身份感——WCAG 数值实测两主题×六页「舷光核心」「左上辉光簇」两处峰值叠点 ink-subtle 全部 ≥4.5:1（ink-tertiary 使用面约束本就不进 aura 顶带，不另设阈值；等 alpha 方案对青色系破 4.5、加深三元组成泥色，两案皆否决）；④**平底两件套提亮**：双层网格暗 .024/.013→**.05/.028**、亮 .022/.012→**.032/.016**，暗角 .38→**.46**（明暗值域拉开立体感）；⑤回归 **290→291** 全绿（T40u：六页 aura 表/四层变量锚点/双主题 alpha/网格/暗角/底角/旧值清零；T40t 舷光锚点移交 T40u，T40m/T40o 色值锚点随 v2.17.14 现状同步并注明）；8660 实证：六页变量逐页正确、logs 页四层解析取证（96,165,250/.15 等）、暗色三页截图（model 靛/stats 青/keys 紫红）身份可辨、亮色 stats 粉彩青可辨文本清晰、主题还原 dark。纯资产改动**刷新即见**。
 

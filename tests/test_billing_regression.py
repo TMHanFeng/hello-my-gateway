@@ -2485,7 +2485,7 @@ def main():
                   "function showHeadroomStats", "const hmgPoll", "function hmgSetTheme", "function hmgRenderShell",
                   "function gwGroupsBoot"))
               and all(s in _hmgjs for s in ("function hmgHue", "function hmgAvatar", "function hmgAvatarDot", "function hmgBusy"))
-              and all(s in _hmgcss for s in ("--canvas: #161823", "--canvas: #ffffff", "--accent: #5e6ad2",
+              and all(s in _hmgcss for s in ("--canvas: #131418", "--canvas: #fafafc", "--accent: #5e6ad2",
                                              "@media (max-width: 1199px)", "@media (max-width: 767px)",
                                              "prefers-reduced-motion", "--hue0: #8f9aff", ".hmg-av {",
                                              "livePulse", "skelSweep", "hmgSpin",
@@ -2525,10 +2525,10 @@ def main():
         # v2.17.12 双主题色板定稿（工作单 §16.3/§16.4）：亮色 surface-2 塌陷单值修复 + 全梯/hairline/阴影加深 + 双主题 ink 提色；
         # 原生 select 自绘箭头收编设计系统；危险钮 hover 显险工具类；ink-tertiary 使用面约束落 rsn-neutral
         check("T40r 色板定稿(亮surface阶梯+hairline+阴影/暗ink提色/select自绘/danger-hover/rsn-neutral约束)",
-              all(s in _hmgcss for s in ("--surface-2: #eceef1;", "--surface-3: #e4e7ec;", "--surface-4: #dcdfe6;",
-                  "--hairline: #d5d9e0;", "--hairline-strong: #bfc5cf;", "--hairline-tertiary: #aab1bf;",
-                  "--ink-subtle: #5a5f6a;", "--ink-tertiary: #6b707c;", "rgba(22, 23, 27, .06), 0 4px 16px -8px rgba(22, 23, 27, .10)",
-                  "--ink-subtle: #9ea4bb;", "--ink-tertiary: #7e859c;",
+              all(s in _hmgcss for s in ("--surface-2: #e2e4eb;", "--surface-3: #dadde5;", "--surface-4: #d1d5df;",
+                  "--hairline: #ccd1dc;", "--hairline-strong: #b4bac8;", "--hairline-tertiary: #9da5b6;",
+                  "--ink-subtle: #525763;", "--ink-tertiary: #616674;", "rgba(22, 23, 27, .06), 0 4px 16px -8px rgba(22, 23, 27, .10)",
+                  "--ink-subtle: #9ea4bb;", "--ink-tertiary: #828aa2;",
                   "select.inp {\n  appearance: none;", ".btn-ghost.danger-hover:hover", ".btn svg { width: 14px"))
               and "appearance: auto" not in _hmgcss
               and "color: var(--ink-subtle); }  /* v2.17.12：surface-2 底按约束用 ink-subtle" in _pages40["logs"].text, None)
@@ -2537,9 +2537,9 @@ def main():
         check("T40s 徽章语义+布局分组+emoji换SVG(badge-warn仅告警/池卡两行分组/note-box降权/汉堡修复/哈希种子/图标注入器)",
               'badge badge-warn" title="付费模型' not in _pages40["model"].text
               and all(s in _pages40["model"].text for s in (
-                  'if (m.token_type === "one_time") return \'<span class="badge" title="一次性额度：用完即止">一次性</span>\';',
+                  'if (m.token_type === "one_time") return \'<span class="badge badge-one" title="一次性额度：用完即止">一次性</span>\';',
                   '<span class="badge" title="付费模型">付费</span>', 'badge badge-warn">${s.status === "rate_limited"',
-                  ".card-sub.sub-clip", ".model-row .model-id { font-weight: 600; font-size: 13.5px; letter-spacing: -.1px; flex: 0 1 auto; min-width: 48px; max-width: 340px; white-space: nowrap;",
+                  ".card-sub.sub-clip", ".model-row .model-id { font-weight: 400; font-size: 12px; color: var(--ink-tertiary); flex: 0 1 auto; min-width: 48px; max-width: 340px; white-space: nowrap;",
                   "${HMG_ICONS.bolt} 测速", "${HMG_ICONS.cog}</button>", 'btn btn-secondary btn-sm" onclick="showAddUnder'))
               and all(s in _pages40["pools"].text for s in (
                   ".pool-head-ctls { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }",
@@ -2575,6 +2575,40 @@ def main():
               and all(t in _pages40["pools"].text for t in (
                   ".i-tip { position: relative;", ".i-tip::before { content: \"\"; position: absolute; inset: -5px;"))
               and ".pq-refresh::before" in _pages40["model"].text, None)
+        # v2.17.15 美化问题清单（第 20 轮评审）落地：P0 双主题中性阶降彩度/冷调纸面/canvas↔s1 ΔL*≥6、
+        # P1 彩色只留计费轴（badge-one 紫/badge-idle 琥珀；embedding/rerank 回中性；思考映射描边式；JSON/智能超时降 tag）、
+        # 删除钮安静化（danger-hover×2，btn-danger 本页清零）、供应商卡 3px 身份色条 + 头像 26px、
+        # P2 ep-id 弱化/把手降档/m-tags 窄屏独立行横向滚/a·link 文字安全色 acc-ink/暗 tertiary 4.66 亮 warn-ink 4.66
+        check("T40v 第20轮色板与语义(双主题新梯/badge-one·idle/描边式/tag/删除钮安静化/hue色条/头像26/m-tags/acc-ink/把手/id弱化)",
+              all(t in _hmgcss for t in (
+                  "--canvas: #131418;", "--surface-1: #1f212b;", "--surface-2: #262834;",
+                  "--surface-3: #2d303c;", "--surface-4: #353845;",
+                  "--hairline: #30333f;", "--hairline-strong: #404451;", "--hairline-tertiary: #4f5362;",
+                  "--canvas: #fafafc;", "--surface-1: #eaebf1;", "--surface-2: #e2e4eb;",
+                  "--surface-3: #dadde5;", "--surface-4: #d1d5df;",
+                  "--warn-ink: #8a5009;", "--hue1: #bb9bff;", "--hue1: #653abd;", "--hue6: #7a500c;",
+                  "--hue6-t: rgba(232, 163, 61, .12);", "--side-bg: rgba(19, 20, 24, .72);",
+                  ".badge-one { background: var(--hue1-t); color: var(--hue1); }",
+                  ".badge-idle { background: var(--hue6-t); color: var(--hue6); }",
+                  ".badge-line { background: transparent; color: var(--acc-ink); border: 1px solid rgba(94, 106, 210, .45); }",
+                  ".hmg-av-sm { width: 26px; height: 26px; border-radius: 7px; font-size: 13px; }",
+                  "a { color: var(--acc-ink);", ".link { color: var(--acc-ink);"))
+              and "--canvas: #161823;" not in _hmgcss and "--canvas: #ffffff;" not in _hmgcss
+              and all(t in _pages40["model"].text for t in (
+                  'class="badge badge-one" title="一次性额度：用完即止"',
+                  'class="badge badge-idle" title="5h 滚动限额窗口"',
+                  "badge badge-line", 'class="tag" title="支持 response_format JSON 格式输出"',
+                  '<span class="tag">智能超时</span>',
+                  "modality === \"embedding\" ? '<span class=\"badge\">embedding</span>'",
+                  "provider-card pc-hue-${HMG.hue(p.name || p.id)}",
+                  '.provider-card.pc-hue-0::before { background: var(--hue0); }',
+                  ".m-tags { display: contents; }",
+                  "@media (max-width: 1199px) {",
+                  ".m-tags { display: flex; flex-wrap: nowrap; flex: 1 1 100%; gap: 6px; overflow-x: auto; scrollbar-width: none; }",
+                  'btn btn-ghost btn-sm danger-hover" onclick="delProvider',
+                  'btn btn-ghost btn-sm danger-hover" onclick="delModel',
+                  ".drag-handle { cursor: grab; color: var(--ink-tertiary); opacity: .3;"))
+              and "btn btn-danger" not in _pages40["model"].text, None)
         # v2.17.14 背景每页身份色（背景单一反馈落地）：六页六组 --aura-* 三元组（body[data-page] 覆盖）+
         # 舷光/顶辉光/极光团/斜光轴全吃变量（alpha 全局统一：暗 .15/.12/.10、亮 .075/.06/.07）+
         # 网格提亮（暗 .05/.028、亮 .032/.016）+ 暗角加深 .46 + 底角辉光提亮；html::before 不吃 body 变量（不向上继承）
