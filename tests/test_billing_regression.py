@@ -2485,7 +2485,7 @@ def main():
                   "function showHeadroomStats", "const hmgPoll", "function hmgSetTheme", "function hmgRenderShell",
                   "function gwGroupsBoot"))
               and all(s in _hmgjs for s in ("function hmgHue", "function hmgAvatar", "function hmgAvatarDot", "function hmgBusy"))
-              and all(s in _hmgcss for s in ("--canvas: #131418", "--canvas: #fafafc", "--accent: #5e6ad2",
+              and all(s in _hmgcss for s in ("--canvas: #131418", "--canvas: #eef0f4", "--accent: #5e6ad2",
                                              "@media (max-width: 1199px)", "@media (max-width: 767px)",
                                              "prefers-reduced-motion", "--hue0: #8f9aff", ".hmg-av {",
                                              "livePulse", "skelSweep", "hmgSpin",
@@ -2525,9 +2525,9 @@ def main():
         # v2.17.12 双主题色板定稿（工作单 §16.3/§16.4）：亮色 surface-2 塌陷单值修复 + 全梯/hairline/阴影加深 + 双主题 ink 提色；
         # 原生 select 自绘箭头收编设计系统；危险钮 hover 显险工具类；ink-tertiary 使用面约束落 rsn-neutral
         check("T40r 色板定稿(亮surface阶梯+hairline+阴影/暗ink提色/select自绘/danger-hover/rsn-neutral约束)",
-              all(s in _hmgcss for s in ("--surface-2: #e2e4eb;", "--surface-3: #dadde5;", "--surface-4: #d1d5df;",
-                  "--hairline: #ccd1dc;", "--hairline-strong: #b4bac8;", "--hairline-tertiary: #9da5b6;",
-                  "--ink-subtle: #525763;", "--ink-tertiary: #616674;", "rgba(22, 23, 27, .06), 0 4px 16px -8px rgba(22, 23, 27, .10)",
+              all(s in _hmgcss for s in ("--surface-2: #f2f4f8;", "--surface-3: #eaedf3;", "--surface-4: #e1e5ec;",
+                  "--hairline: #dcdfe8;", "--hairline-strong: #c6ccd8;", "--hairline-tertiary: #adb5c3;",
+                  "--ink-subtle: #5a5f6a;", "--ink-tertiary: #666b79;", "rgba(22, 23, 27, .06), 0 4px 16px -8px rgba(22, 23, 27, .10)",
                   "--ink-subtle: #9ea4bb;", "--ink-tertiary: #828aa2;",
                   "select.inp {\n  appearance: none;", ".btn-ghost.danger-hover:hover", ".btn svg { width: 14px"))
               and "appearance: auto" not in _hmgcss
@@ -2584,8 +2584,8 @@ def main():
                   "--canvas: #131418;", "--surface-1: #1f212b;", "--surface-2: #262834;",
                   "--surface-3: #2d303c;", "--surface-4: #353845;",
                   "--hairline: #30333f;", "--hairline-strong: #404451;", "--hairline-tertiary: #4f5362;",
-                  "--canvas: #fafafc;", "--surface-1: #eaebf1;", "--surface-2: #e2e4eb;",
-                  "--surface-3: #dadde5;", "--surface-4: #d1d5df;",
+                  "--canvas: #eef0f4;", "--surface-1: #ffffff;", "--surface-2: #f2f4f8;",
+                  "--surface-3: #eaedf3;", "--surface-4: #e1e5ec;",
                   "--warn-ink: #8a5009;", "--hue1: #bb9bff;", "--hue1: #653abd;", "--hue6: #7a500c;",
                   "--hue6-t: rgba(232, 163, 61, .12);", "--side-bg: rgba(19, 20, 24, .72);",
                   ".badge-one { background: var(--hue1-t); color: var(--hue1); }",

@@ -76,25 +76,28 @@
 :root[data-theme="light"] {
   color-scheme: light;
   /* 亮色 = inverse-canvas/surface-1/ink 原样 + 派生阶梯（工作单 §2.2）。
-     v2.17.12 修亮色塌陷（工作单 §16.3）；v2.17.15（§20 P0-2/P0-3）：纯白纸（S=0）→冷调纸面 #fafafc，
-     s1 随之下移——canvas↔s1 1.083→1.141（ΔL*5.2，「卡片浮起来」的一步首次达标），全梯保持均匀梯距；
-     ink-subtle/tertiary 随新更深表面同步提档保 AA（s4 4.93 / s1 4.82），warn-ink 顺修（#9a5b0a 在新 s2 上仅 3.89）。 */
-  --canvas: #fafafc;
-  --surface-1: #eaebf1;
-  --surface-2: #e2e4eb;   /* 原 #f6f7f7（v2.17.12 塌陷元凶修复）→v2.17.15 随 s1 下移保持梯距 */
-  --surface-3: #dadde5;   /* 派生 */
-  --surface-4: #d1d5df;   /* 派生 */
-  --hairline: #ccd1dc;    /* 原 #e2e3e5 在白卡上 1.19:1 几乎不可见 */
-  --hairline-strong: #b4bac8;
-  --hairline-tertiary: #9da5b6;
+     v2.17.16（美术复核「白天不好看」）：v2.17.15 的「比页面深的中灰卡」在亮色读作脏不是浮——
+     轻色高级感是反的：**浮起 = 卡片比环境更亮**（iOS/macOS 分组范式）。定稿灰底白卡：
+     canvas 冷灰 #eef0f4 + 卡片纯白（canvas↔s1 1.141/ΔL*5.25，≥1.13 深度线仍达标），
+     s2-s4 为白卡上的填充梯、hairline 随白卡重排；ink-subtle 回退 v2.17.14 值（白卡 6.40 更足），
+     tertiary #666b79（灰画布 4.67），warn-ink 保持 #8a5009（白卡 tint 上 5.76/#9a5b0a 仅 4.39@s2）；
+     §19 亮色 aura 峰值在新画布复核 4.8-5.2 全过。 */
+  --canvas: #eef0f4;
+  --surface-1: #ffffff;
+  --surface-2: #f2f4f8;   /* 白卡上的第一级填充（悬停/选中/胶囊底） */
+  --surface-3: #eaedf3;   /* 派生 */
+  --surface-4: #e1e5ec;   /* 派生 */
+  --hairline: #dcdfe8;    /* 白卡描边：柔和但可辨 */
+  --hairline-strong: #c6ccd8;
+  --hairline-tertiary: #adb5c3;
   --ink: #16171b;
   --ink-muted: #3c3f44;  /* 派生 */
-  --ink-subtle: #525763; /* 原 #5a5f6a（v2.17.12 提档）；v2.17.15 新 s4 更深再提半档 → 4.93 达 AA */
-  --ink-tertiary: #616674; /* 原 #6b707c（4.6 on 旧 s1）；v2.17.15 新 s1 更深同步提档 → 4.82。同暗色使用面约束（§16.4） */
+  --ink-subtle: #5a5f6a; /* v2.17.16 回退 v2.17.14 值：白卡 6.40 / s4 5.07 / canvas 5.61 全 AA */
+  --ink-tertiary: #666b79; /* v2.17.16：#616674 在灰画布只有 4.35 →4.67。同暗色使用面约束（§16.4） */
   --overlay: rgba(22, 23, 27, .35); /* 派生 */
 
   --ok-ink: #177c31;   --ok-tint: rgba(39, 166, 68, .10);
-  --warn-ink: #8a5009; --warn-tint: rgba(242, 153, 74, .16);  /* v2.17.15：#9a5b0a 在新 s2 上 3.89 破线 →4.66 */
+  --warn-ink: #8a5009; --warn-tint: rgba(242, 153, 74, .16);  /* v2.17.15 顺修并保持：#9a5b0a 在白卡 tint 上仅 4.39 →5.76 */
   --err-ink: #c53030;  --err-tint: rgba(235, 87, 87, .08);  --err-line: rgba(235, 87, 87, .42);
   --acc-ink: #4c58b8;  --acc-tint: rgba(94, 106, 210, .11);
   --focus-ring: rgba(94, 105, 209, .40);
