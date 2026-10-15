@@ -107,7 +107,7 @@
   --edge: inset 0 1px 0 rgba(255, 255, 255, .85);
   --edge-btn: inset 0 1px 0 rgba(255, 255, 255, .9);
   --wash: rgba(22, 23, 27, .045);
-  --shadow-card: 0 1px 2px rgba(22, 23, 27, .06), 0 4px 16px -8px rgba(22, 23, 27, .10);  /* v2.17.12：.05/.07 在白底上等于没有（§16.3） */
+  --shadow-card: 0 1px 2px rgba(22, 23, 27, .06), 0 4px 16px -8px rgba(94, 106, 210, .16);  /* v2.17.12 提档；v2.17.17 第二层换微靛——白卡在灰底上有了一点点颜色身份 */
   --shadow-hover: 0 12px 32px -8px rgba(22, 23, 27, .16), 0 4px 12px rgba(22, 23, 27, .08);
   --shadow-pop: 0 24px 64px rgba(22, 23, 27, .16), 0 4px 16px rgba(22, 23, 27, .08);
   --sheen: linear-gradient(90deg, transparent, rgba(94, 106, 210, .45), transparent);
@@ -646,11 +646,20 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
    注：html::before 的 position:fixed 在老 Safari 可能退化为随滚动（辉光位置略移，可容忍）。 */
 :root { --noise-url: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='180'%20height='180'%3E%3Cfilter%20id='n'%3E%3CfeTurbulence%20type='fractalNoise'%20baseFrequency='0.8'%20numOctaves='2'%20stitchTiles='stitch'/%3E%3CfeColorMatrix%20type='saturate'%20values='0'/%3E%3C/filter%3E%3Crect%20width='180'%20height='180'%20filter='url(%23n)'%20opacity='.05'/%3E%3C/svg%3E"); }
 /* v2.17.14 每页身份色：data-page 六页六组 aura 三元组（裸 R G B，rgb(var(--aura-x) / α) 消费）。
-   色相全亮保身份感，alpha 全局统一不随页变（暗 .15/.12/.10、亮 .075/.06/.07，见下方两条 stack）——
+   色相全亮保身份感，alpha 全局统一不随页变（暗 .15/.12/.10、亮 .21/.165/.175，见下方两条 stack）——
    WCAG 实测：两主题 × 六页「舷光核心」「左上辉光簇」两处峰值叠点 ink-subtle 全部 ≥4.5:1
    （plugins 原值差半档，整页 0.92×V 微降后全过）；ink-tertiary 使用面约束（只许 canvas/surface-1
    空态与卡内）本就不进 aura 顶带，不另设阈值。html::before 看不到 body 作用域的自定义属性
-   （自定义属性不向上继承），故底角辉光保持品牌靛青静态、不参与每页换色。 */
+   （自定义属性不向上继承），故底角辉光保持品牌靛青静态、不参与每页换色。
+   v2.17.17 亮色粉彩版：灰底白卡留白占七成，色只能从底缝/页头透出——亮色在下方换用「混白 40%」
+   的高亮度粉彩三元组 + 提到 .21/.165/.175（粉彩自身亮度高，叠画布不掉 L，六页双峰值仍 ≥4.55；
+   直接复用暗色原色提 alpha 会把画布拉暗、ink-subtle 跌破 4.5）。 */
+:root[data-theme="light"] body { --aura-a: 180 188 255; --aura-b: 158 166 228; --aura-c: 148 197 254; }
+:root[data-theme="light"] body[data-page="pools"]   { --aura-a: 202 185 252; --aura-b: 191 152 234; --aura-c: 158 166 228; }
+:root[data-theme="light"] body[data-page="stats"]   { --aura-a: 140 225 255; --aura-b: 136 193 255; --aura-c: 129 229 217; }
+:root[data-theme="light"] body[data-page="logs"]    { --aura-a: 160 201 252; --aura-b: 161 163 247; --aura-c: 122 229 245; }
+:root[data-theme="light"] body[data-page="keys"]    { --aura-a: 217 181 253; --aura-b: 202 185 252; --aura-c: 158 166 228; }
+:root[data-theme="light"] body[data-page="plugins"] { --aura-a: 127 219 208; --aura-b: 137 215 243; --aura-c: 131 218 187; }
 body { --aura-a: 130 143 255; --aura-b: 94 106 210; --aura-c: 76 159 254; }   /* model：品牌靛蓝（默认） */
 body[data-page="pools"]   { --aura-a: 167 139 250; --aura-b: 148 84 220; --aura-c: 94 106 210; }   /* 紫 */
 body[data-page="stats"]   { --aura-a: 64 205 255;  --aura-b: 56 152 255; --aura-c: 45 212 191; }   /* 青 */
@@ -704,29 +713,29 @@ body::after {
   background:
     var(--noise-url),
     /* 亮色斜光轴（更淡） */
-    linear-gradient(115deg, transparent 42%, rgb(var(--aura-a) / .03) 50%, transparent 61%),
+    linear-gradient(115deg, transparent 42%, rgb(var(--aura-a) / .09) 50%, transparent 61%),
     /* v2.17.14 亮色每页身份色粉彩版（晨空冷带提亮一档） */
-    radial-gradient(1240px 400px at 50% -12%, rgb(var(--aura-a) / .075), transparent 70%),
-    radial-gradient(760px 360px at 20% -8%, rgb(var(--aura-b) / .06), transparent 70%),
-    radial-gradient(920px 440px at 86% -12%, rgb(var(--aura-c) / .05), transparent 70%),
-    radial-gradient(640px 400px at 88% 110%, rgb(var(--aura-b) / .05), transparent 70%),
-    linear-gradient(rgba(22, 23, 27, .032) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(22, 23, 27, .032) 1px, transparent 1px),
-    linear-gradient(rgba(22, 23, 27, .016) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(22, 23, 27, .016) 1px, transparent 1px);
+    radial-gradient(1240px 400px at 50% -12%, rgb(var(--aura-a) / .21), transparent 70%),
+    radial-gradient(760px 360px at 20% -8%, rgb(var(--aura-b) / .165), transparent 70%),
+    radial-gradient(920px 440px at 86% -12%, rgb(var(--aura-c) / .14), transparent 70%),
+    radial-gradient(640px 400px at 88% 110%, rgb(var(--aura-b) / .14), transparent 70%),
+    linear-gradient(rgba(94, 106, 210, .055) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(94, 106, 210, .055) 1px, transparent 1px),
+    linear-gradient(rgba(94, 106, 210, .028) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(94, 106, 210, .028) 1px, transparent 1px);
   background-size: 180px 180px, auto, auto, auto, auto, auto, 44px 44px, 44px 44px, 264px 264px, 264px 264px;
 }
 /* 亮色极光：display:none 改粉彩版（同位同动画，仅换色）——白底上的甜点感 */
 :root[data-theme="light"] body::after {
   background:
-    radial-gradient(closest-side at 34% 46%, rgb(var(--aura-b) / .07), transparent),
-    radial-gradient(closest-side at 68% 58%, rgb(var(--aura-c) / .05), transparent);
+    radial-gradient(closest-side at 34% 46%, rgb(var(--aura-b) / .175), transparent),
+    radial-gradient(closest-side at 68% 58%, rgb(var(--aura-c) / .15), transparent);
 }
 /* 注意：:root 即 html，不能写 ":root[...] html::before"（自己不是自己的后代，永不匹配） */
 :root[data-theme="light"]::before {
   background:
-    radial-gradient(560px 420px at 78% 78%, rgba(148, 84, 220, .09), transparent 70%),
-    radial-gradient(640px 460px at 16% 90%, rgba(38, 158, 215, .07), transparent 70%);
+    radial-gradient(560px 420px at 78% 78%, rgba(148, 84, 220, .12), transparent 70%),
+    radial-gradient(640px 460px at 16% 90%, rgba(38, 158, 215, .10), transparent 70%);
 }
 /* 手机：大模糊层降 blur 半径省 GPU（视觉差异可忽略） */
 @media (max-width: 767px) { html::before, body::after { filter: blur(26px); } }

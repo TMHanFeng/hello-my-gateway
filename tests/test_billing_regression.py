@@ -2500,17 +2500,17 @@ def main():
               all(s in _hmgcss for s in ("html::before", "ambientDrift", "feTurbulence", "feColorMatrix",
                   "264px 264px", "rgba(4, 5, 9, .46)",
                   "rgba(178, 118, 235, .12)", "rgba(64, 205, 255, .09)",
-                  'data-theme="light"]::before', "rgba(148, 84, 220, .09)",
+                  'data-theme="light"]::before', "rgba(148, 84, 220, .12)",
                   "html::before, body::after { filter: blur(26px); }")), None)
         # v2.17.9 亮色主题同构淡彩版：三向辉光提亮 + 粉彩极光启用（原 display:none）+ 噪点/大网格上白底 + --noise-url 双主题共用
         # （极光/辉光 v2.17.14 起改吃每页 --aura-* 变量，锚点同步为变量版）
         check("T40o 亮色氛围同构淡彩版(三向辉光/粉彩极光替代display:none/噪点变量共用/大网格/html淡晕提亮)",
               all(s in _hmgcss for s in ('data-theme="light"] body::after',
-                  "radial-gradient(closest-side at 34% 46%, rgb(var(--aura-b) / .07), transparent)",
-                  "radial-gradient(closest-side at 68% 58%, rgb(var(--aura-c) / .05), transparent)",
-                  "radial-gradient(760px 360px at 20% -8%, rgb(var(--aura-b) / .06), transparent 70%)",
-                  "radial-gradient(920px 440px at 86% -12%, rgb(var(--aura-c) / .05), transparent 70%)",
-                  "rgba(38, 158, 215, .07)", "var(--noise-url)")), None)
+                  "radial-gradient(closest-side at 34% 46%, rgb(var(--aura-b) / .175), transparent)",
+                  "radial-gradient(closest-side at 68% 58%, rgb(var(--aura-c) / .15), transparent)",
+                  "radial-gradient(760px 360px at 20% -8%, rgb(var(--aura-b) / .165), transparent 70%)",
+                  "radial-gradient(920px 440px at 86% -12%, rgb(var(--aura-c) / .14), transparent 70%)",
+                  "rgba(38, 158, 215, .10)", "var(--noise-url)")), None)
         # v2.17.10 弹窗动作行右下角：.modal-actions 上收共享 hmg.css + justify-content:flex-end（.right 范式不受影响）
         check("T40p 弹窗动作行右下角(.modal-actions 单源上收共享css/flex-end右对齐/页面级复制移除)",
               '.modal-actions { display: flex; gap: 8px; margin-top: 16px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }' in _hmgcss
@@ -2527,7 +2527,7 @@ def main():
         check("T40r 色板定稿(亮surface阶梯+hairline+阴影/暗ink提色/select自绘/danger-hover/rsn-neutral约束)",
               all(s in _hmgcss for s in ("--surface-2: #f2f4f8;", "--surface-3: #eaedf3;", "--surface-4: #e1e5ec;",
                   "--hairline: #dcdfe8;", "--hairline-strong: #c6ccd8;", "--hairline-tertiary: #adb5c3;",
-                  "--ink-subtle: #5a5f6a;", "--ink-tertiary: #666b79;", "rgba(22, 23, 27, .06), 0 4px 16px -8px rgba(22, 23, 27, .10)",
+                  "--ink-subtle: #5a5f6a;", "--ink-tertiary: #666b79;", "rgba(22, 23, 27, .06), 0 4px 16px -8px rgba(94, 106, 210, .16)",
                   "--ink-subtle: #9ea4bb;", "--ink-tertiary: #828aa2;",
                   "select.inp {\n  appearance: none;", ".btn-ghost.danger-hover:hover", ".btn svg { width: 14px"))
               and "appearance: auto" not in _hmgcss
@@ -2621,23 +2621,25 @@ def main():
                   'body[data-page="keys"]    { --aura-a: 192 132 252; --aura-b: 167 139 250; --aura-c: 94 106 210; }',
                   'body[data-page="plugins"] { --aura-a: 41 195 176;  --aura-b: 59 189 235; --aura-c: 48 194 141; }',
                   "linear-gradient(115deg, transparent 42%, rgb(var(--aura-a) / .05) 50%, transparent 61%)",
-                  "linear-gradient(115deg, transparent 42%, rgb(var(--aura-a) / .03) 50%, transparent 61%)",
+                  "linear-gradient(115deg, transparent 42%, rgb(var(--aura-a) / .09) 50%, transparent 61%)",
                   "radial-gradient(1240px 400px at 50% -12%, rgb(var(--aura-a) / .15), transparent 70%)",
-                  "radial-gradient(1240px 400px at 50% -12%, rgb(var(--aura-a) / .075), transparent 70%)",
+                  "radial-gradient(1240px 400px at 50% -12%, rgb(var(--aura-a) / .21), transparent 70%)",
                   "radial-gradient(760px 360px at 20% -8%, rgb(var(--aura-b) / .12), transparent 70%)",
                   "radial-gradient(920px 500px at 86% -14%, rgb(var(--aura-c) / .09), transparent 70%)",
                   "radial-gradient(closest-side at 34% 46%, rgb(var(--aura-b) / .11), transparent)",
                   "top: -240px; left: 4%; width: 780px; height: 560px",
-                  "radial-gradient(closest-side at 34% 46%, rgb(var(--aura-b) / .07), transparent)",
+                  "radial-gradient(closest-side at 34% 46%, rgb(var(--aura-b) / .175), transparent)",
                   "rgba(4, 5, 9, .46) 100%)",
                   "linear-gradient(rgba(255, 255, 255, .05) 1px, transparent 1px)",
                   "linear-gradient(rgba(255, 255, 255, .028) 1px, transparent 1px)",
-                  "linear-gradient(rgba(22, 23, 27, .032) 1px, transparent 1px)",
-                  "linear-gradient(rgba(22, 23, 27, .016) 1px, transparent 1px)",
+                  "linear-gradient(rgba(94, 106, 210, .055) 1px, transparent 1px)",
+                  "linear-gradient(rgba(94, 106, 210, .028) 1px, transparent 1px)",
+                  ":root[data-theme=\"light\"] body { --aura-a: 180 188 255; --aura-b: 158 166 228; --aura-c: 148 197 254; }",
+                  ':root[data-theme="light"] body[data-page="stats"]   { --aura-a: 140 225 255; --aura-b: 136 193 255; --aura-c: 129 229 217; }',
                   "background-size: auto, 180px 180px, auto, auto, auto, auto, 44px 44px, 44px 44px, 264px 264px, 264px 264px;",
                   "background-size: 180px 180px, auto, auto, auto, auto, auto, 44px 44px, 44px 44px, 264px 264px, 264px 264px;",
                   "rgba(178, 118, 235, .12)", "rgba(64, 205, 255, .09)",
-                  "rgba(148, 84, 220, .09)", "rgba(38, 158, 215, .07)"))
+                  "rgba(148, 84, 220, .12)", "rgba(38, 158, 215, .10)"))
               and "rgba(130, 143, 255, .12)" not in _hmgcss
               and "background-size: auto, 180px 180px, auto, auto, auto, 44px 44px" not in _hmgcss, None)
         # v2.17.8 拖拽丝滑化：FLIP 换位滑移（hmg.js 共享助手）+ rAF 合帧 + 异步变淡保拖影 + Firefox setData + 落点仅在保存失败时重渲
