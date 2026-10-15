@@ -2495,18 +2495,22 @@ def main():
               "hmg-admin" not in _hf and "hmg-admin" not in _idx
               and "pq-inline" in _hf and "pq-inline" in _idx, None)
         # v2.17.7 氛围背景丰富化：第二漂移层（html::before 紫+青双色 38s）+ 静态噪点/暗角/大网格 + 亮色淡晕 + 手机降 blur
+        # （色值锚点随 v2.17.14 提亮同步：暗角 .38→.46、底角 .09/.07→.12/.09、亮 html 淡晕 .055→.09）
         check("T40m 氛围背景丰富化(第二漂移层紫青双色/feTurbulence噪点/暗角/大网格/亮色淡晕/手机降blur)",
               all(s in _hmgcss for s in ("html::before", "ambientDrift", "feTurbulence", "feColorMatrix",
-                  "264px 264px", "rgba(4, 5, 9, .38)",
-                  "rgba(178, 118, 235, .09)", "rgba(64, 205, 255, .07)",
-                  'data-theme="light"]::before', "rgba(148, 84, 220, .055)",
+                  "264px 264px", "rgba(4, 5, 9, .46)",
+                  "rgba(178, 118, 235, .12)", "rgba(64, 205, 255, .09)",
+                  'data-theme="light"]::before', "rgba(148, 84, 220, .09)",
                   "html::before, body::after { filter: blur(26px); }")), None)
         # v2.17.9 亮色主题同构淡彩版：三向辉光提亮 + 粉彩极光启用（原 display:none）+ 噪点/大网格上白底 + --noise-url 双主题共用
+        # （极光/辉光 v2.17.14 起改吃每页 --aura-* 变量，锚点同步为变量版）
         check("T40o 亮色氛围同构淡彩版(三向辉光/粉彩极光替代display:none/噪点变量共用/大网格/html淡晕提亮)",
               all(s in _hmgcss for s in ('data-theme="light"] body::after',
-                  "rgba(94, 106, 210, .14)", "rgba(148, 84, 220, .09)",
-                  "rgba(94, 106, 210, .09)", "rgba(64, 205, 255, .06)",
-                  "rgba(38, 158, 215, .055)", "var(--noise-url)")), None)
+                  "radial-gradient(closest-side at 34% 46%, rgb(var(--aura-b) / .07), transparent)",
+                  "radial-gradient(closest-side at 68% 58%, rgb(var(--aura-c) / .05), transparent)",
+                  "radial-gradient(760px 360px at 20% -8%, rgb(var(--aura-b) / .06), transparent 70%)",
+                  "radial-gradient(920px 440px at 86% -12%, rgb(var(--aura-c) / .05), transparent 70%)",
+                  "rgba(38, 158, 215, .07)", "var(--noise-url)")), None)
         # v2.17.10 弹窗动作行右下角：.modal-actions 上收共享 hmg.css + justify-content:flex-end（.right 范式不受影响）
         check("T40p 弹窗动作行右下角(.modal-actions 单源上收共享css/flex-end右对齐/页面级复制移除)",
               '.modal-actions { display: flex; gap: 8px; margin-top: 16px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }' in _hmgcss
@@ -2552,12 +2556,10 @@ def main():
                   "function hmgInjectIcons", "injectIcons: hmgInjectIcons"))
               and 'data-icon="refresh"' in _pages40["plugins"].text
               and 'data-icon="trash"' in _pages40["keys"].text, None)
-        # v2.17.13 背景舷光 + 「系统在运转」三件套（§16.7 落地）+ 命中区扩大：暗/亮顶部 accent 光带、
-        # liveFlash 变化闪现（变了才闪）、logs 吞吐 sparkline（48 采样环形缓冲）、i-tip/pq-refresh/grp-x 透明外扩
-        check("T40t 舷光+系统活着三件套+命中区(暗亮顶部光带/liveFlash/sparkline环形缓冲/命中区外扩)",
+        # v2.17.13 「系统在运转」三件套（§16.7 落地）+ 命中区扩大：liveFlash 变化闪现（变了才闪）、
+        # logs 吞吐 sparkline（48 采样环形缓冲）、i-tip/pq-refresh/grp-x 透明外扩（v2.17.14 起舷光断言归 T40u）
+        check("T40t 系统活着三件套+命中区(liveFlash/sparkline环形缓冲/命中区外扩)",
               all(t in _hmgcss for t in (
-                  "radial-gradient(1100px 360px at 50% -12%, rgba(130, 143, 255, .12), transparent 70%)",
-                  "radial-gradient(1100px 360px at 50% -12%, rgba(94, 106, 210, .07), transparent 70%)",
                   ".live-chg { animation: liveFlash .8s var(--ease-out); }",
                   "@keyframes liveFlash { 0% { color: var(--acc-ink); text-shadow: 0 0 14px var(--acc-tint); }",
                   ".grp-x::before", ".grp-x { position: relative; }"))
@@ -2573,6 +2575,37 @@ def main():
               and all(t in _pages40["pools"].text for t in (
                   ".i-tip { position: relative;", ".i-tip::before { content: \"\"; position: absolute; inset: -5px;"))
               and ".pq-refresh::before" in _pages40["model"].text, None)
+        # v2.17.14 背景每页身份色（背景单一反馈落地）：六页六组 --aura-* 三元组（body[data-page] 覆盖）+
+        # 舷光/顶辉光/极光团/斜光轴全吃变量（alpha 全局统一：暗 .15/.12/.10、亮 .075/.06/.07）+
+        # 网格提亮（暗 .05/.028、亮 .032/.016）+ 暗角加深 .46 + 底角辉光提亮；html::before 不吃 body 变量（不向上继承）
+        check("T40u 背景每页身份色(六页aura表/舷光辉光极光斜轴吃变量/双主题alpha/网格提亮/暗角/底角/旧值清零)",
+              all(t in _hmgcss for t in (
+                  'body { --aura-a: 130 143 255; --aura-b: 94 106 210; --aura-c: 76 159 254; }',
+                  'body[data-page="pools"]   { --aura-a: 167 139 250; --aura-b: 148 84 220; --aura-c: 94 106 210; }',
+                  'body[data-page="stats"]   { --aura-a: 64 205 255;  --aura-b: 56 152 255; --aura-c: 45 212 191; }',
+                  'body[data-page="logs"]    { --aura-a: 96 165 250;  --aura-b: 99 102 241; --aura-c: 34 211 238; }',
+                  'body[data-page="keys"]    { --aura-a: 192 132 252; --aura-b: 167 139 250; --aura-c: 94 106 210; }',
+                  'body[data-page="plugins"] { --aura-a: 41 195 176;  --aura-b: 59 189 235; --aura-c: 48 194 141; }',
+                  "linear-gradient(115deg, transparent 42%, rgb(var(--aura-a) / .05) 50%, transparent 61%)",
+                  "linear-gradient(115deg, transparent 42%, rgb(var(--aura-a) / .03) 50%, transparent 61%)",
+                  "radial-gradient(1240px 400px at 50% -12%, rgb(var(--aura-a) / .15), transparent 70%)",
+                  "radial-gradient(1240px 400px at 50% -12%, rgb(var(--aura-a) / .075), transparent 70%)",
+                  "radial-gradient(760px 360px at 20% -8%, rgb(var(--aura-b) / .12), transparent 70%)",
+                  "radial-gradient(920px 500px at 86% -14%, rgb(var(--aura-c) / .09), transparent 70%)",
+                  "radial-gradient(closest-side at 34% 46%, rgb(var(--aura-b) / .11), transparent)",
+                  "top: -240px; left: 4%; width: 780px; height: 560px",
+                  "radial-gradient(closest-side at 34% 46%, rgb(var(--aura-b) / .07), transparent)",
+                  "rgba(4, 5, 9, .46) 100%)",
+                  "linear-gradient(rgba(255, 255, 255, .05) 1px, transparent 1px)",
+                  "linear-gradient(rgba(255, 255, 255, .028) 1px, transparent 1px)",
+                  "linear-gradient(rgba(22, 23, 27, .032) 1px, transparent 1px)",
+                  "linear-gradient(rgba(22, 23, 27, .016) 1px, transparent 1px)",
+                  "background-size: auto, 180px 180px, auto, auto, auto, auto, 44px 44px, 44px 44px, 264px 264px, 264px 264px;",
+                  "background-size: 180px 180px, auto, auto, auto, auto, auto, 44px 44px, 44px 44px, 264px 264px, 264px 264px;",
+                  "rgba(178, 118, 235, .12)", "rgba(64, 205, 255, .09)",
+                  "rgba(148, 84, 220, .09)", "rgba(38, 158, 215, .07)"))
+              and "rgba(130, 143, 255, .12)" not in _hmgcss
+              and "background-size: auto, 180px 180px, auto, auto, auto, 44px 44px" not in _hmgcss, None)
         # v2.17.8 拖拽丝滑化：FLIP 换位滑移（hmg.js 共享助手）+ rAF 合帧 + 异步变淡保拖影 + Firefox setData + 落点仅在保存失败时重渲
         check("T40n 拖拽丝滑化(FLIP助手flipMove/四拖拽面接线/rAF合帧/异步变淡/setData/失败才重渲/.dragging标记)",
               all(s in _hmgjs for s in ("function hmgFlipMove", "flipMove: hmgFlipMove", "prefers-reduced-motion: reduce"))

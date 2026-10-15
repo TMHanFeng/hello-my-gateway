@@ -616,20 +616,34 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
    原元素的变淡由页面在拖影快照拍完后异步加内联透明度——同步加会让拖影同拍变淡发糊。 ── */
 .dragging { user-select: none; -webkit-user-select: none; }
 
-/* ── 10.6 科技氛围层：噪点+暗角+双层网格基底 + 三色极光双速缓漂 + 品牌渐变流动 ──
+/* ── 10.6 科技氛围层：噪点+暗角+双层网格基底 + 每页身份色极光双速缓漂 + 品牌渐变流动 ──
    全部 transform/opacity 动画（合成器线程，emil：恒动只留给氛围不留给交互）；
    噪点（feTurbulence 去饱和）/暗角/大网格为静态层——抗色带、加纵深，打破纯平底色；
+   v2.17.14：六页六组 --aura-* 身份色（上方表），舷光/顶辉光/极光团/斜光轴全部吃变量——
+   切页即换「房间光」，后台不再是同一张底色；alpha 全局统一，AA 实测见变量表注释。
    两个漂移层周期 26s/38s 互质不锁步，且分踞上部与下部（覆盖全视口）。
    亮色主题同构淡彩版：三向辉光 + 粉彩极光 + 噪点/大网格上白底（高饱和会脏，全族降 alpha），
    暗角白底退场（边缘压暗读作屏幕脏）；reduced-motion 由全局冻结规则接管。
    注：html::before 的 position:fixed 在老 Safari 可能退化为随滚动（辉光位置略移，可容忍）。 */
 :root { --noise-url: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='180'%20height='180'%3E%3Cfilter%20id='n'%3E%3CfeTurbulence%20type='fractalNoise'%20baseFrequency='0.8'%20numOctaves='2'%20stitchTiles='stitch'/%3E%3CfeColorMatrix%20type='saturate'%20values='0'/%3E%3C/filter%3E%3Crect%20width='180'%20height='180'%20filter='url(%23n)'%20opacity='.05'/%3E%3C/svg%3E"); }
+/* v2.17.14 每页身份色：data-page 六页六组 aura 三元组（裸 R G B，rgb(var(--aura-x) / α) 消费）。
+   色相全亮保身份感，alpha 全局统一不随页变（暗 .15/.12/.10、亮 .075/.06/.07，见下方两条 stack）——
+   WCAG 实测：两主题 × 六页「舷光核心」「左上辉光簇」两处峰值叠点 ink-subtle 全部 ≥4.5:1
+   （plugins 原值差半档，整页 0.92×V 微降后全过）；ink-tertiary 使用面约束（只许 canvas/surface-1
+   空态与卡内）本就不进 aura 顶带，不另设阈值。html::before 看不到 body 作用域的自定义属性
+   （自定义属性不向上继承），故底角辉光保持品牌靛青静态、不参与每页换色。 */
+body { --aura-a: 130 143 255; --aura-b: 94 106 210; --aura-c: 76 159 254; }   /* model：品牌靛蓝（默认） */
+body[data-page="pools"]   { --aura-a: 167 139 250; --aura-b: 148 84 220; --aura-c: 94 106 210; }   /* 紫 */
+body[data-page="stats"]   { --aura-a: 64 205 255;  --aura-b: 56 152 255; --aura-c: 45 212 191; }   /* 青 */
+body[data-page="logs"]    { --aura-a: 96 165 250;  --aura-b: 99 102 241; --aura-c: 34 211 238; }   /* 天蓝 */
+body[data-page="keys"]    { --aura-a: 192 132 252; --aura-b: 167 139 250; --aura-c: 94 106 210; }  /* 紫红 */
+body[data-page="plugins"] { --aura-a: 41 195 176;  --aura-b: 59 189 235; --aura-c: 48 194 141; }   /* 青绿（0.92×V） */
 html::before {
   content: ""; position: fixed; inset: -22%; z-index: -1; pointer-events: none;
   filter: blur(38px);
   background:
-    radial-gradient(560px 420px at 78% 78%, rgba(178, 118, 235, .09), transparent 70%),
-    radial-gradient(640px 460px at 16% 90%, rgba(64, 205, 255, .07), transparent 70%);
+    radial-gradient(560px 420px at 78% 78%, rgba(178, 118, 235, .12), transparent 70%),
+    radial-gradient(640px 460px at 16% 90%, rgba(64, 205, 255, .09), transparent 70%);
   animation: ambientDrift 38s var(--ease-io) infinite alternate;
 }
 @keyframes ambientDrift {
@@ -639,24 +653,26 @@ html::before {
 body::before {
   content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
   background:
-    radial-gradient(130% 100% at 50% 28%, transparent 55%, rgba(4, 5, 9, .38) 100%),
+    radial-gradient(130% 100% at 50% 28%, transparent 55%, rgba(4, 5, 9, .46) 100%),
     var(--noise-url),
-    /* v2.17.13 舷光：顶部一道 accent 光带——「仪表舱顶光」是全场唯一的大胆笔触（frontend-design：boldness 花在一处） */
-    radial-gradient(1100px 360px at 50% -12%, rgba(130, 143, 255, .12), transparent 70%),
-    radial-gradient(720px 340px at 22% -6%, rgba(94, 106, 210, .11), transparent 70%),
-    radial-gradient(860px 460px at 84% -14%, rgba(76, 159, 254, .07), transparent 70%),
-    linear-gradient(rgba(255, 255, 255, .024) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, .024) 1px, transparent 1px),
-    linear-gradient(rgba(255, 255, 255, .013) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, .013) 1px, transparent 1px);
-  background-size: auto, 180px 180px, auto, auto, auto, 44px 44px, 44px 44px, 264px 264px, 264px 264px;
+    /* v2.17.14 斜向光轴：一道从左上打进舱内的柔光，给平底加方向性（宽透明停渐变防色带） */
+    linear-gradient(115deg, transparent 42%, rgb(var(--aura-a) / .05) 50%, transparent 61%),
+    /* v2.17.13 舷光 → v2.17.14 每页身份色+提亮（.12→.15，1100→1240 宽） */
+    radial-gradient(1240px 400px at 50% -12%, rgb(var(--aura-a) / .15), transparent 70%),
+    radial-gradient(760px 360px at 20% -8%, rgb(var(--aura-b) / .12), transparent 70%),
+    radial-gradient(920px 500px at 86% -14%, rgb(var(--aura-c) / .09), transparent 70%),
+    linear-gradient(rgba(255, 255, 255, .05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, .05) 1px, transparent 1px),
+    linear-gradient(rgba(255, 255, 255, .028) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, .028) 1px, transparent 1px);
+  background-size: auto, 180px 180px, auto, auto, auto, auto, 44px 44px, 44px 44px, 264px 264px, 264px 264px;
 }
 body::after {
-  content: ""; position: fixed; top: -240px; left: 6%; width: 620px; height: 460px; z-index: -1;
+  content: ""; position: fixed; top: -240px; left: 4%; width: 780px; height: 560px; z-index: -1;
   pointer-events: none; filter: blur(34px);
   background:
-    radial-gradient(closest-side at 34% 46%, rgba(94, 106, 210, .16), transparent),
-    radial-gradient(closest-side at 68% 58%, rgba(76, 159, 254, .10), transparent);
+    radial-gradient(closest-side at 34% 46%, rgb(var(--aura-b) / .11), transparent),
+    radial-gradient(closest-side at 68% 58%, rgb(var(--aura-c) / .08), transparent);
   transform-origin: 40% 40%;
   animation: auroraDrift 26s var(--ease-io) infinite alternate;
 }
@@ -668,28 +684,30 @@ body::after {
 :root[data-theme="light"] body::before {
   background:
     var(--noise-url),
-    /* v2.17.13 亮色同位粉彩舷光（晨空冷带） */
-    radial-gradient(1100px 360px at 50% -12%, rgba(94, 106, 210, .07), transparent 70%),
-    radial-gradient(720px 340px at 22% -6%, rgba(94, 106, 210, .09), transparent 70%),
-    radial-gradient(860px 420px at 84% -12%, rgba(64, 205, 255, .06), transparent 70%),
-    radial-gradient(640px 400px at 88% 110%, rgba(148, 84, 220, .055), transparent 70%),
-    linear-gradient(rgba(22, 23, 27, .022) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(22, 23, 27, .022) 1px, transparent 1px),
-    linear-gradient(rgba(22, 23, 27, .012) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(22, 23, 27, .012) 1px, transparent 1px);
-  background-size: 180px 180px, auto, auto, auto, auto, 44px 44px, 44px 44px, 264px 264px, 264px 264px;
+    /* 亮色斜光轴（更淡） */
+    linear-gradient(115deg, transparent 42%, rgb(var(--aura-a) / .03) 50%, transparent 61%),
+    /* v2.17.14 亮色每页身份色粉彩版（晨空冷带提亮一档） */
+    radial-gradient(1240px 400px at 50% -12%, rgb(var(--aura-a) / .075), transparent 70%),
+    radial-gradient(760px 360px at 20% -8%, rgb(var(--aura-b) / .06), transparent 70%),
+    radial-gradient(920px 440px at 86% -12%, rgb(var(--aura-c) / .05), transparent 70%),
+    radial-gradient(640px 400px at 88% 110%, rgb(var(--aura-b) / .05), transparent 70%),
+    linear-gradient(rgba(22, 23, 27, .032) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(22, 23, 27, .032) 1px, transparent 1px),
+    linear-gradient(rgba(22, 23, 27, .016) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(22, 23, 27, .016) 1px, transparent 1px);
+  background-size: 180px 180px, auto, auto, auto, auto, auto, 44px 44px, 44px 44px, 264px 264px, 264px 264px;
 }
 /* 亮色极光：display:none 改粉彩版（同位同动画，仅换色）——白底上的甜点感 */
 :root[data-theme="light"] body::after {
   background:
-    radial-gradient(closest-side at 34% 46%, rgba(94, 106, 210, .14), transparent),
-    radial-gradient(closest-side at 68% 58%, rgba(148, 84, 220, .09), transparent);
+    radial-gradient(closest-side at 34% 46%, rgb(var(--aura-b) / .07), transparent),
+    radial-gradient(closest-side at 68% 58%, rgb(var(--aura-c) / .05), transparent);
 }
 /* 注意：:root 即 html，不能写 ":root[...] html::before"（自己不是自己的后代，永不匹配） */
 :root[data-theme="light"]::before {
   background:
-    radial-gradient(560px 420px at 78% 78%, rgba(148, 84, 220, .07), transparent 70%),
-    radial-gradient(640px 460px at 16% 90%, rgba(38, 158, 215, .055), transparent 70%);
+    radial-gradient(560px 420px at 78% 78%, rgba(148, 84, 220, .09), transparent 70%),
+    radial-gradient(640px 460px at 16% 90%, rgba(38, 158, 215, .07), transparent 70%);
 }
 /* 手机：大模糊层降 blur 半径省 GPU（视觉差异可忽略） */
 @media (max-width: 767px) { html::before, body::after { filter: blur(26px); } }

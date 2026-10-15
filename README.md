@@ -90,7 +90,7 @@ data/ 运行时数据（gateway.db、探测缓存、dev pid），与代码隔离
 
 | 🧠 统一思考控制 | 🧪 计费回归安全网 | 📐 智能估算超时 |
 |:---|:---|:---|
-| `reasoning_effort` 六档 → 按模型 `reasoning_map` 换算上游思考参数；思考内容统一回传 `reasoning_content` / `thinking` | 290 断言计费回归套件（`test_billing_regression.py`）：流式/非流式/一次性/RPM 触顶/安全阀/并发入账零丢失，任何改动先跑套件再上线 | `smart_estimate` 模型按 token 量动态计算超时（吞吐 EMA 校准），样本不足自动回退固定值 |
+| `reasoning_effort` 六档 → 按模型 `reasoning_map` 换算上游思考参数；思考内容统一回传 `reasoning_content` / `thinking` | 291 断言计费回归套件（`test_billing_regression.py`）：流式/非流式/一次性/RPM 触顶/安全阀/并发入账零丢失，任何改动先跑套件再上线 | `smart_estimate` 模型按 token 量动态计算超时（吞吐 EMA 校准），样本不足自动回退固定值 |
 
 | 📡 Embedding / Rerank | 🔑 用户密钥管理 | 📄 JSON 输出路由 |
 |:---|:---|:---|
@@ -171,7 +171,7 @@ python -m app.main
 >
 > 💡 **Ubuntu / Linux**：`python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt && python3 -m app.main`，或直接 `./start_gateway.sh`（自动选 venv/系统解释器；停止 `./stop_gateway.sh`）。代码本身跨平台：运行时目录（data/ logs/ backup/）首次启动自动创建，路径处理与日志滚动均适配 POSIX 文件系统。回归套件同样可在 Linux 运行：`python tests/test_billing_regression.py`。
 >
-> 🧪 **改动计费相关代码后**：`python tests/test_billing_regression.py` 运行 290 断言计费回归套件（自动在 8678 起隔离实例 + mock 上游，不触碰生产端口），全绿再上线。
+> 🧪 **改动计费相关代码后**：`python tests/test_billing_regression.py` 运行 291 断言计费回归套件（自动在 8678 起隔离实例 + mock 上游，不触碰生产端口），全绿再上线。
 
 ---
 
@@ -219,7 +219,7 @@ hello-my-gateway/
 │   ├── index.html                # 传统管理后台（/admin）
 │   └── hfadmin.html              # 科技感管理面板（/hfadmin）
 ├── tests/
-│   └── test_billing_regression.py # 计费回归套件（290 断言，隔离实例 + mock 上游）
+│   └── test_billing_regression.py # 计费回归套件（291 断言，隔离实例 + mock 上游）
 ├── start_gateway.cmd             # Windows 启动入口（自动选解释器，幂等）
 ├── stop_gateway.cmd              # 停止入口（身份核验，只停本仓库网关）
 ├── start_gateway.sh              # Linux/macOS 启动入口（语义同 .cmd：选解释器 + 已运行自检）
@@ -645,6 +645,8 @@ SQLite（`gateway.db`）持久化以下表：
 ## 📜 版本
 
 ### 最新
+
+**`v2.17.14`** — **🌌 hmg-admin 背景每页身份色（反馈：背景还是太单一；每页一组 --aura-* 三元组，切页即换「房间光」）**：①**六页六色**：`body[data-page]` 覆盖 `--aura-a/b/c` 裸三元组（model 品牌靛蓝 `130 143 255` / pools 紫 `167 139 250` / stats 青 `64 205 255` / logs 天蓝 `96 165 250` / keys 紫红 `192 132 252` / plugins 青绿 `41 195 176`，整页 0.92×V 微降保 AA），渐变侧 `rgb(var(--aura-x) / α)` 消费；②**四层吃变量**：舷光（加宽提亮 `1240px×400px at 50% -12%`）、20%/86% 两盏顶辉光、body::after 极光团（620×460→**780×560**）、新增 **115° 斜向光轴**（transparent 42%→中心 aura-a /.05→transparent 61%，给平底加方向性）——html::before 底角辉光不吃 body 变量（自定义属性不向上继承），保持品牌靛青静态；③**alpha 全局统一不随页变**：暗 `.15/.12/.10`、亮 `.075/.06/.07`，色相全亮保身份感——WCAG 数值实测两主题×六页「舷光核心」「左上辉光簇」两处峰值叠点 ink-subtle 全部 ≥4.5:1（ink-tertiary 使用面约束本就不进 aura 顶带，不另设阈值；等 alpha 方案对青色系破 4.5、加深三元组成泥色，两案皆否决）；④**平底两件套提亮**：双层网格暗 .024/.013→**.05/.028**、亮 .022/.012→**.032/.016**，暗角 .38→**.46**（明暗值域拉开立体感）；⑤回归 **290→291** 全绿（T40u：六页 aura 表/四层变量锚点/双主题 alpha/网格/暗角/底角/旧值清零；T40t 舷光锚点移交 T40u，T40m/T40o 色值锚点随 v2.17.14 现状同步并注明）；8660 实证：六页变量逐页正确、logs 页四层解析取证（96,165,250/.15 等）、暗色三页截图（model 靛/stats 青/keys 紫红）身份可辨、亮色 stats 粉彩青可辨文本清晰、主题还原 dark。纯资产改动**刷新即见**。
 
 **`v2.17.13`** — **🌌 hmg-admin 舷光背景 + 「系统在运转」三件套 + 命中区扩大（反馈：背景单一/要科技感；frontend-design + emil-design-eng 定调：大胆只花一处、动效必须有目的且 <300ms）**：①**舷光**（全场唯一大胆笔触）：暗色 body::before 顶部新增 `1100px×360px at 50% -12%` accent 光带（rgba(130,143,255,.12)，与既有 22%/84% 两盏顶辉光叠成「仪表舱顶光」，随 ambientDrift 38s 漂移+透明度 .72↔1 呼吸），亮色同位粉彩 .07（晨空冷带）；舷光在 vignette 透明区内，文本对比度不受影响；②**轮询数值变化闪现**：hmg.js 新增 `hmgLiveTxt`（文本变了才触发一次 `.live-chg` tint 闪现 0.8s ease-out——color+text-shadow 起始态过渡回原样，不变零动画、首渲不闪），stats 页 `.stat-used`/`.stat-pct` 两个活数接线（5s 轮询的数字跳动首次有视觉反馈，§16.7「没有一个动效表达系统在运转」的落地）；③**logs 吞吐 sparkline**：页头 120×26 内联 SVG 迷你图，48 次采样（≈4 分钟）环形缓冲，每次轮询 push 当前 decisions 数（空窗如实落 0），accent 折线+渐变面积+头部呼吸点；SVG 颜色走 style 属性（表现属性不解析 CSS 变量的坑），<768 隐藏；④**命中区扩大**（易操作）：i-tip ⓘ（15→25px）、pq-refresh ⟳（22×18→30×26）、grp-x 🗑（22→30px）——视觉尺寸不变、透明 ::before 外扩；⑤自检确认对齐已稳不动（页头 46/46 居中、stat 数字行 147/308/469 齐平）。回归 **289→290** 全绿（T40t：舷光双主题锚点/liveFlash/sparkline 环形缓冲/命中区外扩）；顺修 v2.17.12 插条目时「### 最新」标题重复一次的笔误；node --check 过；8660 双主题×双视口复验。纯资产改动**刷新即见**。
 
