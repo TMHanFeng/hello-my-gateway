@@ -18,7 +18,7 @@
 .pool-chip { display: inline-flex; align-items: center; padding: 1px 9px; border-radius: var(--r-pill); background: var(--surface-2); border: 1px solid var(--hairline); font-size: 12px; white-space: nowrap; }
 .pool-chip .hmg-av-dot { margin-right: 5px; }
 .btn-ok-flash { color: var(--ok-ink) !important; border-color: var(--ok-ink) !important; }
-.key-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 8px 16px; font-size: 13px; }
+.key-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(230px, 100%), 1fr)); gap: 8px 16px; font-size: 13px; }
 .key-grid b { font-weight: 500; overflow-wrap: anywhere; }
 .kv-line { display: flex; gap: 6px; min-width: 0; }
 .kv-line > span:first-child { color: var(--ink-subtle); flex: none; }
@@ -34,7 +34,7 @@
 .bar-inline .mono:last-child { white-space: nowrap; }
 .usage-tip { position: absolute; pointer-events: none; background: var(--surface-3); border: 1px solid var(--hairline-strong); border-radius: 6px; padding: 4px 9px; font-size: 12px; white-space: nowrap; z-index: 5; box-shadow: var(--shadow-pop); }
 @media (max-width: 767px) {
-  .key-grid { grid-template-columns: 1fr; }
+  .key-grid { grid-template-columns: minmax(0, 1fr); }   /* minmax(0,1fr)：auto 最小值会被长 Key 名/数字顶爆轨道（v2.17.18） */
 }
 /* 用量行内容最宽（限额数字+进度条+百分比+徽章），独占整行防窄列断行 */
 .usage-line { grid-column: 1 / -1; }

@@ -372,8 +372,8 @@ textarea.inp { resize: vertical; min-height: 64px; }
   .card:hover::before, .stat-card:hover::before, .pc-card:hover::before, .log-card:hover::before { opacity: 1; }
 }
 
-.grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
-.grid-tight { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
+.grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr)); }   /* min(…,100%) 窄屏防轨道顶爆（v2.17.18） */
+.grid-tight { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(min(240px, 100%), 1fr)); }
 .row { display: flex; align-items: center; gap: 8px; }
 .row.wrap { flex-wrap: wrap; }
 .grow { flex: 1; min-width: 0; }
@@ -814,7 +814,8 @@ body::after {
 }
 @media (max-width: 767px) {
   #hmg-topbar { display: flex; }
-  #hmg-sidebar { width: 280px; transform: translateX(-103%); box-shadow: var(--shadow-pop); }
+  /* v2.17.18：抽屉从顶栏（52px）下缘起滑——此前 top:0 时品牌/版本块整块被顶栏盖住（实拍取证） */
+  #hmg-sidebar { width: 280px; top: 52px; transform: translateX(-103%); box-shadow: var(--shadow-pop); }
   body.drawer-open #hmg-sidebar { transform: translateX(0); }
   #hmg-sidebar .hmg-brand .brand-txt,
   #hmg-sidebar .nav-item span.lb, #hmg-sidebar .hmg-side-foot .pill-key { display: flex; }
@@ -822,7 +823,7 @@ body::after {
   #hmg-sidebar .hmg-side-row { justify-content: flex-start; }
   .hmg-main { padding: 14px 12px 40px; animation: none; }
   .page-head h1 { font-size: 18px; }
-  .grid, .grid-tight { grid-template-columns: 1fr; }
+  .grid, .grid-tight { grid-template-columns: minmax(0, 1fr); }
   .frm-row, .frm-row3 { grid-template-columns: 1fr; }
   .btn { min-height: 40px; }
   .btn-sm, .btn-xs { min-height: 34px; }

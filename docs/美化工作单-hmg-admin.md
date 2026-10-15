@@ -431,3 +431,32 @@ iOS/macOS 分组样式：**灰底白卡**（卡片比环境亮，边界交描边
 - Don't：亮色页覆盖必须带 `:root[data-theme]` 前缀（(0,3,1) 压过亮色基座 (0,2,1)），裸
   `body[data-page]` 会被亮色基座反杀、六页塌成一色。
 **回归**：292/292；8660 实拍 model（粉彩靛光带/靛网格/微靛投影）与 stats（青身份）分明。
+
+---
+
+## 23. 手机版全面体检实录（2026-10-15，v2.17.18，本线）
+
+**反馈**：要适配手机版、不能出现异常、详细检查视觉对齐（特别是手机版）。
+
+**审计方法**：390×844 逐页——①整页横滚判据 `scrollWidth > clientWidth`；②真越界 = 元素 right>vw+1
+且祖先链无 overflow 裁剪（排除横滚容器合法子项）；③对齐 = .hmg-main 直接子元素左右缘集合
+（六页统一 12..368）；④组件态实测弹窗/抽屉；⑤轨道真凶用「逐个隐藏子元素 + width:min-content
+直测」二分定位。
+
+**修复×2 类**：
+1. **P0 stats 整页横滚 28px**：`minmax(290px,1fr)` 的 1fr auto 最小值被卡内 nowrap 文本内在宽度
+   顶爆轨道（实测 406.083 > 366，卡 min-content 才 239）。修：`minmax(min(290px,100%),1fr)` +
+   移动端 `minmax(0,1fr)`；同款隐患普查加固 ×5（.stat-group-body/.grid/.grid-tight/.key-grid +
+   各 ≤767 查询，320px 小屏同样免疫）。
+2. **抽屉品牌块被顶栏盖住**：top:0 全高 + 顶栏 z-index 80 → 顶部 52px 恒不可见（v2.17.11 版本
+   完整显示在手机失效）。修：≤767 `#hmg-sidebar { top: 52px }`。
+
+**Do / Don't 增补**：
+- Do：所有 `auto-fill/auto-fit` 网格一律 `minmax(min(Npx,100%),1fr)`、移动端模板一律
+  `minmax(0,1fr)`——1fr 的 auto 最小值会被任意 nowrap 内容顶爆，且与内容实际 min-content
+  无关（引擎行为，实测 406.083 vs 内容 239）。
+- Do：改资产后 IAB 审计前必须 reload()——goto() 走启发式缓存，一轮「抽屉打不开」假异常即源于此。
+- Don't：CSSOM 遍历别用 `if (r.cssRules)` 判容器（CSSStyleRule.cssRules 恒为对象，空也 truthy），
+  要查 `.length`。
+**回归**：292→293（T40w 新增；T40g 锚点同步）。终态：六页零横滚、边缘 12..368 全对齐、
+弹窗全屏 sheet 零溢出、抽屉滑入品牌可见。

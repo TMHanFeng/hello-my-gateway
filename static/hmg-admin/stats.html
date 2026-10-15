@@ -11,7 +11,7 @@
 <link rel="stylesheet" href="/hmg-admin/assets/hmg.css?v=__GATEWAY_VERSION__">
 <style>
 /* ── 本页私有：统计卡片 / 分组视图 / 分组查看行 ── */
-.stat-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); }   /* 默认 stretch：同行卡片等高 */
+.stat-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(min(290px, 100%), 1fr)); }   /* 默认 stretch：同行卡片等高；min(…,100%) 防窄屏轨道被 nowrap 文本内在宽度顶爆（v2.17.18 手机版溢出真凶） */
 .stat-card {
   background: var(--surface-1); border: 1px solid var(--hairline); border-radius: 12px; padding: 16px; position: relative;
   display: flex; flex-direction: column;            /* 纵排：进度条/元信息贴底，同行卡片底缘对齐 */
@@ -56,7 +56,7 @@ button.badge { cursor: pointer; border: none; font: inherit; font-size: 12px; }
 .sg-drag { margin-left: auto; cursor: grab; color: var(--ink-tertiary); font-size: 12px; }
 .stat-group.dragging { opacity: .4; }
 .stat-group.collapsed .stat-group-body, .stat-ogroup.collapsed .stat-ogroup-body { display: none; }
-.stat-group-body { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); }   /* 默认 stretch：分组内同行卡片等高（与 .stat-grid 同款） */
+.stat-group-body { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(min(290px, 100%), 1fr)); }   /* 默认 stretch：分组内同行卡片等高（与 .stat-grid 同款） */
 .stat-ogroup-head { border-top: 1px solid var(--hairline); padding-top: 12px; margin-top: 6px; }
 .stat-ogroup-body { display: flex; flex-direction: column; gap: 4px; padding-bottom: 6px; }
 .stat-subcard { border-style: dashed; background: transparent; }
@@ -72,7 +72,7 @@ button.badge { cursor: pointer; border: none; font: inherit; font-size: 12px; }
 .gs-seg-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
 .gs-seg-label { font-size: 12.5px; color: var(--ink-subtle); flex: none; width: 34px; }
 @media (max-width: 767px) {
-  .stat-grid, .stat-group-body { grid-template-columns: 1fr; }
+  .stat-grid, .stat-group-body { grid-template-columns: minmax(0, 1fr); }   /* minmax(0,1fr)：1fr 的 auto 最小值会被卡内 nowrap 文本顶到 406px 造成整页横滚 */
   .stat-refresh { margin-left: 0; text-align: left; width: 100%; }
 }
 </style>

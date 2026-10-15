@@ -90,7 +90,7 @@ data/ 运行时数据（gateway.db、探测缓存、dev pid），与代码隔离
 
 | 🧠 统一思考控制 | 🧪 计费回归安全网 | 📐 智能估算超时 |
 |:---|:---|:---|
-| `reasoning_effort` 六档 → 按模型 `reasoning_map` 换算上游思考参数；思考内容统一回传 `reasoning_content` / `thinking` | 292 断言计费回归套件（`test_billing_regression.py`）：流式/非流式/一次性/RPM 触顶/安全阀/并发入账零丢失，任何改动先跑套件再上线 | `smart_estimate` 模型按 token 量动态计算超时（吞吐 EMA 校准），样本不足自动回退固定值 |
+| `reasoning_effort` 六档 → 按模型 `reasoning_map` 换算上游思考参数；思考内容统一回传 `reasoning_content` / `thinking` | 293 断言计费回归套件（`test_billing_regression.py`）：流式/非流式/一次性/RPM 触顶/安全阀/并发入账零丢失，任何改动先跑套件再上线 | `smart_estimate` 模型按 token 量动态计算超时（吞吐 EMA 校准），样本不足自动回退固定值 |
 
 | 📡 Embedding / Rerank | 🔑 用户密钥管理 | 📄 JSON 输出路由 |
 |:---|:---|:---|
@@ -171,7 +171,7 @@ python -m app.main
 >
 > 💡 **Ubuntu / Linux**：`python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt && python3 -m app.main`，或直接 `./start_gateway.sh`（自动选 venv/系统解释器；停止 `./stop_gateway.sh`）。代码本身跨平台：运行时目录（data/ logs/ backup/）首次启动自动创建，路径处理与日志滚动均适配 POSIX 文件系统。回归套件同样可在 Linux 运行：`python tests/test_billing_regression.py`。
 >
-> 🧪 **改动计费相关代码后**：`python tests/test_billing_regression.py` 运行 292 断言计费回归套件（自动在 8678 起隔离实例 + mock 上游，不触碰生产端口），全绿再上线。
+> 🧪 **改动计费相关代码后**：`python tests/test_billing_regression.py` 运行 293 断言计费回归套件（自动在 8678 起隔离实例 + mock 上游，不触碰生产端口），全绿再上线。
 
 ---
 
@@ -219,7 +219,7 @@ hello-my-gateway/
 │   ├── index.html                # 传统管理后台（/admin）
 │   └── hfadmin.html              # 科技感管理面板（/hfadmin）
 ├── tests/
-│   └── test_billing_regression.py # 计费回归套件（292 断言，隔离实例 + mock 上游）
+│   └── test_billing_regression.py # 计费回归套件（293 断言，隔离实例 + mock 上游）
 ├── start_gateway.cmd             # Windows 启动入口（自动选解释器，幂等）
 ├── stop_gateway.cmd              # 停止入口（身份核验，只停本仓库网关）
 ├── start_gateway.sh              # Linux/macOS 启动入口（语义同 .cmd：选解释器 + 已运行自检）
@@ -645,6 +645,8 @@ SQLite（`gateway.db`）持久化以下表：
 ## 📜 版本
 
 ### 最新
+
+**`v2.17.18`** — **📱 hmg-admin 手机版全面体检（反馈：要适配手机版不能出现异常，详细检查视觉对齐）**：①**真异常×1**：stats 页整页横滚 28px（docSW 418/390）——grid `repeat(auto-fill, minmax(290px,1fr))` 的 `1fr` auto 最小值被卡内 nowrap 文本（stat-id 模型名）内在宽度顶爆轨道（实测轨道 406.083px > 容器 366px，卡 min-content 仅 239，纯引擎 track-sizing 行为）→ 教科书修法：`minmax(min(290px,100%),1fr)` + 移动端 `minmax(0,1fr)`；②**同款隐患普查加固×6**：stats .stat-group-body、hmg.css .grid(280)/.grid-tight(240)、keys .key-grid(230,auto-fit) 全部 `min(…,100%)` 化 + 各 ≤767 媒体查询 `minmax(0,1fr)` 化（320px 小屏同样免疫）；③**视觉对齐修复×1**：移动端抽屉 `top:0` 时品牌/版本块整块被 52px 顶栏盖住（v2.17.11 的版本完整显示在手机上失效）→ `top:52px` 从顶栏下缘起滑；④**程序化审计方法**：逐元素 right>vw 且祖先无 overflow 裁剪判定越界 + main 直接子元素左缘集合对齐度量 + 逐个隐藏子元素/width:min-content 二分定位轨道真凶（CSSOM 遍历须查 `.cssRules.length`——CSSStyleRule.cssRules 恒为对象，空列表也是 truthy）；⑤**取证陷阱实录**：IAB goto() 走启发式缓存不强制再验证，资产改后必须 reload()——一轮抽屉「打不开」假异常即源于此；stats 首拍发虚为 5s 轮询入场中帧。终态：六页 docSW==clientWidth 零横滚、内容边缘统一 12..368、弹窗 390 全屏 sheet 零溢出、抽屉滑入+品牌版本可见、stats 卡 366 整；回归 **292→293** 全绿（T40w 新增：六处 grid 加固/移动端模板/抽屉 top52；T40g 同步）；主题还原 dark。纯资产刷新即见。
 
 **`v2.17.17`** — **🌈 hmg-admin 亮色身份光提强（反馈：白天的颜色太单调）**：v2.17.16 灰底白卡干净但素——白卡占视口七成，色只能从底缝/页头透出，而亮色 aura 还是 v2.17.14 按白画布定的 .075/.06/.07，落到灰画布上几不可感。①**亮色专属粉彩三元组**：六页 `--aura-*` 在亮色换「混白 40%」高亮度版（`:root[data-theme=light] body[data-page]` 六条覆盖，特异性压过亮色基座）——粉彩自身亮度高，alpha 提到 **.21/.165/.175**（约 2.8 倍）也不拉低画布亮度，直接复用暗色原色提强则会把 ink-subtle 跌破 4.5（数值否决实录）；WCAG 实测六页双峰值 ink-subtle ≥**4.55**；②斜光轴 .03→.09、底角辉光 .05→.14、html 角 .09/.07→.12/.10；③**网格靛调**：亮色双层网格从深灰线改 `rgba(94,106,210,.055/.028)`——灰底上的蓝图感；④**白卡微靛投影**：亮色 --shadow-card 第二层换 `rgba(94,106,210,.16)`，白卡在灰底上有一点点颜色身份（hover 同步微靛）。暗色零改动。回归 292/292 全绿（T40u/o/m/r 亮色锚点随提强同步，新增亮色粉彩表 2 锚点）；8660 实拍：model 顶部粉彩靛光带+靛网格+微靛投影、stats 青色身份分明——亮色六页「房间光」成立且白卡不脏；主题还原 dark。纯资产刷新即见。
 

@@ -2463,7 +2463,7 @@ def main():
                   'data-dim="paid"', "stat-mark", "stat-redzone", "gift_yesterday_leftover", "statCardEnsure",
                   "statRenderGrouped", "statRenderPaid", "_statLoadSeq", "HMG.poll.start",
                   "${HMG.avatar(x.m.id)}", 'title="${esc(x.m.id)}"',
-                  ".stat-group-body { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); }")), None)
+                  ".stat-group-body { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(min(290px, 100%), 1fr)); }")), None)
         check("T40h logs页业务接线(原因码全集含余量熔断/池筛选/增量刷新/序号守卫/5s轮询)",
               all(s in _pages40["logs"].text for s in ("provider_quota_exhausted", "fallback_switch_error", "peak_blocked",
                   "reasonChip", "formatDetail", "_logLoadSeq", "populateLogFilter", "HMG.poll.start",
@@ -2609,6 +2609,21 @@ def main():
                   'btn btn-ghost btn-sm danger-hover" onclick="delModel',
                   ".drag-handle { cursor: grab; color: var(--ink-tertiary); opacity: .3;"))
               and "btn btn-danger" not in _pages40["model"].text, None)
+        # v2.17.18 手机版体检：stats 整页横滚真凶 = grid 1fr 的 auto 最小值被卡内 nowrap 文本内在宽度顶爆轨道
+        # （实测 406.083px 轨道 > 366 容器 → 整页 418/390 可横晃）；全部 auto-fill 网格 min(…,100%) 加固 +
+        # 移动端模板 minmax(0,1fr)；抽屉 top 0→52px（品牌/版本块曾被顶栏整块盖住）
+        check("T40w 手机版体检(grid min加固×6/移动端minmax(0,1fr)×3/抽屉top52/keys加固)",
+              all(t in _pages40["stats"].text for t in (
+                  "repeat(auto-fill, minmax(min(290px, 100%), 1fr))",
+                  "{ grid-template-columns: minmax(0, 1fr); }"))
+              and ".stat-group-body { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(min(290px, 100%), 1fr)); }" in _pages40["stats"].text
+              and all(t in _hmgcss for t in (
+                  "repeat(auto-fill, minmax(min(280px, 100%), 1fr))",
+                  "repeat(auto-fill, minmax(min(240px, 100%), 1fr))",
+                  "  .grid, .grid-tight { grid-template-columns: minmax(0, 1fr); }",
+                  "#hmg-sidebar { width: 280px; top: 52px; transform: translateX(-103%); box-shadow: var(--shadow-pop); }"))
+              and "repeat(auto-fit, minmax(min(230px, 100%), 1fr))" in _pages40["keys"].text
+              and "  .key-grid { grid-template-columns: minmax(0, 1fr); }" in _pages40["keys"].text, None)
         # v2.17.14 背景每页身份色（背景单一反馈落地）：六页六组 --aura-* 三元组（body[data-page] 覆盖）+
         # 舷光/顶辉光/极光团/斜光轴全吃变量（alpha 全局统一：暗 .15/.12/.10、亮 .075/.06/.07）+
         # 网格提亮（暗 .05/.028、亮 .032/.016）+ 暗角加深 .46 + 底角辉光提亮；html::before 不吃 body 变量（不向上继承）
