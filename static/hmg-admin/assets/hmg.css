@@ -228,7 +228,11 @@ html.theming, html.theming * { transition: background-color .2s ease, color .2s 
 .badge svg { width: 12px; height: 12px; flex: none; }
 .ic-btn:hover { color: var(--ink); }
 
-.hmg-main { margin-left: 0; padding: 28px 32px 56px 244px; max-width: 1492px; animation: hmgIn .3s var(--ease-out) both; }
+/* v2.17.19：去掉 max-width:1492px。原上限把内容列钉死在 1492px（含 244 左侧留白，
+   视口一旦宽于该值右侧就只剩背景——1920 屏实测内容右缘 1460px、右侧 420px 空白
+   （≈1/5），用户报「全屏时右 1/5 有背景但组件不展示」。模型池/供应商这类整宽表格式
+   内容本就吃宽度（组内单列卡 + 池条目多列并排），1492 的上限没有任何收益，直接铺满。 */
+.hmg-main { margin-left: 0; padding: 28px 32px 56px 244px; animation: hmgIn .3s var(--ease-out) both; }
 .page-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
 .page-head h1 { font-size: 20px; letter-spacing: -.3px; }
 .page-head .sub { color: var(--ink-subtle); font-size: 13px; }
@@ -562,27 +566,47 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .stat-group-head .stat-sub { font-weight: 400; }
 .subcard { border: 1px dashed var(--hairline-strong); border-radius: var(--r-md); padding: 12px; background: transparent; }
 
-/* ── 10. 分组收纳区段（hmg.js grpWrapHtml 渲染的结构） ─────── */
+/* ── 10. 分组收纳区段（hmg.js grpWrapHtml 渲染的结构） ─────────────
+   v2.17.19 层级语言：组头是「区段栏」而不是卡片。
+   改前组头与成员卡同为 surface-1 + hairline + 圆角 + 投影，成员区只缩进 2px，
+   展开后组与成员读作并列（用户报「组与内部模型关联度较差、同等规模没体现从属」）。
+   改后三件事同时表达父子：①组头去卡面（无描边/无投影/弱底 + 左色条），视觉权重低于成员；
+   ②成员整体缩进 28px；③成员区左侧挂一条竖导轨，组头与成员被同一条线串起来。
+   折叠时体内 display:none，导轨随之消失，组头独立成一条窄栏。 */
 .grp-section { margin-bottom: 16px; }
 .grp-head {
-  display: flex; align-items: center; gap: 8px; padding: 8px 10px;
-  background: var(--surface-1); border: 1px solid var(--hairline); border-radius: var(--r-md);
-  cursor: pointer; font-size: 13px; user-select: none;
-  box-shadow: var(--edge);
+  display: flex; align-items: center; gap: 8px; padding: 6px 10px 6px 8px;
+  background: var(--wash); border: 1px solid transparent; border-left: 2px solid var(--hairline-strong);
+  border-radius: var(--r-sm);
+  cursor: pointer; font-size: 12.5px; user-select: none;
   transition: background-color var(--t1) ease, border-color var(--t1) ease;
 }
-.grp-head:hover { background: var(--surface-2); border-color: var(--hairline-strong); }
+.grp-head:hover { background: var(--surface-2); border-left-color: var(--accent); }
 .grp-caret { color: var(--ink-tertiary); font-size: 11px; transition: transform .18s var(--ease-out); }
 .grp-section.collapsed .grp-caret { transform: rotate(-90deg); }
 .grp-section.collapsed .grp-body { display: none; }
-.grp-name { font-weight: 500; }
+.grp-name { font-weight: 600; color: var(--ink); }
 .grp-count { color: var(--ink-tertiary); font-size: 12px; }
 .grp-x { margin-left: auto; width: 22px; height: 22px; border-radius: var(--r-xs); color: var(--ink-tertiary); font-size: 12px; transition: background-color var(--t1) ease, color var(--t1) ease, transform 160ms var(--ease-out); }
 .grp-x { position: relative; }
 .grp-x::before { content: ""; position: absolute; inset: -4px; border-radius: var(--r-xs); }  /* v2.17.13 命中区 22→30px */
 .grp-x:hover { background: var(--err-tint); color: var(--err-ink); }
 .grp-x:active { transform: scale(.92); }
-.grp-body { display: grid; gap: 12px; padding: 12px 2px 2px; }
+/* 成员区：缩进 + 竖导轨——从属关系的第二重信号（导轨把成员挂在组头之下）。
+   minmax(0,1fr)：不写列模板时隐式轨道按内容最大尺寸定档，成员卡内 nowrap 文本
+   （provider-head 的 min-width:220px + model-row 整行）的 min-content 393px 会把
+   轨道顶出容器——390 屏实测 scrollWidth 407px 横滚（本次缩进前既有，见 v2.17.18
+   漏网）。minmax(0,1fr) 令轨道可收缩到容器宽，与 .grid 同款教科书修法（v2.17.18）。 */
+.grp-body {
+  display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr);
+  margin-left: 10px; padding: 10px 0 2px 16px;
+  border-left: 2px solid var(--hairline-strong);
+  transition: border-color var(--t1) ease;
+}
+.grp-section:hover > .grp-body { border-left-color: var(--accent); }
+/* 未分组是兜底桶，不该和真分组抢注意力：弱化左色条与标题色 */
+.grp-ungrouped .grp-head { border-left-color: var(--hairline); }
+.grp-ungrouped .grp-name { color: var(--ink-subtle); font-weight: 500; }
 .grp-empty { color: var(--ink-tertiary); font-size: 12px; padding: 8px 4px; }
 .grp-mgmt-box { border: 1px solid var(--hairline); border-radius: var(--r-md); padding: 10px 12px; margin: 6px 0 10px; background: var(--surface-1); }
 .grp-mgmt-title { font-size: 12.5px; color: var(--ink-subtle); margin-bottom: 6px; }
@@ -836,4 +860,6 @@ body::after {
   .modal-body { flex: 1; }
   .modal-foot { padding-bottom: calc(13px + env(safe-area-inset-bottom)); }
   .toast { max-width: 92vw; }
+  /* v2.17.19：窄屏收窄组内缩进（28→16px，含 2px 导轨），层级信号保留但不让成员卡再窄一截 */
+  .grp-body { margin-left: 4px; padding: 8px 0 2px 10px; }
 }

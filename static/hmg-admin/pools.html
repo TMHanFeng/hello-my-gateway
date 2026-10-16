@@ -644,7 +644,7 @@ function bindPoolDrag() {
 
 /* ═══════════ 初始化 ═══════════ */
 HMG.grpReload = () => { loadPools(); };
-refreshPluginState().then(loadPools);
+gwGroupsBoot().finally(() => refreshPluginState().then(loadPools));   // v2.17.19 #54 对齐：此前本页漏调 gwGroupsBoot，分组只认 localStorage——换设备/换浏览器首开模型池看不到服务端已配的分组；与 model/index/hfadmin 三页一致先同步再首渲
 </script>
 </body>
 </html>
