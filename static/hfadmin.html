@@ -144,8 +144,8 @@ header {
 }
 .key-pill:hover { border-color: var(--line-hi); color: var(--text); transform: translateY(-1px); box-shadow: 0 3px 10px rgba(0, 0, 0, 0.08); }
 .key-pill:active { transform: scale(0.96); }
-.key-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--red); transition: background 200ms var(--ease-out); }
-.key-pill.has-key .key-dot { background: var(--green); box-shadow: 0 0 0 3px rgba(52, 199, 89, 0.18); }
+.key-dot { position: relative; width: 7px; height: 7px; border-radius: 50%; background: var(--red); transition: background 200ms var(--ease-out); }
+.key-pill.has-key .key-dot { background: var(--green); }
 
 /* ═══════════ 布局（大标题 + 大留白）═══════════ */
 main { max-width: 1240px; margin: 0 auto; padding: 40px 24px 90px; }
@@ -511,8 +511,9 @@ select { max-width: 100%; }
   .stat-card.full .stat-mark, .stat-card.warn .stat-fill, .stat-card.full .stat-fill::after { animation: none; }
 }
 .stat-bar { height: 6px; border-radius: 4px; background: rgba(120, 120, 128, 0.14); overflow: hidden; position: relative; }
-.stat-fill { height: 100%; width: 0; border-radius: 4px; transition: width 600ms var(--ease-out); background: var(--grad); animation: fillIn .6s var(--ease-out) backwards; transform-origin: left; }
-@keyframes fillIn { from { transform: scaleX(0); } }
+/* v2.17.22 动效线 C2：同 index.html——删掉与 transition:width 并行的 scaleX 第二路径，
+   两条 ease-out 叠乘出来的前段不是设计曲线。width 是本文件唯一的进度通道。 */
+.stat-fill { height: 100%; width: 0; border-radius: 4px; transition: width 600ms var(--ease-out); background: var(--grad); }
 .stat-card.warn .stat-fill { background: linear-gradient(90deg, #ff9f0a, #ff6b22); }
 .stat-card.full .stat-fill { background: linear-gradient(90deg, #ff3b30, #ff6482); }
 .stat-meta { display: flex; justify-content: space-between; margin-top: 8px; font-size: 11.5px; color: var(--muted); }
@@ -791,8 +792,18 @@ select { max-width: 100%; }
 }
 /* 品牌小细节：logo 渐变字 + 登录状态点呼吸 */
 .logo-mark { background: linear-gradient(135deg, #0071e3 10%, #5e5ce6 55%, #af52de 95%); -webkit-background-clip: text; background-clip: text; color: transparent; }
-.key-dot { animation: keyPulse 2.6s var(--ease-in-out) infinite; }
-@keyframes keyPulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(52, 199, 89, 0.35); } 50% { box-shadow: 0 0 0 5px rgba(52, 199, 89, 0); } }
+/* v2.17.22 动效线 M1 + 顺带修语义 bug：
+   ①性能——box-shadow 属 motion-design 性能表 Avoid 档，keyPulse 原是 2.6s 无休止逐帧重绘；
+     改用伪元素 + transform/scale，只动合成层。
+   ②语义（评审未发现）——原 keyPulse 无条件挂在 .key-dot 上，而 .key-dot 背景靠 #key-pill.has-key
+     在红/绿之间切换：**未登录的红点同样在泛绿色光晕**，动画的 box-shadow 还盖掉了 .has-key 上
+     原本的静态环。现把动画收敛到 .has-key 才有，未登录红点保持纯红不再泛绿。 */
+.key-pill.has-key .key-dot::after {
+  content: ''; position: absolute; inset: 0; border-radius: 50%;
+  background: rgba(52, 199, 89, .35);
+  animation: keyPulse 2.6s var(--ease-in-out) infinite;
+}
+@keyframes keyPulse { 0%, 100% { transform: scale(1); opacity: .5; } 50% { transform: scale(2.2); opacity: 0; } }
 /* 细滚动条（浅色） */
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.14); border-radius: 8px; border: 3px solid transparent; background-clip: content-box; }
@@ -2498,7 +2509,7 @@ document.querySelectorAll('.threshold-ctl').forEach(ctl => {
 function poolItemHTML(name, id, i, animate = true) {
   const isPoolRef = id.startsWith('pool:');
   return `
-  <div class="pool-item" draggable="true" data-id="${esc(id)}"${animate ? ` style="animation:cardIn 280ms var(--ease-out) ${i * 35}ms backwards"` : ''}>
+  <div class="pool-item" draggable="true" data-id="${esc(id)}"${animate ? ` style="animation:cardIn 280ms var(--ease-out) ${Math.min(i * 35, 400)}ms backwards"` : ''}>
     <span class="drag" title="拖拽排序">⠿</span>
     <span class="pi-id">${esc(id)}</span>
     <span class="pi-tags">

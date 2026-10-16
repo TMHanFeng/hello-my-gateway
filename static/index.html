@@ -153,7 +153,12 @@ body {
 .theme-switch .ts-opt { font-size:12px; color:var(--muted); }
 .theme-switch .ts-opt.ts-on { color:var(--text); font-weight:600; }
 .theme-switch .ts-track { width:38px; height:20px; border-radius:10px; background:rgba(255,255,255,.16); position:relative; display:inline-block; }
-.theme-switch .ts-thumb { position:absolute; left:2px; top:2px; width:16px; height:16px; border-radius:50%; background:var(--amber); transition:left .2s; }
+/* v2.17.22 动效线 H2-a 复核：评审建议把 transition:left 改 translateX + :checked，
+   但本文件的 ts-thumb **没有任何状态机制**——它是 <span class="ts-track" onclick="location.href='/hfadmin/'">里的
+   纯装饰子元素，全仓仅 left:2px 一条规则，从未被移动过。那条 transition 是死代码而非
+   「用布局属性做过渡」，照建议加 :checked 等于凭空造一个不存在的开关。
+   此处只删掉误导性的死声明；真要让滑块动，须先有勾选状态，那是功能不是动效。 */
+.theme-switch .ts-thumb { position:absolute; left:2px; top:2px; width:16px; height:16px; border-radius:50%; background:var(--amber); }
 .b-free { background: var(--teal-dim); color: var(--teal); border: 1px solid rgba(45,212,191,.3); }
 .b-paid { background: var(--red-dim); color: var(--red); border: 1px solid rgba(248,113,113,.3); }
 .b-vision { background: rgba(56,189,248,.12); color: #38bdf8; border: 1px solid rgba(56,189,248,.3); }
@@ -189,7 +194,10 @@ body {
 /* ── 按钮 ── */
 .btn {
   padding: 7px 14px; border-radius: 6px; border: 1px solid transparent; cursor: pointer;
-  font-size: 13px; font-family: var(--sans); transition: all .16s ease; line-height: 1;
+  /* v2.17.22 动效线 H3：展开 all 为实际变化集——btn-amber:hover 动 background+box-shadow、
+     btn-ghost:hover 动 color+border-color、btn-red:hover 动 background、:active 动 transform */
+  font-size: 13px; font-family: var(--sans); line-height: 1;
+  transition: background-color .16s ease, color .16s ease, border-color .16s ease, box-shadow .16s ease, transform .16s ease;
 }
 .btn:active { transform: scale(.96); }
 .btn-amber { background: var(--amber); color: #1a1206; font-weight: 600; }
@@ -214,7 +222,8 @@ body {
 .arrows button {
   width: 26px; height: 26px; border-radius: 5px; border: 1px solid var(--line-hi);
   background: var(--panel); color: var(--muted); cursor: pointer; font-size: 13px;
-  transition: all .14s;
+  /* v2.17.22 动效线 H3：hover 只动 color / border-color / background 三项 */
+  transition: color .14s, border-color .14s, background-color .14s;
 }
 .arrows button:hover { color: var(--amber); border-color: var(--amber); background: var(--amber-dim); }
 
@@ -230,7 +239,8 @@ body {
   width: 18px; height: 18px; border-radius: 50%; border: 1px solid var(--line-hi);
   color: var(--muted); font-size: 11px; font-family: var(--mono); font-style: italic;
   display: inline-flex; align-items: center; justify-content: center; cursor: help;
-  transition: all .15s;
+  /* v2.17.22 动效线 H3：hover 只动 color / border-color / background 三项 */
+  transition: color .15s, border-color .15s, background-color .15s;
 }
 .info-wrap:hover .info-dot { color: var(--amber); border-color: var(--amber); background: var(--amber-dim); }
 .info-tip {
@@ -250,7 +260,8 @@ body {
 .lat-mid { background: var(--amber-dim); color: var(--amber); }
 .lat-slow { background: var(--red-dim); color: var(--red); }
 
-.remove-x { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 14px; padding: 2px 6px; border-radius: 4px; transition: all .14s; }
+/* v2.17.22 动效线 H3：hover 只动 color / background 两项 */
+.remove-x { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 14px; padding: 2px 6px; border-radius: 4px; transition: color .14s, background-color .14s; }
 .remove-x:hover { color: var(--red); background: var(--red-dim); }
 .add-model-row { display: flex; gap: 8px; margin-top: 10px; }
 .add-model-row select { flex: 1; padding: 7px 10px; border-radius: 6px; border: 1px solid var(--line-hi); background: var(--bg); color: var(--text); font-size: 12.5px; font-family: var(--mono); }
@@ -331,8 +342,11 @@ body {
 .stat-fill { z-index: 2; }
 .stat-limit-note { font-size: 10.5px; color: var(--muted); font-family: var(--mono); opacity: .85; }
 .stat-bar { height: 9px; background: var(--panel-2); border-radius: 5px; overflow: hidden; position: relative; }
-.stat-fill { height: 100%; width: 0; border-radius: 5px; background: linear-gradient(90deg, var(--teal), #5eead4); transition: width .8s cubic-bezier(.22,1,.36,1); position: relative; animation: fillIn .8s cubic-bezier(.22,1,.36,1) backwards; transform-origin: left; }
-@keyframes fillIn { from { transform: scaleX(0); } }
+/* v2.17.22 动效线 C2（motion-design skill 性能表：width=Poor 触发布局，但此处 width 是唯一进度通道，
+   要删的是并行的第二条路径）：原写法同时挂 `transition: width` 与 `animation: fillIn`(scaleX)，
+   可见宽度 = width(t) × scaleX(t)，两条 ease-out 叠乘后前段快得不是设计出来的曲线。
+   只留 width 一条——JS 侧本来就是双 rAF 后设 f.style.width 触发过渡，不依赖 fillIn，视觉无损。 */
+.stat-fill { height: 100%; width: 0; border-radius: 5px; background: linear-gradient(90deg, var(--teal), #5eead4); transition: width .8s cubic-bezier(.22,1,.36,1); position: relative; }
 .stat-fill::after { content: ''; position: absolute; inset: 0; background: linear-gradient(90deg, transparent, rgba(255,255,255,.25), transparent); transform: translateX(-100%); animation: sheen 2.6s ease-in-out infinite; }
 @keyframes sheen { 0%{transform:translateX(-100%)} 60%,100%{transform:translateX(100%)} }
 .stat-card.warn .stat-fill { background: linear-gradient(90deg, var(--amber), #fcd34d); }
@@ -378,6 +392,13 @@ body {
 .overlay { display: none; position: fixed; inset: 0; background: rgba(5,9,16,.7); z-index: 100; justify-content: center; align-items: flex-start; padding-top: 6vh; }
 .overlay.show { display: flex; animation: fade .18s ease; }
 @keyframes fade { from { opacity: 0; } }
+/* v2.17.22 动效线 M2：退场 150ms（入场 220ms 的 68%，skill 要求 65-75%），ease-in 加速离场。
+   选择器用 .overlay.show.closing（0,3,0）压过 .overlay.show（0,2,0）——退场期间两个类同时在身，
+   与声明顺序无关。 */
+.overlay.show.closing { animation: fadeOut .15s ease-in forwards; }
+.overlay.show.closing .modal { animation: popOut .15s ease-in forwards; }
+@keyframes fadeOut { to { opacity: 0; } }
+@keyframes popOut { to { opacity: 0; transform: translateY(10px) scale(.98); } }
 .modal {
   background: var(--panel); border: 1px solid var(--line-hi); border-radius: 10px;
   padding: 26px; width: 800px; max-width: calc(100vw - 32px); max-height: 84vh; overflow-y: auto;
@@ -567,6 +588,17 @@ body {
   .pc-desc{-webkit-line-clamp:99}
   .overlay .modal{width:calc(100vw - 16px)!important;max-width:none!important;max-height:88vh;overflow:auto}
   .pc-row{flex-wrap:wrap}
+}
+/* ── v2.17.22 动效线 C1（motion-design skill 无障碍 HIGH）──
+   本文件此前零 prefers-reduced-motion 兜底，而 hfadmin.html:713 与 hmg.css 早已有——
+   历史遗留不同步，不是没意识到。两处 infinite 循环（ping 1.8s 状态点扩散 / sheen 2.6s 扫光）
+   对前庭功能障碍用户是持续刺激。照抄 hfadmin 的写法，另加两条收尾：装饰扫光在
+   duration=.01ms 下会闪一帧后停在 translateX(-100%) 初始位，不如直接 animation:none 干净；
+   进度条 width 过渡直接归 0（与 hmg.css:841 的 .bar > i 同款处理）。 */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+  .dot::after, .stat-fill::after { animation: none !important; }
+  .stat-fill { transition: width 0s !important; }
 }
 </style>
 </head>
@@ -2150,7 +2182,7 @@ async function openFallbackTargets() {
       </label>`;
     }).join('');
   list.innerHTML = rows || '<div class="hint">暂无其他池</div>';
-  document.getElementById('overlay-fallback-targets').classList.add('show');
+  openModal('overlay-fallback-targets');
 }
 async function saveFallbackTargets() {
   const checked = [...document.querySelectorAll('#fallback-target-list input[type=checkbox]:checked')].map(el => el.value);
@@ -3206,7 +3238,7 @@ function showGiftCalibrate() {
   ['cal-yesterday', 'cal-grant', 'cal-usage'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
   document.getElementById('gift-cal-status').textContent = '正在读取当前值…';
   fillGiftCalibrate();
-  document.getElementById('overlay-giftcal').classList.add('show');
+  openModal('overlay-giftcal');
 }
 async function fillGiftCalibrate() {
   const d = await api('/stats');
@@ -3245,7 +3277,7 @@ function showAdd() {
   renderReasoningStrip(null);
   populateProviderSelect('').then(() => { onBillingChange(); onProviderSelect(); });
   onIsFreeChange(); onModalityChange(); onSmartToggle();   // onIsFreeChange 内部已调 onTokenTypeChange
-  document.getElementById('overlay').classList.add('show');
+  openModal('overlay');
 }
 
 async function showAddUnder(pid) {
@@ -3259,7 +3291,7 @@ async function showAddUnder(pid) {
   await populateProviderSelect(pid);
   document.getElementById('f-model-id').placeholder = '例如: glm-4.7-flash（供应商将自动前缀）';
   onBillingChange(); onProviderSelect(); onIsFreeChange(); onModalityChange(); onSmartToggle();
-  document.getElementById('overlay').classList.add('show');
+  openModal('overlay');
 }
 
 async function populateProviderSelect(selected) {
@@ -3342,7 +3374,7 @@ function showAddProvider() {
   document.getElementById('prov-id').disabled = false;
   const _pqs = document.getElementById('pqq-section'); if (_pqs) _pqs.style.display = 'none';  // 新增态不可绑余量（v2.22.6）
   provJoinGroupRender();
-  document.getElementById('prov-overlay').classList.add('show');
+  openModal('prov-overlay');
 }
 
 // 代理输入框状态联动：有值才启用测试按钮
@@ -3397,10 +3429,10 @@ async function editProvider(id) {
   if (_pbt2) { _pbt2.textContent = ''; _pbt2.className = 'th-hint'; }
   document.getElementById('prov-id').disabled = true;
   pqFillEditSection(id);  // 🔋 余量监控区回填（v2.22.6，异步不阻塞弹窗打开）
-  document.getElementById('prov-overlay').classList.add('show');
+  openModal('prov-overlay');
 }
 
-function closeProvModal() { document.getElementById('prov-overlay').classList.remove('show'); }
+function closeProvModal() { closeModalEl(document.getElementById('prov-overlay')); }
 
 /* #56 添加供应商时可选加入分组：仅分组收纳启用时显示下拉（不加入/现有分组/新建） */
 function provJoinGroupRender() {
@@ -3543,10 +3575,32 @@ async function editModel(id) {
   onModalityChange();
   reasoningTouched = false;
   renderReasoningStrip(id);
-  document.getElementById('overlay').classList.add('show');
+  openModal('overlay');
 }
 
-function closeModal(id) { document.getElementById(id || 'overlay').classList.remove('show'); }
+/* v2.17.22 动效线 M2：弹窗补退场动画。
+   原来 .overlay 靠 display:none/flex 切换，**退场动画为 0**；motion-design 要求「入场比退场长
+   30-50%」，且 skill 时长表给 Modal/dialog 300-400ms（现入场 220ms 偏快——弹窗是空间关系变化，
+   需要更长时间让用户看清它从哪来）。
+   做法：保留 display 切换（若改成 visibility，.modal 的 pop 入场动画每次打开就不再重放），
+   关闭时先加 .closing 播 150ms 退场，到位再摘 .show。150ms = 入场 220ms 的 68%，
+   落在 skill「退场 = 入场的 65-75%」区间内；退场用 ease-in（skill 方向性规则：入场减速/退场加速）。
+   开/关收敛为 openModal/closeModalEl 一对，_closeTimer 防止「关完 150ms 内又打开」被旧定时器误关。 */
+function openModal(id) {
+  var el = document.getElementById(id); if (!el) return;
+  if (el._closeTimer) { clearTimeout(el._closeTimer); el._closeTimer = null; }
+  el.classList.remove('closing');
+  el.classList.add('show');
+}
+function closeModalEl(el) {
+  if (!el) return;
+  if (el._closeTimer) clearTimeout(el._closeTimer);
+  el.classList.add('closing');
+  el._closeTimer = setTimeout(function () {
+    el.classList.remove('show'); el.classList.remove('closing'); el._closeTimer = null;
+  }, 150);
+}
+function closeModal(id) { closeModalEl(document.getElementById(id || 'overlay')); }
 
 async function submitModel(e) {
   e.preventDefault();
@@ -3843,7 +3897,7 @@ async function showAddKey() {
   await loadKeyPools();
   renderPoolCheckboxes([]);
   onKeyTypeChange();
-  document.getElementById('overlay-key').classList.add('show');
+  openModal('overlay-key');
 }
 async function showEditKey(id) {
   const data = await api('/admin/keys');
@@ -3864,7 +3918,7 @@ async function showEditKey(id) {
   await loadKeyPools();
   renderPoolCheckboxes(k.type === 'admin' ? [] : (k.allowed_pools || []));
   onKeyTypeChange();
-  document.getElementById('overlay-key').classList.add('show');
+  openModal('overlay-key');
   loadKeyOwnPool();
 }
 function onKeyTypeChange() {
@@ -3873,7 +3927,7 @@ function onKeyTypeChange() {
   const isEdit = editingKeyId !== null;
   document.getElementById('k-own-pool-fields').classList.toggle('hidden', !(isEdit && isUser));
 }
-function closeKeyModal() { document.getElementById('overlay-key').classList.remove('show'); }
+function closeKeyModal() { closeModalEl(document.getElementById('overlay-key')); }
 async function loadKeyOwnPool() {
   const st = document.getElementById('k-own-pool-status');
   st.innerHTML = '加载中...';
@@ -3986,10 +4040,10 @@ async function showKeyUsage(id) {
   usageKeyId = id;
   usageDate = null;
   document.getElementById('usage-key-title').textContent = (id === 0 ? '管理员（服务器密钥）' : 'API Key #' + id) + ' · 用量历史（' + (USAGE_RANGES[usageRange] || USAGE_RANGES['24h']).title + '）';
-  document.getElementById('overlay-usage').classList.add('show');
+  openModal('overlay-usage');
   loadKeyUsage();
 }
-function closeKeyUsage() { document.getElementById('overlay-usage').classList.remove('show'); }
+function closeKeyUsage() { closeModalEl(document.getElementById('overlay-usage')); }
 /* #50 统计页「🪴 节省统计」入口显隐：headroom 插件停用（GET /admin/headroom enabled=false）时隐藏。
    一次请求缓存结果，不重复请求；接口异常保持显示（防 API 故障误藏功能）；保存设置后强制刷新 */
 let __hrStatsOn = null;   // null=未探测（默认显示）
@@ -4044,7 +4098,7 @@ async function showHeadroomStats() {
         '<td style="padding:4px 6px;text-align:right" class="mono">' + (r.latency_ms || 0).toFixed(0) + 'ms</td></tr>';
     }).join('') +
     '</tbody></table></div>' : '';
-  document.getElementById('overlay-hrstats').classList.add('show');
+  openModal('overlay-hrstats');
 }
 /* Headroom 门控：总开关关闭时模型编辑里的勾选框置灰不可勾（服务端每请求仍按总开关判定，双保险） */
 let hrMasterEnabled = false;
@@ -4289,7 +4343,7 @@ async function refreshPluginState() {
   (d.plugins || []).forEach(p => { PC_STATE[p.id] = !!p.enabled; });
   pcApplyState();
 }
-function pcOpen(id) { document.getElementById(id).classList.add('show'); }
+function pcOpen(id) { openModal(id); }
 async function loadPluginCenter() {
   const d = await api('/admin/plugins');
   if (!d) return;
