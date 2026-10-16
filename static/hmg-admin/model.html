@@ -49,7 +49,13 @@
 }
 /* v2.17.12：ID/名称单行截断（title 保全量）——此前 overflow-wrap:anywhere 让长名折行，把同行徽章挤到参差不齐；改为文字先收缩，徽章起始 y 恒一致 */
 .model-row .model-id { font-weight: 400; font-size: 12px; color: var(--ink-tertiary); flex: 0 1 auto; min-width: 48px; max-width: 340px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }  /* v2.17.15（§20 P2-3）：22 字符 mono 退到第三级，模型名当主角 */
-.model-row .model-name { color: var(--ink-subtle); font-size: 12.5px; flex: 0 1 auto; min-width: 36px; max-width: 260px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.model-row .model-name { color: var(--ink); font-size: 13px; font-weight: 500; flex: 0 1 auto; min-width: 36px; max-width: 260px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* v2.17.21：模型名升为行内主角——v2.17.15 P2-3 的原意是「22 字符 ID 退第三级、模型名当主角」，
+     但实现把两者一起降级了（name 用 ink-subtle、id 用 ink-tertiary），实测主信息只有正文的三
+     分之一到二分之一：暗色 name 6.47 / 正文 13.46，亮色 6.40 / 17.91；暗色下自带底色与边框的
+     「免费」徽章 10.08 反而比模型名 6.47 还显眼一倍——主信息被自己的徽章压过去。
+     现 name 回到 --ink 并 13px/500（CR 回到正文基准），ID 维持 tertiary 不动（T40v 锚点钉死该值），
+     与供应商名 15px/600 形成 15/600 › 13/500 › 12/400 的三级阶梯。 */
 .m-actions { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; }
 .sp-ok { color: var(--ok-ink); } .sp-mid { color: var(--warn-ink); } .sp-slow { color: var(--err-ink); }
 /* 余量内联（供应商卡头部协议徽章右侧） */
