@@ -612,7 +612,8 @@ function bindPoolDrag() {
         return;
       }
       if (sec) {
-        const body = sec.querySelector(".grp-body");
+        // v2.17.20：同 model.html——收放动画的内层容器才是落点
+        const body = sec.querySelector(".grp-inner");
         if (body && body !== dragged.parentNode)
           HMG.flipMove(list, "[data-pool-card]", () => body.appendChild(dragged));
       }

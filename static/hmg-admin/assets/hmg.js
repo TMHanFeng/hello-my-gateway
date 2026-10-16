@@ -556,7 +556,7 @@ function grpWrapHtml(kind, items) {
         <span class="grp-count">${(g.members || []).length}</span>
         <button class="grp-x" title="删除分组（成员回到未分组）" onclick="event.stopPropagation();grpDelGroup('${kind}','${HMG.esc(g.id)}')">✕</button>
       </div>
-      <div class="grp-body">${members || '<div class="grp-empty">把卡片拖进来，或点卡片上的「归组」按钮</div>'}</div>
+      <div class="grp-body"><div class="grp-inner">${members || '<div class="grp-empty">把卡片拖进来，或点卡片上的「归组」按钮</div>'}</div></div>
     </div>`;
   });
   const restItems = items.filter(i => !inGroup.has(i.id));
@@ -567,7 +567,7 @@ function grpWrapHtml(kind, items) {
         <span class="grp-name">未分组</span>
         <span class="grp-count">${restItems.length}</span>
       </div>
-      <div class="grp-body">${restItems.map(i => i.html).join("") || '<div class="grp-empty">全部已归组</div>'}</div>
+      <div class="grp-body"><div class="grp-inner">${restItems.map(i => i.html).join("") || '<div class="grp-empty">全部已归组</div>'}</div></div>
     </div>`;
   return out;
 }

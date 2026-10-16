@@ -1090,7 +1090,9 @@ function bindProviderDrag() {
         return;
       }
       if (sec) {
-        const body = sec.querySelector(".grp-body");
+        // v2.17.20：收放动画把成员包进 .grp-inner（.grp-body 只开一条行做 0fr 高度过渡），
+        // 落点随之指向内层；grpSyncFromDOM 用 sec.querySelectorAll 枚举，不受影响。
+        const body = sec.querySelector(".grp-inner");
         if (body && body !== dragged.parentNode)
           HMG.flipMove(list, ".provider-card[draggable]", () => body.appendChild(dragged));
       }
