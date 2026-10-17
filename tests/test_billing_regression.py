@@ -2712,6 +2712,24 @@ def main():
         check("T41c 池删除后分组成员表剔除悬空引用",
               _m is not None and "zzgrp2" not in _m and "zzsw" in _m, _m)
 
+        # ===== T42（v2.17.24）：分组头不再直出删除钮，删除只走分组管理 =====
+        # 防误删：分组头的 ✕ 与组名/计数挤在一行，点错一下就没了整组归组；而删除是
+        # 低频高损操作。三面板（hmg.js / index.html / hfadmin.html）同步收敛。
+        # 本组两向断言：①分组头模板里不得再出现删除钮（grpDelGroup 的**调用**）；
+        #               ②grpDelGroup 函数与 grpMgmtDelete 必须仍在——分组管理要用，
+        #                 防止"把 A 挪到 B"的改动顺手把功能一起删了。
+        # 注意 T42a 只能判"调用"不能判"标识符存在"：函数定义必须保留（T42b 要求），
+        # 首版误写 `grpDelGroup not in src` 与 T42b 自相矛盾，套件直接把它判红。
+        _grp42 = {"static/hmg-admin/assets/hmg.js": _hmgjs,
+                  "static/index.html": _idx,
+                  "static/hfadmin.html": _hf}
+        check("T42a 三面板分组头模板均不再直出删除钮",
+              all("grpDelGroup('${kind}'" not in src for src in _grp42.values())
+              and all('class="grp-x" title="删除分组' not in src for src in _grp42.values()), None)
+        check("T42b 分组管理删除入口仍在(三面板 grpMgmtDelete + grpDelGroup 函数)",
+              all("grpMgmtDelete" in src for src in _grp42.values())
+              and all("function grpDelGroup" in src for src in _grp42.values()), None)
+
     finally:
         try:
             deep_clean()

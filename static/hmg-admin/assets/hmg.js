@@ -554,7 +554,9 @@ function grpWrapHtml(kind, items) {
         <span class="side-ic" style="margin-right:-2px">${HMG_ICONS.folder}</span>
         <span class="grp-name" ondblclick="event.stopPropagation();grpRename('${kind}','${HMG.esc(g.id)}')" title="双击重命名">${HMG.esc(g.name)}</span>
         <span class="grp-count">${(g.members || []).length}</span>
-        <button class="grp-x" title="删除分组（成员回到未分组）" onclick="event.stopPropagation();grpDelGroup('${kind}','${HMG.esc(g.id)}')">✕</button>
+        <!-- v2.17.24：分组头不再直出删除钮——误删只需点错一下，而删除是低频高损操作。
+             统一收敛到「分组」设置弹窗的分组管理里（grpMgmtDelete，带确认）。
+             .grp-x 样式保留：它是通用原子，且 T40t 锚点钉着 ::before 命中区规则。 -->
       </div>
       <div class="grp-body"><div class="grp-inner">${members || '<div class="grp-empty">把卡片拖进来，或点卡片上的「归组」按钮</div>'}</div></div>
     </div>`;

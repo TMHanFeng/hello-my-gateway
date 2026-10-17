@@ -2962,7 +2962,7 @@ function grpWrapHtml(kind, items) {
         <span class="grp-caret">▼</span>
         <span class="grp-name" ondblclick="event.stopPropagation();grpRename('${kind}','${esc(g.id)}')" title="双击重命名">📂 ${esc(g.name)}</span>
         <span class="grp-count">${(g.members || []).length}</span>
-        <button class="grp-x" title="删除分组（成员回到未分组）" onclick="event.stopPropagation();grpDelGroup('${kind}','${esc(g.id)}')">✕</button>
+        <!-- v2.17.24：分组头不再直出删除钮（防误删），删除统一收敛到「分组」设置弹窗的分组管理 -->
       </div>
       <div class="grp-body">${members || '<div class="grp-empty">把卡片拖进来，或点卡片上的 📂 归组</div>'}</div>
     </div>`;
