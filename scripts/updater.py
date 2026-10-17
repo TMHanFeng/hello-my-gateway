@@ -40,7 +40,9 @@ RESTART_COOLDOWN = 30        # 重启冷却期（秒）
 FAIL_THRESHOLD = 3           # 连续失败次数阈值
 REQUEST_TIMEOUT = 5          # HTTP 请求超时（秒）
 TAILSCALE_CHECK_INTERVAL = 60 # Tailscale 状态检查间隔
-GIT_PULL_INTERVAL = 300      # 代码拉取间隔（秒），5分钟
+GIT_PULL_INTERVAL = 1800     # 代码拉取间隔（秒），30分钟
+VERSION_FETCH_TIMEOUT = 30   # 取版本号时 git fetch 的预算（秒）。fetch 要传对象，比只取 ref 的
+                             # ls-remote 慢；曾用 15/20s 卡着，网络一抖就把该远程判成「版本号取不到」
 
 # Tailscale 保活
 TAILSCALED_SERVICE = "tailscaled"  # tailscaled systemd 服务名
@@ -723,32 +725,46 @@ def get_gateway_running_version() -> dict:
 
 
 def get_remote_latest_tag(remote: str, timeout: int = 30) -> str | None:
-    """获取远程最高的语义化版本 tag，远程不存在/不可达时返回 None。
-    timeout: 超时秒数（默认30，GitHub可设120）"""
+    """获取该远程 **main 提交链上** 最高的语义化版本 tag，取不到返回 None。
+
+    **只认 main 上的 tag。** 先把该远程的 main 与 tags 取到本地，再用
+    `git tag --merged <remote>/main` 过滤掉不在 main 提交链上的 tag。
+
+    旧实现是 `git ls-remote --tags` 列出全部 tag 再取版本号最高者，于是废弃分支上的
+    tag（例如不在 main 提交链上的 v2.22.14）会被当成「最新版」；而更新执行侧拉的是 main，
+    那份代码永远拉不到，判定与执行就此永久背离——每轮判定都有更新、每轮都停机重启。
+
+    注意「废弃分支的版本号更高」这种撞车随时可能再发生（换个分支继续开发即可），
+    所以这里从源头过滤，而不是指望远端没有多余的 tag。
+
+    取不到（网络失败 / 无 main / 无版本 tag）返回 None → 本轮不更新。
+    """
     try:
-        result = subprocess.run(
-            ["git", "ls-remote", "--tags", remote],
-            capture_output=True, text=True, timeout=timeout,
+        # fetch 要传对象，预算不能沿用只取 ref 时的 15/20s
+        fetch = subprocess.run(
+            ["git", "fetch", remote, "--quiet", "--tags"],
+            capture_output=True, text=True, timeout=max(timeout, VERSION_FETCH_TIMEOUT),
+            cwd=str(REPO_DIR),
+        )
+        if fetch.returncode != 0:
+            log.error(f"获取远程 {remote} main/tags 失败: {(fetch.stderr or '').strip()[:160]}")
+            return None
+        result = subprocess.run(   # 纯本地过滤，不再走网络
+            ["git", "tag", "--merged", f"{remote}/main", "--list"],
+            capture_output=True, text=True, timeout=15,
             cwd=str(REPO_DIR),
         )
         if result.returncode != 0:
+            log.error(f"列出 {remote}/main 上的 tag 失败: {(result.stderr or '').strip()[:160]}")
             return None
         best_tag, best_ver = None, None
-        fallback_tags = []
-        for line in result.stdout.strip().split("\n"):
-            parts = line.strip().split()
-            if len(parts) < 2 or "^{}" in parts[1]:
-                continue
-            tag = parts[1].rsplit("/", 1)[-1]
-            fallback_tags.append(tag)
+        for tag in result.stdout.split():
             ver = parse_version(tag)
-            if ver is None:
+            if ver is None:      # 非语义化版本号的 tag（如误打的占位 tag）直接忽略
                 continue
             if best_ver is None or ver > best_ver:
                 best_ver, best_tag = ver, tag
-        if best_tag:
-            return best_tag
-        return max(fallback_tags) if fallback_tags else None
+        return best_tag
     except Exception as e:
         log.error(f"获取远程 {remote} tag 失败: {e}")
         return None
@@ -773,18 +789,25 @@ def get_remote_versions(github_timeout: int = 20, gitee_timeout: int = 15, resul
 
     t1 = threading.Thread(target=_g, daemon=True); t1.start()
     t2 = threading.Thread(target=_h, daemon=True); t2.start()
-    t1.join(gitee_timeout + 2)
-    t2.join(github_timeout + 2)
+    t1.join(gitee_timeout + VERSION_FETCH_TIMEOUT + 2)
+    t2.join(github_timeout + VERSION_FETCH_TIMEOUT + 2)
     return result
 
 
 def pick_latest_version(versions: dict) -> tuple[str, str]:
-    """选出有效最新版本（github 优先），返回 (远程名, 版本号)，都拿不到返回 ("", "")"""
-    if versions.get("github"):
-        return "github", versions["github"]
-    if versions.get("gitee"):
-        return "origin", versions["gitee"]
-    return "", ""
+    """选出有效最新版本（**按版本号取最高**，同版本号时 github 优先），返回 (远程名, 版本号)。
+
+    旧实现是「只要 github 有 tag 就直接用 github 的」，哪怕 gitee 上版本号更高也会被跳过——
+    那样会出现「判定用的版本」和「实际能拉到的版本」不是同一个，漏更新。"""
+    best = None  # (排序键, 版本号, 远程名)
+    for remote, key in (("github", "github"), ("origin", "gitee")):
+        tag = versions.get(key)
+        if not tag:
+            continue
+        cand = ((parse_version(tag) or (0,), tag, remote == "github"), tag, remote)
+        if best is None or cand[0] > best[0]:
+            best = cand
+    return (best[2], best[1]) if best else ("", "")
 
 
 def get_remote_branch_commit(remote: str) -> str | None:
@@ -877,8 +900,18 @@ def git_pull(remote: str = "origin", branch: str = "") -> tuple[bool, str, str]:
 
 
 def has_updates_available(versions: dict | None = None, gw: dict | None = None) -> tuple[bool, str, str]:
-    """检查是否有可用更新（基于版本号判断，github 优先；无 tag 时回退 commit 比较）。
-    current 优先取"正在运行的网关"的真实版本（/version），网关不可达时回退本地 git 版本。"""
+    """检查是否有可用更新——**只看版本号（tag），不看 commit 哈希**。
+
+    判定：取 gitee / github 两边 tag 中版本号更高的 latest；latest > 当前版本即「有更新」，
+    单边领先同样触发。当前版本已等于 latest 时不更新；本地比两边都新时也不更新。
+
+    哈希只作参考信息（仪表盘/日志展示），不参与判定。原因是 tag 与分支可以永久背离：
+    某个 tag 指向不在 main 提交链上的 commit 时，远端哈希永远追不上版本号，
+    拿哈希判定会得出与版本号相反的结论。
+
+    两边版本号都取不到时本轮不更新：没有版本号就没有判断依据，宁可等下一轮，
+    也不凭残缺信息走一次完整的「停机-拉取-重启」。
+    """
     if versions is None:
         versions = get_remote_versions()
     if gw is None:
@@ -887,53 +920,27 @@ def has_updates_available(versions: dict | None = None, gw: dict | None = None) 
         current_ver = gw["version"]
     else:
         current_ver = get_current_version()
-    _, latest = pick_latest_version(versions)
 
-    if latest:
-        cur_parsed = parse_version(current_ver)
-        lat_parsed = parse_version(latest)
-        if cur_parsed is not None and lat_parsed is not None:
-            return lat_parsed > cur_parsed, current_ver, latest
-        return latest != current_ver, current_ver, latest
+    _source, latest = pick_latest_version(versions)
+    if not latest:
+        log.debug(f"⚠️ 两边版本号都没取到（gitee={versions.get('gitee')} / github={versions.get('github')}），本轮不更新")
+        return False, current_ver, current_ver
 
-    # 两个远程都拿不到版本 tag，回退 commit 比较
-    current = get_current_commit()
-    if not current:
-        return False, "unknown", "unknown"
-
-    # 任一远程有新代码即视为有更新
-    latest_github = get_latest_commit("github")
-    if latest_github and latest_github != current:
-        return True, current[:8], latest_github[:8]
-    latest_gitee = get_latest_commit("origin")
-    if latest_gitee and latest_gitee != current:
-        return True, current[:8], latest_gitee[:8]
-
-    return False, current[:8], current[:8]
+    cur_parsed = parse_version(current_ver)
+    lat_parsed = parse_version(latest)
+    if cur_parsed is not None and lat_parsed is not None:
+        return lat_parsed > cur_parsed, current_ver, latest
+    return latest != current_ver, current_ver, latest
 
 
 def pick_latest_remote() -> tuple[str, str]:
     """选择更新源远程（版本号优先 github），返回 (远程名, commit hash)。
-    两个远程的 fetch 与 tag 查询并行执行，总耗时≈最慢一路而非串行累加"""
-    # 并行 fetch 两个远程（含 tags），与 ls-remote 版本查询同时进行
-    import threading
 
-    def _fetch(r):
-        try:
-            subprocess.run(
-                ["git", "fetch", r, "--quiet", "--tags"],
-                capture_output=True, text=True, timeout=30,
-                cwd=str(REPO_DIR),
-            )
-        except Exception:
-            pass
-
-    fetch_threads = [threading.Thread(target=_fetch, args=(r,), daemon=True) for r in ("github", "origin")]
-    for t in fetch_threads:
-        t.start()
+    版本号只取各远程 main 提交链上的 tag，get_remote_latest_tag 内部会「先 fetch、再按 main
+    过滤」，两步必须串行。这里不再额外预 fetch——预 fetch 与版本查询并行会产生竞态：
+    查询可能在 tag 对象还没到本地时就去做 main 过滤，把本来在 main 上的 tag 误判为不可见。
+    """
     versions = get_remote_versions()
-    for t in fetch_threads:
-        t.join(32)
     source, _version = pick_latest_version(versions)
     if source:
         return source, get_remote_branch_commit(source) or ""
@@ -1444,17 +1451,12 @@ def perform_update(force: bool = False) -> bool:
                 return False
         log.info(f"📥 选择远程: {remote} (commit: {commit[:8] or 'unknown'})")
 
-        # 4. 停止服务
-        update_progress = "停止旧服务..."
-        if not stop_service():
-            record_error("更新", "无法停止服务，中止更新")
-            log.error("❌ 无法停止服务，中止更新")
-            return False
-
-        # 等待端口释放
-        time.sleep(1)
-
-        # 5. 拉取代码（记录依赖清单指纹，用于判断是否需要 pip install）
+        # 4. 先拉代码（**全程不停机**），再决定要不要停机重启 —— 顺序不能反
+        #    版本号可能领先于真正拉得到的代码（tag 指向不在 main 上的 commit 时必然如此）：
+        #    先停机再拉，一旦拉回来是空的，就白白中断一次服务。
+        #    「是否需要重启」的唯一依据 = 本地 HEAD 在这次拉取后是否真的变了。
+        #    这不是版本判断（版本判断只看 tag 版本号），而是拉取结果核对，纯本地比较、不查远端。
+        commit_before = get_current_commit()
         req_file = REPO_DIR / "requirements.txt"
         req_before = req_file.read_bytes() if req_file.exists() else b""
         update_progress = "拉取最新代码..."
@@ -1465,11 +1467,38 @@ def perform_update(force: bool = False) -> bool:
             alt_remote = "github" if remote == "origin" else "origin"
             log.info(f"尝试备用远程 {alt_remote}...")
             success, output, branch = git_pull(alt_remote)
-            if not success:
-                log.error(f"❌ 备用也失败: {output}")
-                update_progress = "代码拉取失败，尝试恢复旧版本..."
-                start_service()
-                return False
+
+        commit_after = get_current_commit()
+        changed = bool(commit_after) and commit_after != commit_before
+
+        if not changed:
+            # 拉取没有改变本地任何代码 —— 典型场景：版本号说 v2.22.14 更新了，但它不在 main 上，
+            # main 拉回来本来就是我们已经在跑的这份代码。此时停机重启纯属自伤。
+            if success:
+                log.info(f"✅ [{remote}/{branch}] {output}｜HEAD 未变（{commit_after[:8]}），跳过停机重启")
+                update_progress = "代码无变化，已跳过重启"
+            else:
+                log.error(f"❌ 拉取失败且本地代码无变化，服务保持运行: {output}")
+                update_progress = "拉取失败，服务保持运行"
+                record_error("更新", f"拉取失败且 HEAD 未变: {output[:200]}")
+                if not is_service_active():   # 兜底：本来就没在跑（如手动点更新时服务已停）
+                    log.warning("⚠️ 服务当前未运行，尝试拉起")
+                    start_service()
+            return success
+
+        if not success:
+            # 两次 pull 都报错、但本地代码确实变了（如走了硬重置兜底）→ 仍按有更新处理
+            log.warning(f"⚠️ 拉取返回失败但本地代码已变化（{(commit_before or '?')[:8]} → {commit_after[:8]}），继续重启")
+
+        # 5. 真拿到新代码才停机
+        update_progress = "停止旧服务..."
+        if not stop_service():
+            record_error("更新", "无法停止服务，中止更新")
+            log.error("❌ 无法停止服务，中止更新")
+            return False
+
+        # 等待端口释放
+        time.sleep(1)
 
         log.info(f"✅ 代码更新成功 [{remote}/{branch}]: {output}")
 
@@ -1693,7 +1722,9 @@ def handle_api_request(conn):
         elif path == "/check":
             # 仅检查是否有更新。
             # 版本查询共享同一字典：gitee/github 各自完成后立即写入（外部可见部分结果）。
-            # 外层预算 25s ≥ 内部最坏 22s(20+2)——修复旧版 15s 截断早于内部完成、版本永远 unknown 的竞态
+            # 外层预算须 ≥ 内部最坏值：get_remote_versions 会等 github_timeout + VERSION_FETCH_TIMEOUT
+            # = 20+30 = 50s。沿用旧版 25s 会在 fetch 还在跑时就截断，版本永远 unknown——
+            # 这正是当初 15s 截断那个竞态的同一类问题，只是阈值换了。
             has_update = False
             current = "unknown"
             latest = "unknown"
@@ -1702,7 +1733,7 @@ def handle_api_request(conn):
                 get_remote_versions(result=versions)
             t = _t.Thread(target=_fill, daemon=True)
             t.start()
-            t.join(timeout=25)
+            t.join(timeout=60)
             try:
                 h, c, l = has_updates_available(versions)
                 has_update, current, latest = h, c, l
