@@ -60,6 +60,38 @@ def _sync_pool():
     pool.reload()
 
 
+def _ui_groups_migrate_member(config: dict, kind: str, old: str, new: str | None = None) -> None:
+    """分组收纳成员表随池改名 / 实体删除同步迁移（v2.17.23）。
+
+    分组成员存的是**池名 / 供应商 id 的字符串**，不是对象引用——所以实体改名或删除时，
+    config.ui_groups 不会自动跟着变，后果分两种：
+
+    - **改名漏改 = 数据丢失**：hmg.js grpWrapHtml 按 `members.includes(池名)` 过滤渲染，
+      池改了名就匹配不上，该成员**静默从分组消失**；更糟的是下一次任意拖拽触发
+      grpSyncFromDOM 会按 DOM 重写整张成员表，把旧名彻底抹掉，用户无从察觉。
+    - **删除漏改 = 悬空引用**：分组计数徽章长期偏大，且成员表里留着查无此池的死名。
+
+    new=None 表示该成员已被删除，直接剔除。
+    """
+    groups = (config.get("ui_groups") or {}).get(kind)
+    if not isinstance(groups, list):
+        return
+    changed = False
+    for g in groups:
+        if not isinstance(g, dict):
+            continue
+        members = g.get("members")
+        if not isinstance(members, list) or old not in members:
+            continue
+        if new is None:
+            g["members"] = [m for m in members if m != old]
+        else:
+            g["members"] = [new if m == old else m for m in members]
+        changed = True
+    if changed:
+        config.setdefault("ui_groups", {})[kind] = groups
+
+
 def _expand_pool_members(config: dict, pool_name: str, visiting: set | None = None) -> tuple[list, list]:
     """按 config 递归展开池的全部模型成员（支持 pool: 子池引用）。
 
@@ -769,6 +801,8 @@ async def delete_provider(provider_id: str, _=Depends(verify_admin)):
         raise HTTPException(status_code=400, detail=f"供应商下仍有模型：{', '.join(refs)}，请先删除或迁移这些模型")
 
     config["providers"] = new_providers
+    # 分组收纳成员表清理悬空引用（成员存的是供应商 id；v2.17.23）
+    _ui_groups_migrate_member(config, "providerGroups", provider_id, None)
     save_config(config)
     restart_scheduler()
     return {"ok": True}
@@ -831,6 +865,8 @@ async def delete_pool(pool_name: str, _=Depends(verify_admin)):
         raise HTTPException(status_code=400, detail="专属模型池请在密钥编辑界面删除")
 
     del pools[pool_name]
+    # 分组收纳成员表清理悬空引用（v2.17.23）
+    _ui_groups_migrate_member(config, "poolGroups", pool_name, None)
     save_config(config)
     restart_scheduler()
     _sync_pool()
@@ -1019,6 +1055,9 @@ async def rename_pool(pool_name: str, request: Request, _=Depends(verify_admin))
         ids = pcfg.get("model_ids", [])
         if old_ref in ids:
             pcfg["model_ids"] = [new_ref if x == old_ref else x for x in ids]
+
+    # 分组收纳成员表按池名索引，必须同步改名，否则成员会静默从分组消失（v2.17.23）
+    _ui_groups_migrate_member(config, "poolGroups", pool_name, new_name)
 
     save_config(config)
     restart_scheduler()
@@ -1485,6 +1524,8 @@ async def delete_key(key_id: int, _=Depends(verify_admin)):
     targets = [n for n, p in pools.items() if p.get("owner_key_id") == str(key_id)]
     for t in targets:
         del pools[t]
+        # 分组收纳成员表清理悬空引用（v2.17.23）
+        _ui_groups_migrate_member(config, "poolGroups", t, None)
         for pcfg in pools.values():
             pcfg["model_ids"] = [x for x in pcfg.get("model_ids", []) if x != t and x != f"pool:{t}"]
     if targets:
@@ -1573,6 +1614,8 @@ async def delete_key_pool(key_id: int, _=Depends(verify_admin)):
     name, _ = found
     pools = config.get("pools", {})
     del pools[name]
+    # 分组收纳成员表清理悬空引用（v2.17.23）
+    _ui_groups_migrate_member(config, "poolGroups", name, None)
     for pcfg in pools.values():
         pcfg["model_ids"] = [x for x in pcfg.get("model_ids", []) if x != name and x != f"pool:{name}"]
     # 从该密钥授权池移除

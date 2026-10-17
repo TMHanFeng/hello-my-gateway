@@ -268,6 +268,9 @@ DB.row_factory = sqlite3.Row
 CK0 = (cfg.get("search_summary") or {}).get("caller_key") or ""
 # T39：生产 quota_monitor 节点原值（用例内改写 port/circuit_enabled，结束时/deep_clean 原样还原）
 QM0 = json.loads(json.dumps(cfg.get("quota_monitor") or {}, ensure_ascii=False))
+# T41：生产 ui_groups（分组收纳）原值——T41 用例会改写 poolGroups/providerGroups 验证
+# 池改名/删除时的成员表迁移，结束时/deep_clean 必须整节原样还原
+UG0 = json.loads(json.dumps(cfg.get("ui_groups") or {}, ensure_ascii=False))
 
 RESULTS = []
 
@@ -379,6 +382,12 @@ def deep_clean():
                    if not str(m.get("id", "")).startswith("zzbt/") and str(m.get("id", "")) != "zzmock/probe-noauto"]
     c.get("pools", {}).pop("zzall", None)
     c.get("pools", {}).pop("zzdef", None)  # v2.11.19 曾漏清该测试池残留至生产配置
+    c.get("pools", {}).pop("zzgrp", None)  # v2.17.23 T41 分组迁移用例的测试池
+    # T41：还原分组收纳整节为用例前原值（用例会改 poolGroups/providerGroups，崩溃时兜底）
+    if UG0:
+        c["ui_groups"] = json.loads(json.dumps(UG0, ensure_ascii=False))
+    else:
+        c.pop("ui_groups", None)
     for pn in ("zzreq", "zzonce", "zzsmart", "zznso", "zzgift", "zzrpm", "zzvalve", "zzvnl", "zzqfp", "zzqfp2",
                "zzqfws2", "zzsump", "zzbad", "zzlocal", "zzswitch", "zzhr", "zzhrctl", "zzsw", "zzsw2",
                "zzswsubl", "zzswsubn", "zzswnest", "zzswnestn", "zzcost", "zzpaid", "zzpaid2", "zzpaid3",
@@ -2667,6 +2676,41 @@ def main():
               and all(s in _pages40["pools"].text for s in ('HMG.flipMove(items, ".pool-item"',
                   'HMG.flipMove(list, "[data-pool-card]"', "else { loadPools(); }",
                   'e.dataTransfer.setData("text/plain", card.dataset.poolCard)')), None)
+
+        # ===== T41（v2.17.23）：池改名/删除必须同步分组收纳成员表 =====
+        # 病灶：分组成员存的是**池名字符串**，而 rename_pool 曾经只迁池字典 + 其他池的
+        # pool:old 引用，漏了 config.ui_groups.poolGroups[].members → 改名后
+        # grpWrapHtml 按名匹配不到，成员**静默从分组消失**（接口还返 200），
+        # 且下一次任意拖拽触发 grpSyncFromDOM 会按 DOM 重写整表把旧名彻底抹掉。
+        # 本组三道闸：①调用点齐全（静态）②改名迁移（功能）③删除清悬空（功能）。
+        _routes41 = open(os.path.join(REPO, "app", "admin", "routes.py"), encoding="utf-8").read()
+        check("T41a 成员表迁移调用点齐全(rename/delete×3路径/provider删除)",
+              "def _ui_groups_migrate_member(" in _routes41
+              and _routes41.count("_ui_groups_migrate_member(config,") == 5
+              and '_ui_groups_migrate_member(config, "poolGroups", pool_name, new_name)' in _routes41
+              and '_ui_groups_migrate_member(config, "poolGroups", pool_name, None)' in _routes41
+              and '_ui_groups_migrate_member(config, "providerGroups", provider_id, None)' in _routes41,
+              _routes41.count("_ui_groups_migrate_member(config,"))
+        # 布场：建测试池 → 放进分组 → 改名 → 成员表应跟着改名
+        _ug0 = json.loads(json.dumps(UG0, ensure_ascii=False))
+        httpx.post(f"{BASE}/admin/pools", headers=ADMIN, json={"name": "zzgrp", "model_ids": []}, timeout=15)
+        _ugset = {"poolGroups": [{"id": "gzz", "name": "T41组", "collapsed": False,
+                                  "members": ["zzgrp", "zzsw"]}],
+                  "providerGroups": _ug0.get("providerGroups", []),
+                  "settings": _ug0.get("settings", {"models": True, "pools": True})}
+        httpx.put(f"{BASE}/admin/ui_groups", headers=ADMIN, json=_ugset, timeout=15)
+        r = httpx.post(f"{BASE}/admin/pools/zzgrp/rename", headers=ADMIN,
+                       json={"new_name": "zzgrp2"}, timeout=15)
+        _ugnow = httpx.get(f"{BASE}/admin/ui_groups", headers=ADMIN, timeout=15).json().get("ui_groups") or {}
+        _m = next((g.get("members") for g in _ugnow.get("poolGroups", []) if g.get("id") == "gzz"), None)
+        check("T41b 池改名后分组成员表同步改名(不静默丢成员)",
+              r.status_code == 200 and _m is not None and "zzgrp2" in _m and "zzgrp" not in _m, (_m, r.status_code))
+        # 删池后成员表应剔除悬空引用
+        httpx.delete(f"{BASE}/admin/pools/zzgrp2", headers=ADMIN, timeout=15)
+        _ugnow = httpx.get(f"{BASE}/admin/ui_groups", headers=ADMIN, timeout=15).json().get("ui_groups") or {}
+        _m = next((g.get("members") for g in _ugnow.get("poolGroups", []) if g.get("id") == "gzz"), None)
+        check("T41c 池删除后分组成员表剔除悬空引用",
+              _m is not None and "zzgrp2" not in _m and "zzsw" in _m, _m)
 
     finally:
         try:
