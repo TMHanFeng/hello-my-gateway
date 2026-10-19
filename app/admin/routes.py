@@ -1,11 +1,12 @@
 from fastapi import APIRouter, HTTPException, Depends, Request, Response
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from pathlib import Path
 import asyncio
+import json
 import logging
 import subprocess
 import threading
-from app.core.config import load_config, save_config
+from app.core.config import load_config, save_config, write_ui_groups_last_good, UG_KINDS
 from app.core import database as db
 from app.core.scheduler import restart_scheduler
 from app.providers.openai_provider import OpenAIProvider
@@ -90,6 +91,68 @@ def _ui_groups_migrate_member(config: dict, kind: str, old: str, new: str | None
         changed = True
     if changed:
         config.setdefault("ui_groups", {})[kind] = groups
+
+
+def _ug_group_map(groups) -> dict:
+    """组列表 → {组 id: 组对象}（忽略非 dict / 无 id 的脏项）。"""
+    out = {}
+    for g in groups or []:
+        if isinstance(g, dict) and g.get("id"):
+            out[g["id"]] = g
+    return out
+
+
+def _ui_groups_merge(cur: dict, body: dict) -> dict:
+    """按 kind 合并分组数据：**body 里没出现的 kind 一律保留服务端现值**。
+
+    v2.17.25（2026-10-17 生产事故修复）。旧实现是 `config["ui_groups"] = body`
+    整对象覆盖——客户端少带一个 key，服务端那一个维度就整个消失。前端 grpSave 每次
+    PUT 的又是「浏览器 localStorage 的全量对象」，于是只开过模型页的设备会把服务端的
+    poolGroups 抹掉，反之亦然。合并后「缺 key」不再等于「删除」。
+
+    body 里的未知 key 一律忽略（不写进 config.json，避免前端脏字段污染配置）。
+    """
+    merged = dict(cur or {})
+    for k in UG_KINDS + ("settings",):
+        if k in body:
+            merged[k] = body[k]
+    return merged
+
+
+def _ui_groups_shrink(cur: dict, merged: dict) -> list:
+    """算出「本次保存会减少多少分组数据」。
+
+    判据是**任何减少**而不是「批量清空」：2026-10-17 那次事故里，前端在「普通池」
+    模式下渲染模型池页，组里的专属池成员被裁掉一个（16 → 15），一次这样的裁剪就足以
+    让分组数据逐步流失；若只在「清空」时才拦，这次事故根本拦不住。
+    """
+    losses = []
+    for kind in UG_KINDS:
+        old_list = cur.get(kind) or []
+        new_list = merged.get(kind) or []
+        if old_list and not new_list:
+            losses.append({"kind": kind, "type": "kind_emptied", "groups": len(old_list),
+                           "detail": f"{kind} 整个维度将被清空（{len(old_list)} 个分组）"})
+            continue
+        old_map = _ug_group_map(old_list)
+        new_map = _ug_group_map(new_list)
+        for gid, og in old_map.items():
+            ogm = og.get("members") or []
+            ng = new_map.get(gid)
+            if ng is None:
+                losses.append({"kind": kind, "group": gid, "name": og.get("name"),
+                               "type": "group_removed", "before": len(ogm), "after": 0,
+                               "detail": f"分组「{og.get('name') or gid}」将被删除（{len(ogm)} 个成员）"})
+                continue
+            ngm = ng.get("members") or []
+            if len(ngm) < len(ogm):
+                lost = [m for m in ogm if m not in ngm]
+                losses.append({"kind": kind, "group": gid, "name": og.get("name"),
+                               "type": "members_shrunk", "before": len(ogm), "after": len(ngm),
+                               "lost": lost[:20],
+                               "detail": f"分组「{og.get('name') or gid}」成员 {len(ogm)} → {len(ngm)}，"
+                                         f"将丢失 {len(ogm) - len(ngm)} 个"})
+    return losses
 
 
 def _expand_pool_members(config: dict, pool_name: str, visiting: set | None = None) -> tuple[list, list]:
@@ -1678,20 +1741,40 @@ async def ui_groups_get(_=Depends(verify_admin)):
 
 @router.put("/ui_groups")
 async def ui_groups_put(request: Request, _=Depends(verify_admin)):
-    """保存分组数据（整对象覆盖；纯 UI 收纳数据，不影响路由/配额，无需 _sync_pool）。"""
-    import json as _json
+    """保存分组数据（v2.17.25：按 kind 合并 + 收缩守卫；纯 UI 收纳数据，不影响路由/配额）。
+
+    - **合并**：body 里没出现的 kind 一律保留服务端现值（缺 key ≠ 删除）。
+    - **守卫**：任何「减少」（维度清空 / 分组消失 / 组成员变少）都必须带 `?force=1`，
+      否则 400，并在 detail 里说清将要丢掉什么。前端只在**用户明确删除**时带 force
+      （取消归组 / 删分组 / 拖拽移出），其余一律拒绝。
+
+    为什么默认拒绝：分组数据只有 config.json 一个存储点，误写一次就是永久丢失
+    （2026-10-17 生产事故：16 个成员被整片抹掉，全程 200 OK、零提示）。
+    """
     try:
         body = await request.json()
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON body")
     if not isinstance(body, dict):
         raise HTTPException(status_code=400, detail="Invalid JSON body")
-    if len(_json.dumps(body, ensure_ascii=False)) > 65536:
+    if len(json.dumps(body, ensure_ascii=False)) > 65536:
         raise HTTPException(status_code=400, detail="分组数据过大（上限 64KB）")
+    force = (request.query_params.get("force") or "").lower() in ("1", "true", "yes")
     config = load_config()
-    config["ui_groups"] = body
+    cur = config.get("ui_groups")
+    cur = cur if isinstance(cur, dict) else {}
+    merged = _ui_groups_merge(cur, body)
+    losses = _ui_groups_shrink(cur, merged)
+    if losses and not force:
+        return JSONResponse(status_code=400, content={
+            "detail": "本次保存会减少分组数据，已拒绝保存：" + "；".join(x["detail"] for x in losses[:5])
+                      + "（如确为有意删除，请在确认后重试并附加 ?force=1）",
+            "losses": losses,
+        })
+    config["ui_groups"] = merged
     save_config(config)
-    return {"ok": True}
+    write_ui_groups_last_good(merged)  # 已知良好快照：写坏之后一条命令回滚
+    return {"ok": True, "kinds": [k for k in UG_KINDS if k in body]}
 
 
 @router.get("/headroom")

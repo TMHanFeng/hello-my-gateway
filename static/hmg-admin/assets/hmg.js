@@ -510,7 +510,20 @@ function hmgFlipMove(container, match, insertFn) {
    重挂载钩子：HMG.grpReload 由页面设置（分组变化后重渲本页列表） */
 const GRP_KEY = "gw_groups";
 function grpData() { try { return JSON.parse(localStorage.getItem(GRP_KEY)) || {}; } catch (e) { return {}; } }
-function grpSave(d) { localStorage.setItem(GRP_KEY, JSON.stringify(d)); HMG.api("/admin/ui_groups", { method: "PUT", body: JSON.stringify(d) }); }
+/* v2.17.25：只把「本次改动的维度」上云，且删除类动作必须显式 force。
+   旧实现把浏览器 localStorage 的**全量对象**整份 PUT 上去，服务端又是整对象覆盖
+   ——客户端少带一个 key，服务端那一个维度就整个消失（2026-10-17 生产事故）。
+   现在：① 按 kind 增量（body 缺 key ≠ 删除，服务端按 kind 合并）；
+        ② force 只在「用户明确删除」时带（取消归组 / 删分组 / 拖拽移出），
+           服务端据此才放行「成员数减少」，其余一律 400 拒绝。 */
+function grpSave(d, kinds, force) {
+  localStorage.setItem(GRP_KEY, JSON.stringify(d));
+  const ks = Array.isArray(kinds) ? kinds : (kinds ? [kinds] : []);
+  if (!ks.length) return;                       // 没指定维度 → 只写本地，不上云
+  const body = {};
+  ks.forEach(k => { body[k] = d[k]; });
+  HMG.api("/admin/ui_groups" + (force ? "?force=1" : ""), { method: "PUT", body: JSON.stringify(body) });
+}
 async function gwGroupsBoot() {
   try {
     const d = await HMG.api("/admin/ui_groups");
@@ -519,13 +532,19 @@ async function gwGroupsBoot() {
     const has = o => Object.keys(o).some(k => k !== "settings" && Array.isArray(o[k]) && o[k].length)
       || (o.settings && (o.settings.models || o.settings.pools));
     if (has(sv)) localStorage.setItem(GRP_KEY, JSON.stringify(sv));
-    else if (has(grpData())) HMG.api("/admin/ui_groups", { method: "PUT", body: JSON.stringify(grpData()) });
+    else if (has(grpData())) {
+      // 服务端空 + 本地有 → 本地静默上移（一次性迁移）。只带本地有的维度，
+      // 服务端已有的维度一律保留（v2.17.25：body 缺 key ≠ 删除）。
+      const loc = grpData(); const body = {};
+      ["poolGroups", "providerGroups", "settings"].forEach(k => { if (loc[k] !== undefined) body[k] = loc[k]; });
+      if (Object.keys(body).length) HMG.api("/admin/ui_groups", { method: "PUT", body: JSON.stringify(body) });
+    }
   } catch (e) { /* 分组同步失败不阻塞 */ }
 }
 function grpSettings() { return Object.assign({ models: false, pools: false }, grpData().settings || {}); }
 function grpList(kind) {
   const d = grpData();
-  if (!Array.isArray(d[kind])) { d[kind] = []; grpSave(d); }
+  if (!Array.isArray(d[kind])) d[kind] = [];   // v2.17.25：只补内存副本，不再顺手写服务端
   return d[kind];
 }
 function grpReload() { if (typeof HMG.grpReload === "function") HMG.grpReload(); }
@@ -534,14 +553,11 @@ function grpWrapHtml(kind, items) {
   const d = grpData();
   if (!Array.isArray(d[kind])) d[kind] = [];
   const groups = d[kind];
-  const ids = new Set(items.map(i => i.id));
-  let dirty = false;
-  groups.forEach(g => {
-    if (!Array.isArray(g.members)) { g.members = []; dirty = true; }
-    const kept = g.members.filter(m => ids.has(m));
-    if (kept.length !== g.members.length) { g.members = kept; dirty = true; }
-  });
-  if (dirty) grpSave(d);
+  // v2.17.25：渲染**不再裁剪成员表，也不再写服务端**。
+  // 旧实现在这里按「当前页面渲染出来的卡片」裁剪 members 并落盘——而模型池页的卡片
+  // 是按「普通池/专属池」模式过滤后的子集，于是「打开一次模型池页」就会把另一模式
+  // 的成员当成已删除抹掉（2026-10-17 生产事故的真凶之一）。成员表的增删只允许由
+  // 明确的用户动作（归组/取消归组/删组/拖拽）和后端改名·删除迁移产生。
   const inGroup = new Set();
   groups.forEach(g => (g.members || []).forEach(m => inGroup.add(m)));
   let out = "";
@@ -582,13 +598,23 @@ function grpSyncFromDOM(kind, listEl, cardSel, attr) {
     if (sec.dataset.grp === "__ungrouped__") return;
     byGroup[sec.dataset.grp] = [...sec.querySelectorAll(cardSel)].map(c => c.dataset[attr]);
   });
-  d[kind].forEach(g => { g.members = byGroup[g.id] || []; });
-  grpSave(d);
+  // v2.17.25：**当前视图没渲染出来的成员一律保留**。
+  // 当前视图可能是过滤后的子集（模型池页按「普通池/专属池」模式过滤），旧实现
+  // `d[kind].forEach(g => { g.members = byGroup[g.id] || []; })` 会把「不在 DOM 里的组」
+  // 和「不在当前视图里的成员」统统当成已删除抹掉——拖一次就掉一片。
+  // 现在的规则：只改「本次视图覆盖到」的那部分，没覆盖到的成员原样保留。
+  const rendered = new Set([...listEl.querySelectorAll(cardSel)].map(c => c.dataset[attr]));
+  d[kind].forEach(g => {
+    if (!(g.id in byGroup)) return;                 // DOM 里没有这个组 → 整组不动
+    const keep = (g.members || []).filter(m => !rendered.has(m));
+    g.members = [...new Set([...keep, ...byGroup[g.id]])];
+  });
+  grpSave(d, kind, true);   // force：拖拽移出成员是用户明确动作，允许成员数减少
 }
 function grpToggle(kind, gid) {
   const d = grpData(); const g = (d[kind] || []).find(x => x.id === gid);
   if (!g) return;
-  g.collapsed = !g.collapsed; grpSave(d);
+  g.collapsed = !g.collapsed; grpSave(d, kind);
   const el = document.querySelector(`.grp-section[data-grp="${CSS.escape(gid)}"]`);
   if (el) el.classList.toggle("collapsed", g.collapsed);
 }
@@ -596,14 +622,14 @@ async function grpDelGroup(kind, gid) {
   const d = grpData(); const g = (d[kind] || []).find(x => x.id === gid);
   if (!g) return;
   if (!await HMG.confirm(`删除分组「${HMG.esc(g.name)}」？其成员将回到未分组（供应商/池本身不受影响）。`, { danger: true, okLabel: "删除" })) return;
-  d[kind] = (d[kind] || []).filter(x => x.id !== gid); grpSave(d); grpReload();
+  d[kind] = (d[kind] || []).filter(x => x.id !== gid); grpSave(d, kind, true); grpReload();
 }
 async function grpRename(kind, gid) {
   const d = grpData(); const g = (d[kind] || []).find(x => x.id === gid);
   if (!g) return;
   const nn = await HMG.prompt("新的分组名称：", { value: g.name });
   if (!nn || nn.trim() === g.name || !nn.trim()) return;
-  g.name = nn.trim(); grpSave(d); grpReload();
+  g.name = nn.trim(); grpSave(d, kind); grpReload();
 }
 function grpToggleMember(kind, id, gid, checked) {
   const d = grpData(); if (!Array.isArray(d[kind])) d[kind] = [];
@@ -611,7 +637,8 @@ function grpToggleMember(kind, id, gid, checked) {
   if (!g) return;
   g.members = g.members || [];
   g.members = checked ? [...new Set([...g.members, id])] : g.members.filter(m => m !== id);
-  grpSave(d); grpReload();
+  grpSave(d, kind, !checked);   // 取消归组 = 明确删除成员 → 允许减少
+  grpReload();
 }
 function grpCreateAssign(kind, id) {
   const inp = document.getElementById("grp-new-name");
@@ -620,7 +647,7 @@ function grpCreateAssign(kind, id) {
   const d = grpData(); if (!Array.isArray(d[kind])) d[kind] = [];
   if (d[kind].some(g => g.name === name)) { HMG.toast("同名分组已存在", "err"); return; }
   d[kind].push({ id: "g" + Date.now().toString(36), name, collapsed: false, members: [id] });
-  grpSave(d); grpReload();
+  grpSave(d, kind); grpReload();
 }
 function grpAssignMenu(ev, kind, id) {
   ev.stopPropagation(); ev.preventDefault();
@@ -635,7 +662,7 @@ function grpAssignMenu(ev, kind, id) {
       const d = grpData(); if (!Array.isArray(d[kind])) d[kind] = [];
       if (d[kind].some(g => g.name === nn.trim())) { HMG.toast("同名分组已存在", "err"); return; }
       d[kind].push({ id: "g" + Date.now().toString(36), name: nn.trim(), collapsed: false, members: [id] });
-      grpSave(d); grpReload();
+      grpSave(d, kind); grpReload();
     },
   }]));
 }
@@ -669,7 +696,7 @@ function grpMgmtMove(kind, gid, dir) {
   const i = gs.findIndex(x => x.id === gid); const j = i + dir;
   if (i < 0 || j < 0 || j >= gs.length) return;
   [gs[i], gs[j]] = [gs[j], gs[i]];
-  grpSave(d); grpMgmtRender(); grpReload();
+  grpSave(d, kind); grpMgmtRender(); grpReload();
 }
 function grpMgmtRename(kind, gid) { grpRename(kind, gid); grpMgmtRender(); }
 async function grpMgmtDelete(kind, gid) {
@@ -678,7 +705,7 @@ async function grpMgmtDelete(kind, gid) {
   if (!g) return;
   if (!await HMG.confirm(`删除分组「${HMG.esc(g.name)}」？组内 ${(g.members || []).length} 个成员卡片将回到未分组（模型/池本身不受影响）。`, { danger: true, okLabel: "删除" })) return;
   d[kind] = gs.filter(x => x.id !== gid);
-  grpSave(d); grpMgmtRender(); grpReload();
+  grpSave(d, kind, true); grpMgmtRender(); grpReload();   // 删组 = 明确删除分组，允许减少
 }
 function grpOpenSettings() {
   const m = HMG.modal({
@@ -703,7 +730,7 @@ function grpOpenSettings() {
 function grpSetToggle(key, val) {
   const d = grpData();
   d.settings = Object.assign({ models: false, pools: false }, d.settings || {});
-  d.settings[key] = val; grpSave(d); grpReload();
+  d.settings[key] = val; grpSave(d, "settings"); grpReload();
 }
 /* 分组区段折叠/管理盒样式（hmg.css 中 grp-* 段配套） */
 window.addEventListener("DOMContentLoaded", () => { /* 保留挂载点：grp 样式在 hmg.css */ });

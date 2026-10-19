@@ -10,6 +10,7 @@ import asyncio
 import io
 import json
 import os
+import re
 import sqlite3
 import subprocess
 import sys
@@ -429,6 +430,13 @@ def deep_clean():
     c.pop("headroom", None)
     db_exec("DELETE FROM headroom_stats WHERE model LIKE 'zzbt/%'")
     json.dump(c, open(os.path.join(REPO, "config.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+    # T43：分组数据「已知良好」快照必须跟着一起还原——否则套件跑完的夹具会留在快照里，
+    # 将来一旦 config.json 的分组数据被清空，启动自愈会把测试数据当成"良好状态"回填。
+    try:
+        from app.core.config import write_ui_groups_last_good
+        write_ui_groups_last_good(c.get("ui_groups") or {})
+    except Exception:
+        pass
     q = " OR ".join([f"model_name='{i}'" for i in TEST_IDS])
     db_exec("""CREATE TABLE IF NOT EXISTS gift_state (
                 model_name TEXT PRIMARY KEY,
@@ -2694,11 +2702,13 @@ def main():
         # 布场：建测试池 → 放进分组 → 改名 → 成员表应跟着改名
         _ug0 = json.loads(json.dumps(UG0, ensure_ascii=False))
         httpx.post(f"{BASE}/admin/pools", headers=ADMIN, json={"name": "zzgrp", "model_ids": []}, timeout=15)
+        # v2.17.25：本用例是「有意整表替换」分组数据（要拿到干净的受控夹具），必须显式带
+        # ?force=1 —— 服务端新增的收缩守卫默认拒绝任何"减少"，无 force 会 400。
+        # 同时只提交 poolGroups 一个维度（providerGroups 走服务端合并原样保留），
+        # 避免这个用例顺手覆盖掉生产分组（旧的整表 PUT 就是事故的成因之一）。
         _ugset = {"poolGroups": [{"id": "gzz", "name": "T41组", "collapsed": False,
-                                  "members": ["zzgrp", "zzsw"]}],
-                  "providerGroups": _ug0.get("providerGroups", []),
-                  "settings": _ug0.get("settings", {"models": True, "pools": True})}
-        httpx.put(f"{BASE}/admin/ui_groups", headers=ADMIN, json=_ugset, timeout=15)
+                                  "members": ["zzgrp", "zzsw"]}]}
+        httpx.put(f"{BASE}/admin/ui_groups?force=1", headers=ADMIN, json=_ugset, timeout=15)
         r = httpx.post(f"{BASE}/admin/pools/zzgrp/rename", headers=ADMIN,
                        json={"new_name": "zzgrp2"}, timeout=15)
         _ugnow = httpx.get(f"{BASE}/admin/ui_groups", headers=ADMIN, timeout=15).json().get("ui_groups") or {}
@@ -2729,6 +2739,76 @@ def main():
         check("T42b 分组管理删除入口仍在(三面板 grpMgmtDelete + grpDelGroup 函数)",
               all("grpMgmtDelete" in src for src in _grp42.values())
               and all("function grpDelGroup" in src for src in _grp42.values()), None)
+
+        # ===== T43（v2.17.25）：分组数据防误删（2026-10-17 生产事故修复）=====
+        # 事故机理：分组数据只有 config.json 一个存储点，而 PUT /admin/ui_groups 是
+        # 「整对象覆盖」，前端又把浏览器 localStorage 的**全量对象**整份 PUT 上去——
+        # 客户端少带一个 key，服务端那一个维度就整个消失；前端渲染路径还会拿「当前
+        # 页面渲染出的卡片子集」裁剪成员表并落盘（模型池页按「普通池/专属池」模式
+        # 过滤，于是「打开一次页面」就抹一次）。全程 200 OK、零提示，事后无法察觉。
+        # 四道闸：①后端合并+守卫在位（静态）②按 kind 合并不误伤别的维度（功能）
+        #         ③成员数减少必须显式 force（功能）④三面板前端不再有渲染期写入与
+        #         「|| []」抹组，且删除类动作带 force（静态）。
+        _routes43 = open(os.path.join(REPO, "app", "admin", "routes.py"), encoding="utf-8").read()
+        # 判据必须落在**可执行代码**上，不能落在注释/文档字符串上——本轮的说明性注释里
+        # 引用了旧实现原文（`config["ui_groups"] = body`），用裸子串判定会被自己的注释判红。
+        # 故：Python 侧走 AST（注释天然进不了语法树），前端侧先去注释再判。
+        import ast as _ast43
+        _tree43 = _ast43.parse(_routes43)
+        _fn43 = {n.name for n in _ast43.walk(_tree43) if isinstance(n, _ast43.FunctionDef)}
+        _whole_obj_assign = False
+        for _n in _ast43.walk(_tree43):
+            if not isinstance(_n, _ast43.Assign):
+                continue
+            for _t in _n.targets:
+                if (isinstance(_t, _ast43.Subscript) and isinstance(_t.value, _ast43.Name)
+                        and _t.value.id == "config" and isinstance(_t.slice, _ast43.Constant)
+                        and _t.slice.value == "ui_groups" and isinstance(_n.value, _ast43.Name)
+                        and _n.value.id == "body"):
+                    _whole_obj_assign = True
+        check("T43a 后端按 kind 合并 + 收缩守卫已就位(整对象覆盖已移除)",
+              "_ui_groups_merge" in _fn43 and "_ui_groups_shrink" in _fn43
+              and not _whole_obj_assign
+              and 'query_params.get("force")' in _routes43, None)
+        # 功能闸①：只提交 poolGroups（且是"增加"一个组，不触发收缩）→ providerGroups 必须原封不动
+        _ug_b = httpx.get(f"{BASE}/admin/ui_groups", headers=ADMIN, timeout=15).json().get("ui_groups") or {}
+        _prov_b = json.dumps(_ug_b.get("providerGroups"), ensure_ascii=False, sort_keys=True)
+        _pg43 = list(_ug_b.get("poolGroups") or []) + [{"id": "gzz43", "name": "T43组",
+                                                         "collapsed": False, "members": ["zzsw"]}]
+        _r43b = httpx.put(f"{BASE}/admin/ui_groups", headers=ADMIN, json={"poolGroups": _pg43}, timeout=15)
+        _ug_a = httpx.get(f"{BASE}/admin/ui_groups", headers=ADMIN, timeout=15).json().get("ui_groups") or {}
+        _prov_a = json.dumps(_ug_a.get("providerGroups"), ensure_ascii=False, sort_keys=True)
+        check("T43b 只提交 poolGroups 时 providerGroups 原封不动(缺 key ≠ 删除)",
+              _r43b.status_code == 200 and _prov_a == _prov_b
+              and "gzz43" in [g.get("id") for g in (_ug_a.get("poolGroups") or [])],
+              (_r43b.status_code, _prov_b[:60], _prov_a[:60]))
+        # 功能闸②：成员数减少 → 无 force 400 且不落盘；带 ?force=1 才放行
+        _shrink = {"poolGroups": [{"id": "gzz43", "name": "T43组", "collapsed": False, "members": []}]}
+        _r43c = httpx.put(f"{BASE}/admin/ui_groups", headers=ADMIN, json=_shrink, timeout=15)
+        _ug_m = httpx.get(f"{BASE}/admin/ui_groups", headers=ADMIN, timeout=15).json().get("ui_groups") or {}
+        _m_mid = next((g.get("members") for g in (_ug_m.get("poolGroups") or []) if g.get("id") == "gzz43"), None)
+        _r43f = httpx.put(f"{BASE}/admin/ui_groups?force=1", headers=ADMIN, json=_shrink, timeout=15)
+        _ug_f = httpx.get(f"{BASE}/admin/ui_groups", headers=ADMIN, timeout=15).json().get("ui_groups") or {}
+        _m_fin = next((g.get("members") for g in (_ug_f.get("poolGroups") or []) if g.get("id") == "gzz43"), None)
+        check("T43c 成员数减少被拒(400)且不落盘，带 ?force=1 才放行",
+              _r43c.status_code == 400 and _m_mid == ["zzsw"] and _r43f.status_code == 200 and _m_fin == [],
+              (_r43c.status_code, _m_mid, _r43f.status_code, _m_fin))
+        # 静态闸：三面板前端——渲染期不再写服务端、不再「|| []」抹组、删除类动作带 force
+        # （先去掉注释再判：说明性注释里引用了旧实现原文，裸子串判定会被自己的注释判红）
+        def _strip_js_comments(src):
+            out = re.sub(r"/\*.*?\*/", "", src, flags=re.S)
+            return re.sub(r"//[^\n]*", "", out)
+        _grp43 = {"static/hmg-admin/assets/hmg.js": _strip_js_comments(_hmgjs),
+                  "static/index.html": _strip_js_comments(_idx),
+                  "static/hfadmin.html": _strip_js_comments(_hf)}
+        check("T43d 三面板：渲染期不写服务端 + 不再「|| []」抹组 + 删除类动作带 force",
+              all("kept = g.members.filter" not in src for src in _grp43.values())
+              and all("byGroup[g.id] || []" not in src for src in _grp43.values())
+              and all("const rendered = new Set(" in src for src in _grp43.values())
+              and all("grpSave(d, kind, true)" in src for src in _grp43.values())
+              and all("grpSave(d, kind)" in src for src in _grp43.values())
+              and all("grpSave(d, 'settings')" in src or 'grpSave(d, "settings")' in src
+                      for src in _grp43.values()), None)
 
     finally:
         try:

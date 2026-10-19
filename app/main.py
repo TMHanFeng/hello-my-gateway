@@ -49,6 +49,13 @@ def server_bind():
 async def lifespan(app: FastAPI):
     ensure_runtime_dirs()  # 全新克隆 data/ logs/ backup/ 均不在版本库，先建齐（日志/建库/配置备份依赖）
     setup_logging()
+    # v2.17.25：分组数据自愈——config.json 里的 ui_groups 被整片清空时（外部脚本改写 / 误写），
+    # 用「最后一次已知良好」快照回填。分组数据只有一个存储点，误写即永久丢失。
+    try:
+        from app.core.config import restore_ui_groups_if_empty
+        restore_ui_groups_if_empty()
+    except Exception:
+        logger.exception("[分组] 启动自愈（回填已知良好快照）异常")
     await init_db()
     await sync_all_refresh_times()
     start_scheduler()

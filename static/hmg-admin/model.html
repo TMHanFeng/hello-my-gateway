@@ -505,7 +505,7 @@ async function provJoinGroupApply(newId) {
     if (!Array.isArray(d.providerGroups)) d.providerGroups = [];
     if (d.providerGroups.some(g => g.name === nn.trim())) { toast("同名分组已存在", "err"); return; }
     d.providerGroups.push({ id: "g" + Date.now().toString(36), name: nn.trim(), collapsed: false, members: [newId] });
-    grpSave(d); loadModels();
+    grpSave(d, "providerGroups"); loadModels();
   } else {
     grpToggleMember("providerGroups", newId, gid, true);
   }

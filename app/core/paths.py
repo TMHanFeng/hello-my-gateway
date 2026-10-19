@@ -34,6 +34,7 @@ BACKUP_DIR = PROJECT_ROOT / "backup"
 CONFIG_BAK_PATH = BACKUP_DIR / "config" / "config.json.bak"                 # scheduler 每日备份
 CONFIG_BAK_DIR = BACKUP_DIR / "config"                                      # 工具类带后缀备份（.bak_xxx）
 DB_BAK_DIR = BACKUP_DIR / "db"                                              # 数据库快照备份
+UI_GROUPS_LAST_GOOD = CONFIG_BAK_DIR / "ui_groups.last_good.json"           # 分组数据「最后一次已知良好」快照（v2.17.25）
 STATIC_BAK_DIR = BACKUP_DIR / "static"                                      # 前端历史版本备份
 SNAPSHOTS_DIR = BACKUP_DIR / "snapshots"                                    # 整库改造前快照
 
